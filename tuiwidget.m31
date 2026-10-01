@@ -20,7 +20,7 @@
 // satisfies it: a struct with fields, the name of a plain function, or a
 // lambda written at the call site (reference §6.7). A program's own widget
 // needs no registration, no base type and no declaration that it is one --
-// it needs a `render` method with that signature. `apps/tui/tests.src` writes
+// it needs a `render` method with that signature. `apps/tui/tests.m31` writes
 // one of each of the three to prove it.
 //
 // A widget is **not** told where it is on the screen by a field; it is
@@ -287,7 +287,7 @@ pub void Paragraph.render(tuibuf.Buffer buf, tuigeom.Rect area) {
 
 // --- styled spans -------------------------------------------------------------
 //
-// A `Style` already carries everything a cell needs (tuistyle.src); what was
+// A `Style` already carries everything a cell needs (tuistyle.m31); what was
 // missing is a way to put more than one of them on the same row without a
 // caller hand-rolling the column arithmetic. `Span` and `Line` are that:
 // ratatui's `Span`/`Line` *concept*, through this library's own idiom rather

@@ -7,16 +7,16 @@
 // itself is a separate concern from those, and this is deliberately as
 // simple as the loop allows.
 //
-//   ./build.sh apps/tui/browse.src -o /tmp/browse && /tmp/browse
+//   ./build.sh apps/tui/browse.m31 -o /tmp/browse && /tmp/browse
 //
 // j/k or the arrows move the selection, Enter descends into a directory (and
 // does nothing on a file -- its preview is already on screen), u or
 // Backspace goes back up, q or Escape quits.
 //
-// This is NOT in the test corpus -- like `examples/keys.src`, it needs a real
+// This is NOT in the test corpus -- like `examples/keys.m31`, it needs a real
 // terminal and a person. What check.sh DOES check is that it compiles clean;
 // the loop it proves is `tuiapp.Loop`'s own, already tested against synthetic
-// buffers and events where that is possible (`apps/tui/tests.src`, "the
+// buffers and events where that is possible (`apps/tui/tests.m31`, "the
 // application loop's own pieces").
 
 import fs;
@@ -163,7 +163,7 @@ void State.up() {
 
 /// The frame: a title bar naming the path, the listing on the left, a
 /// preview or a message on the right, a one-line key legend at the bottom --
-/// the same layout `apps/tui/demo.src` builds once, run here through
+/// the same layout `apps/tui/demo.m31` builds once, run here through
 /// `tuiapp.Loop` instead.
 void State.draw(tuibuf.Buffer buf, tuigeom.Rect area) {
     List<tuigeom.Rect> band = tuigeom.rows(area, [tuigeom.Constraint.Length(1), tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(1)]);
@@ -188,7 +188,7 @@ void State.draw(tuibuf.Buffer buf, tuigeom.Rect area) {
 
 /// What a key does to the browser's state: `Redraw` on anything that changed
 /// it, `Continue` on everything else, `Quit` on q or Escape -- the same
-/// shape `examples/keys.src` hand-writes its own read loop around, here
+/// shape `examples/keys.m31` hand-writes its own read loop around, here
 /// answered instead of looped, since `tuiapp.Loop` does the looping.
 tuiapp.Action State.handle(term.Event ev) {
     match (ev) {

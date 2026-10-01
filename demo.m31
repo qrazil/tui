@@ -1,6 +1,6 @@
 // A screen, drawn for real: run this in a terminal and look at it.
 //
-//   ./build.sh apps/tui/demo.src -o /tmp/tuidemo && /tmp/tuidemo
+//   ./build.sh apps/tui/demo.m31 -o /tmp/tuidemo && /tmp/tuidemo
 //
 // Everything else in `apps/tui` is tested against an in-memory buffer, which
 // is the point of the design -- but a library that draws terminals should be
@@ -9,7 +9,7 @@
 // It writes ONE byte string: clear the screen, the whole frame, put the
 // cursor back. There is no input loop and no raw mode here on purpose --
 // this is the static half of the proof, and it draws one frame and returns
-// to the shell. `apps/tui/browse.src` is the other half: the same library,
+// to the shell. `apps/tui/browse.m31` is the other half: the same library,
 // run interactively through `tuiapp.Loop`.
 
 import io;

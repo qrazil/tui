@@ -1,6 +1,6 @@
 // The application loop: raw mode in, decoded events out, a widget redrawn
 // through the diffing renderer, one write per frame. This is stage 3's
-// remaining piece -- `lib/term.src` is already complete and tested; this
+// remaining piece -- `lib/term.m31` is already complete and tested; this
 // module is what JOINS it to `apps/tui`'s own renderer, and nothing else.
 // See `apps/git/design.md`, "the application loop joining the two".
 //
@@ -29,19 +29,19 @@
 // --- what the loop owns, and what it does not --------------------------------
 //
 // `run` opens raw mode with `term.raw()`, which hands back a `Session` --
-// see `lib/term.src`'s own header for why its destructor is the whole safety
+// see `lib/term.m31`'s own header for why its destructor is the whole safety
 // story here, trap path included; this module adds nothing on top of it and
 // is not allowed to need to. The loop reads with a timeout (`tick_ms`),
 // which is also what resolves a lone Escape (`term.Reader.read`'s own
 // comment) and what notices a resized window, since there is no resize
-// EVENT -- `term.src` leaves that to "call `size()` again", and this is the
+// EVENT -- `term.m31` leaves that to "call `size()` again", and this is the
 // thing that calls it, once a tick.
 //
 // A `Handler` answers one `Action` per event; the loop itself decides WHEN a
 // resize also needs a redraw, and whether a redraw is a `tuidiff.full` (a
 // resize, or the very first frame) or a `tuidiff.diff` against the previous
 // one. None of this is specific to any one program: it is exactly the loop
-// `examples/keys.src` hand-writes, pulled out here so nothing built on this
+// `examples/keys.m31` hand-writes, pulled out here so nothing built on this
 // library has to write it twice.
 
 import io;
@@ -79,7 +79,7 @@ pub interface Handler {
 pub type Loop {
     /// How long `Reader.read` waits for a key before coming back around to
     /// check the window size and, with nothing to read, do nothing else.
-    /// 250ms matches `examples/keys.src`: quick enough that a resize is
+    /// 250ms matches `examples/keys.m31`: quick enough that a resize is
     /// noticed with no key pressed, slow enough to cost nothing while idle.
     pub int tick_ms = 250;
     pub tuistyle.Depth depth = tuistyle.Depth.TrueColour;
@@ -99,7 +99,7 @@ pub type Loop {
 /// `Err(term.Error.NotATerminal)` when standard input is not a terminal, and
 /// whatever `term.raw()` itself answers otherwise. Once raw mode is entered a
 /// read or write failure ends the loop rather than being reported past this
-/// call -- `examples/keys.src`'s own choice, because a terminal that has
+/// call -- `examples/keys.m31`'s own choice, because a terminal that has
 /// stopped answering has nothing left to say beyond "stopped".
 pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
     if (!term.is_terminal(0)) {
@@ -171,7 +171,7 @@ pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
 }
 
 /// The window's size, falling back to 80x24 when the terminal does not know
-/// its own -- `examples/keys.src`'s own fallback, for the same reason:
+/// its own -- `examples/keys.m31`'s own fallback, for the same reason:
 /// `term.size` answering 0x0 is not an error, and a frame has to be built
 /// from SOME size.
 pub term.Size screen_size() {
