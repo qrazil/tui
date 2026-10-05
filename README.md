@@ -1,4 +1,4 @@
-# apps/tui — a terminal user interface library
+# tui — a terminal user interface library
 
 A buffer of grapheme clusters, a diffing renderer, ratatui's constraint
 layout, width-aware text, a styling layer, thirteen widgets, and the
@@ -17,9 +17,9 @@ real keys through `lib/term.m31` and redraws through this library's own
 renderer. See "Left deliberately undone" below for what stage 2's original
 wishlist dropped, and why.
 
-    bash apps/tui/check.sh                       # tests, then the benchmark
-    ./build.sh apps/tui/demo.m31 -o /tmp/d       # a static screen; run /tmp/d
-    ./build.sh apps/tui/browse.m31 -o /tmp/b     # an interactive one; run /tmp/b
+    M31_ROOT=/path/to/m31 bash check.sh                  # tests, then the benchmark
+    M31_ROOT=/path/to/m31 bash build.sh demo.m31 -o /tmp/d    # a static screen; run /tmp/d
+    M31_ROOT=/path/to/m31 bash build.sh browse.m31 -o /tmp/b  # an interactive one; run /tmp/b
 
 **This library is not part of the standard library.** The compiler knows
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
@@ -237,14 +237,14 @@ language already use: `Action handle(term.Event ev)`, answering `Continue`,
 resize event — and whether that redraw is a full repaint or a diff against
 the previous frame.
 
-`apps/tui/browse.m31` is a runnable proof: a small interactive file browser
+`browse.m31` is a runnable proof: a small interactive file browser
 built ONLY from widgets that existed before this loop (`ListView`,
 `Block`, `Paragraph`) — j/k or the arrows move, Enter descends into a
 directory, u or Backspace goes back up, q or Escape quits, and the terminal
 is always restored on the way out, trap included, because that is what
 `term.raw()`'s `Session` is for.
 
-    ./build.sh apps/tui/browse.m31 -o /tmp/browse && /tmp/browse
+    M31_ROOT=/path/to/m31 bash build.sh browse.m31 -o /tmp/browse && /tmp/browse
 
 ---
 
@@ -263,7 +263,7 @@ A 200×50 frame — 10 000 cells, a full-screen terminal — built with
 
 The 60-frames-a-second budget is 16.67 ms, so a complete frame is about
 **8× inside it**, and a frame in which nothing much moved is 21 bytes on the
-wire. Run `bash apps/tui/check.sh` for the numbers on your own
+wire. Run `M31_ROOT=/path/to/m31 bash check.sh` for the numbers on your own
 machine.
 
 ---

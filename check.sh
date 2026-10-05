@@ -1,31 +1,48 @@
 #!/usr/bin/env bash
-# The TUI library's gate. Run from anywhere:
+# The TUI library's gate.
 #
-#   bash apps/tui/check.sh            tests, then the benchmark
-#   bash apps/tui/check.sh --bless    rewrite tests.out from what tests.m31 prints
+#   M31_ROOT=/path/to/m31 bash check.sh            tests, then the benchmark
+#   M31_ROOT=/path/to/m31 bash check.sh --bless    rewrite tests.out from what tests.m31 prints
 #
 # Four things are checked, and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
-#   1. every file in apps/tui/ is formatted (`m31c fmt --check`)
-#   2. apps/tui/tests.m31, bench.m31, demo.m31 and browse.m31 all compile
-#      under gcc and clang, at -O0 and -O2, with no warning from the emitted C
-#   3. its output matches apps/tui/tests.out, and contains no `FAIL` line
+#   1. every .m31 file here is formatted (`m31c fmt --check`)
+#   2. tests.m31, bench.m31, demo.m31 and browse.m31 all compile under gcc
+#      and clang, at -O0 and -O2, with no warning from the emitted C
+#   3. its output matches tests.out, and contains no `FAIL` line
 #   4. the refcount invariant holds: `__rc_live=0` at exit
 #
 # Then bench.m31 is built and run, and its numbers printed. They are not
 # compared against anything -- a time is not a fixture.
 #
-# This is NOT wired into ../../gates.sh. The TUI library is not part of the
-# standard library and the compiler knows nothing about it (see FRICTION.md
-# for what that costs); its gate is its own.
+# This library is one `.m31` file imported by another, compiled by the m31
+# compiler (m31c) and then linked, as ordinary C, against the m31 runtime's
+# own source files directly -- there is no pre-built runtime library, so
+# this script needs both LANGC (the m31c binary) and M31_ROOT (a checkout
+# of github.com/qrazil/m31, or an extracted release's bundled runtime SDK,
+# containing config.sh and runtime/) -- see build.sh's own header for the
+# full reasoning, which this mirrors.
 set -uo pipefail
-cd "$(dirname "$0")/../.."
-. ./config.sh
-. ./runtime/arch.sh
+cd "$(dirname "$0")"
 
-LANGC=${LANGC:-./target/debug/$LANG_BIN}
-DIR=apps/tui
+if [ -z "${M31_ROOT:-}" ]; then
+    echo "M31_ROOT is not set -- point it at a checkout of github.com/qrazil/m31" \
+         "(or an extracted release's runtime SDK) matching the m31c version" \
+         "you're building with. See build.sh's own header comment." >&2
+    exit 1
+fi
+if [ ! -f "$M31_ROOT/config.sh" ] || [ ! -d "$M31_ROOT/runtime" ]; then
+    echo "M31_ROOT=$M31_ROOT does not look like an m31 checkout" \
+         "(expected $M31_ROOT/config.sh and $M31_ROOT/runtime/)" >&2
+    exit 1
+fi
+
+. "$M31_ROOT/config.sh"
+. "$M31_ROOT/runtime/arch.sh"
+
+LANGC=${LANGC:-./m31c}
+DIR=.
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -38,7 +55,7 @@ good() { printf '\033[32mok\033[0m\n'; }
 bad()  { printf '\033[31mFAILED\033[0m\n'; fail=$((fail + 1)); }
 
 if [ ! -x "$LANGC" ]; then
-    echo "compiler not built: $LANGC" >&2
+    echo "compiler not found or not executable: $LANGC" >&2
     exit 1
 fi
 
@@ -65,9 +82,12 @@ for src in "$DIR"/tests."$LANG_EXT" "$DIR"/bench."$LANG_EXT" "$DIR"/demo."$LANG_
     bad_cc=0
     for entry in "${CCS[@]}"; do
         cc=${entry%%:*}; opt=${entry##*:}
-        if ! "$cc" "$opt" -ffp-contract=off -Wall -Wextra -DRC_DEBUG -I runtime \
+        # RT_REACTOR_C/RT_CTX_ASM (from runtime/arch.sh above) are paths
+        # relative to M31_ROOT, not to this script's own directory.
+        if ! "$cc" "$opt" -ffp-contract=off -Wall -Wextra -DRC_DEBUG -I "$M31_ROOT/runtime" \
              -pthread -o "$WORK/$base.$cc$opt" "$WORK/$base.c" \
-             runtime/rt.c runtime/scheduler.c "$RT_REACTOR_C" "$RT_CTX_ASM" \
+             "$M31_ROOT/runtime/rt.c" "$M31_ROOT/runtime/scheduler.c" \
+             "$M31_ROOT/$RT_REACTOR_C" "$M31_ROOT/$RT_CTX_ASM" \
              2>"$WORK/$base.cc"; then
             bad_cc=1; echo; sed 's/^/    /' "$WORK/$base.cc" | head -8; break
         fi
@@ -124,9 +144,10 @@ fi
 echo
 bcc=gcc
 command -v gcc >/dev/null || bcc=clang
-if "$bcc" -O2 -ffp-contract=off -I runtime -pthread -o "$WORK/bench.fast" \
+if "$bcc" -O2 -ffp-contract=off -I "$M31_ROOT/runtime" -pthread -o "$WORK/bench.fast" \
        "$WORK/bench.c" \
-       runtime/rt.c runtime/scheduler.c "$RT_REACTOR_C" "$RT_CTX_ASM" \
+       "$M31_ROOT/runtime/rt.c" "$M31_ROOT/runtime/scheduler.c" \
+       "$M31_ROOT/$RT_REACTOR_C" "$M31_ROOT/$RT_CTX_ASM" \
        2>/dev/null; then
     "$WORK/bench.fast"
 else
@@ -135,8 +156,8 @@ fi
 
 echo
 if [ $fail -eq 0 ]; then
-    printf '\033[32mapps/tui: all checks passed\033[0m\n'
+    printf '\033[32mtui: all checks passed\033[0m\n'
 else
-    printf '\033[31mapps/tui: %d check(s) FAILED\033[0m\n' "$fail"
+    printf '\033[31mtui: %d check(s) FAILED\033[0m\n' "$fail"
 fi
 exit $fail
