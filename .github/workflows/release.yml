@@ -1,0 +1,44 @@
+name: Release
+
+# Publishes this library as a source tarball for a pushed version tag. There
+# is no binary to build: a program using it compiles these .m31 files beside
+# its own entry file (the m31 module loader only resolves imports against the
+# entry file's directory), so the release is the files themselves.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# test.yml is a hard precondition: a broken build must never produce a release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # softprops/action-gh-release needs this to create the release and upload assets
+
+jobs:
+  test:
+    name: Test (precondition)
+    uses: ./.github/workflows/test.yml
+
+  release:
+    name: Publish release
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          OUT="tui-${GITHUB_REF_NAME}"
+          mkdir -p "$OUT"
+          cp tui*.m31 build.sh check.sh README.md FRICTION.md "$OUT/"
+          tar -czf "tui-source.tar.gz" "$OUT"
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tui-source.tar.gz
+          fail_on_unmatched_files: true
+          generate_release_notes: true

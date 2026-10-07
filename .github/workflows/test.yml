@@ -11,7 +11,7 @@ name: Test
 # tarball. No git clone of that repo, no Rust toolchain: `curl`, `tar` and a
 # C compiler are everything this needs.
 #
-# No release.yml: unlike httpserver/markdown, this library has no single
+# release.yml publishes a source tarball only: unlike httpserver/markdown, this library has no single
 # binary to ship -- see README.md's "This library is not part of the
 # standard library" for why a program using this must still live beside it
 # (or vendor it) until the language has its own way to import a multi-file
