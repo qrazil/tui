@@ -105,6 +105,12 @@ pub bytes diff(tuibuf.Buffer prev, tuibuf.Buffer next, tuistyle.Depth depth) {
     int cur_x = -1;
     int cur_y = -1;
     for (int y in a.y .. a.bottom()) {
+        // Most rows of most frames are untouched -- a cursor moved, two
+        // rows changed -- and an untouched row writes nothing, so it is not
+        // worth a per-cell look, let alone the trailing-blank scan.
+        if (prev.same_row(next, y)) {
+            continue;
+        }
         int tail = tail_start(next, y);
         int x = a.x;
         while (x < a.right()) {
@@ -201,18 +207,11 @@ void cross(bytes out, tuibuf.Buffer next, int from, int to, int y, int pen) {
 
 /// The first column of the run of plain spaces that ends row `y`, or the
 /// row's end when it does not end in one. Computed once per row: asking the
-/// question per cell would make a full redraw quadratic in the width.
+/// question per cell would make a full redraw quadratic in the width. The
+/// buffer answers it in one pass over its own lists (`Buffer.tail_start`),
+/// which is cheaper than this module reading the row back a cell at a time.
 int tail_start(tuibuf.Buffer b, int y) {
-    tuigeom.Rect a = b.area();
-    int cx = a.right();
-    while (cx > a.x) {
-        int p = cx - 1;
-        if (b.style_at(p, y) != tuistyle.RESET_STYLE || b.sym_at(p, y) != " ") {
-            return cx;
-        }
-        cx = p;
-    }
-    return cx;
+    return b.tail_start(y);
 }
 
 int write_style(bytes out, int pen, int want, tuistyle.Depth depth) {
