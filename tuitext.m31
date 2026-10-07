@@ -117,6 +117,10 @@ pub List<str> wrap(str s, int cols) {
 }
 
 void wrap_line(List<str> out, str line, int cols) {
+    if (plain(line)) {
+        wrap_plain(out, line, cols);
+        return;
+    }
     List<str> cur = [];
     int cur_w = 0;
     List<str> word = [];
@@ -157,6 +161,55 @@ void wrap_line(List<str> out, str line, int cols) {
     }
     cur_w = flush(out, cur, cur_w, word, word_w, gap, cols);
     out.push(cur.join(""));
+}
+
+/// `wrap_line` for a line that is all printable ASCII -- the usual case for
+/// a commit message, a file path, a log line -- where a cluster is a byte
+/// and a column, so there is no need to cut the line into one string per
+/// character to find its words. A word is one substring (`flush` joins
+/// whatever it is handed, so a line of words comes out the same as a line of
+/// characters), except a word longer than the whole line, which `flush` cuts
+/// cluster by cluster and so is handed to it that way. Only a space is a
+/// separator here: a tab is not printable ASCII, so a line with one in it
+/// never reaches this. The same breaks, in the same places, as the general
+/// path above -- `tests.m31`'s wrapping cases are the proof.
+void wrap_plain(List<str> out, str line, int cols) {
+    List<str> cur = [];
+    int cur_w = 0;
+    int gap = 0;
+    int n = line.size();
+    int i = 0;
+    int start = 0;
+    while (i <= n) {
+        bool at_space = i < n && line.byte_at(i) == ' ';
+        if (i == n || at_space) {
+            int word_w = i - start;
+            if (word_w > 0) {
+                cur_w = flush(out, cur, cur_w, plain_word(line, start, i, cols), word_w, gap, cols);
+                gap = 0;
+            }
+            if (at_space) {
+                gap = gap + 1;
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    out.push(cur.join(""));
+}
+
+/// `line[from .. to]` as the list `flush` takes: one string, or -- when it
+/// is wider than a whole line and `flush` will have to cut it -- one string
+/// per character, which is what `clusters` would have made of it.
+List<str> plain_word(str line, int from, int to, int cols) {
+    if (to - from <= cols) {
+        return [line.substr(from, to)];
+    }
+    List<str> out = [];
+    for (int k in from .. to) {
+        out.push(line.substr(k, k + 1));
+    }
+    return out;
 }
 
 /// Put `word` on `cur`, breaking the line first if it does not fit and
