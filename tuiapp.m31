@@ -115,7 +115,13 @@ pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
             w.put(enter);
             term.Reader r = term.reader();
             term.Size sz = screen_size();
+            // Two buffers for the whole run, swapped each frame: the one
+            // just shown and the one being drawn. A fresh buffer per frame
+            // is three lists grown a cell at a time -- twice the cost of
+            // clearing one that already exists -- and nothing about a
+            // frame needs the last one's memory gone.
             tuibuf.Buffer prev = tuibuf.Buffer.sized(sz.cols, sz.rows);
+            tuibuf.Buffer next = tuibuf.Buffer.sized(sz.cols, sz.rows);
             view.render(prev, prev.area());
             w.put_bytes(tuidiff.full(prev, depth));
             flush(w);
@@ -153,7 +159,14 @@ pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
                     bool grew = resized(sz, now);
                     sz = now;
                     if (redraw || grew) {
-                        tuibuf.Buffer next = tuibuf.Buffer.sized(sz.cols, sz.rows);
+                        if (grew) {
+                            // A resize is the one time the buffers are
+                            // replaced: the old pair is the wrong shape.
+                            next = tuibuf.Buffer.sized(sz.cols, sz.rows);
+                            prev = tuibuf.Buffer.sized(sz.cols, sz.rows);
+                        } else {
+                            next.clear();
+                        }
                         view.render(next, next.area());
                         if (grew) {
                             w.put_bytes(tuidiff.full(next, depth));
@@ -161,7 +174,9 @@ pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
                             w.put_bytes(tuidiff.diff(prev, next, depth));
                         }
                         flush(w);
+                        tuibuf.Buffer shown = prev;
                         prev = next;
+                        next = shown;
                     }
                 }
             }
