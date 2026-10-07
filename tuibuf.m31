@@ -180,6 +180,52 @@ pub bool Buffer.same_cell(Buffer other, int x, int y) {
     return wid[i] == other.wid[i] && sty[i] == other.sty[i] && sym[i] == other.sym[i];
 }
 
+/// Is row `y` the same in both buffers, cell for cell? The renderer asks
+/// this before it looks at any cell of a row: a keystroke changes one or two
+/// rows of fifty, and a row that did not change costs one pass over three
+/// integer lists here instead of a per-cell `same_cell` (each with its own
+/// bounds check) plus a scan for its trailing blanks. **Traps** when the
+/// buffers do not cover the same rectangle.
+pub bool Buffer.same_row(Buffer other, int y) {
+    if (!box.eq(other.box)) {
+        trap("tuibuf.Buffer.same_row: the buffers cover different rectangles");
+    }
+    if (y < box.y || y >= box.bottom()) {
+        trap("tuibuf.Buffer.same_row: outside the buffer");
+    }
+    int i = (y - box.y) * box.w;
+    int end = i + box.w;
+    while (i < end) {
+        if (wid[i] != other.wid[i] || sty[i] != other.sty[i] || sym[i] != other.sym[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+/// The first column of the run of plain blanks -- a space, in the reset
+/// style -- that ends row `y`, or the row's end when it does not end in one.
+/// This is what the renderer turns into `\x1b[K`; computed here, in one pass
+/// over the lists, rather than cell by cell through `style_at`/`sym_at`,
+/// each of which hands back a reference the caller then has to release.
+/// **Traps** outside the buffer.
+pub int Buffer.tail_start(int y) {
+    if (y < box.y || y >= box.bottom()) {
+        trap("tuibuf.Buffer.tail_start: outside the buffer");
+    }
+    int base = (y - box.y) * box.w;
+    int cx = box.w;
+    while (cx > 0) {
+        int i = base + cx - 1;
+        if (sty[i] != tuistyle.RESET_STYLE || sym[i] != " ") {
+            return box.x + cx;
+        }
+        cx = cx - 1;
+    }
+    return box.x;
+}
+
 /// Append the UTF-8 bytes of the symbol at `x`, `y` to `out`.
 ///
 /// `out.extend(b.sym_at(x, y).to_bytes())` says the same thing and allocates
@@ -289,7 +335,7 @@ pub int Buffer.set_str(int x, int y, str s, tuistyle.Style st, int max = -1) {
         return 0;
     }
     int p = st.pack();
-    if (x >= box.x && ascii_run(s)) {
+    if (x >= box.x && ascii_run(s, limit + 1)) {
         return fast_ascii(x, y, s, p, limit);
     }
     int cx = x;
@@ -443,11 +489,20 @@ pub str Buffer.frame() {
     return out.join("\n");
 }
 
-/// Is every byte of `s` printable ASCII? Then every cluster is one byte and
-/// one column, and `set_str` can skip the Unicode work entirely.
-bool ascii_run(str s) {
+/// Is every byte of `s`'s first `upto` bytes printable ASCII? Then every
+/// cluster among them is one byte and one column, and `set_str` can skip
+/// the Unicode work entirely. Only `limit + 1` bytes matter when the write
+/// is clipped to `limit` columns: the byte just past the clip decides
+/// whether the slow path would have had a zero-width cluster to glue onto
+/// the last cell written, and an ASCII byte there is a one-column cluster
+/// the slow path stops at too -- so the two agree exactly, and a long line
+/// clipped to a narrow column is no longer scanned to its end.
+bool ascii_run(str s, int upto) {
     int i = 0;
     int n = s.size();
+    if (upto < n) {
+        n = upto;
+    }
     while (i < n) {
         int b = s.byte_at(i);
         if (b < ' ' || b > '~') {

@@ -11,6 +11,7 @@
 //   tuidiffview.Hunk(header, lines)  one `@@ ... @@` block
 //   tuidiffview.DiffView(hunks)      the widget: cursor, scroll, render
 //   view.at()           -> Option<Row>   what the cursor is on, right now
+//   view.count()        -> int           how many rows, without building them
 //   view.move(delta), view.render(buf, area)
 //
 // --- what a `Row` addresses ---------------------------------------------------
@@ -109,20 +110,53 @@ pub List<Row> DiffView.rows() {
     return out;
 }
 
+/// How many rows `rows()` would answer, without building them: one per
+/// hunk header, plus every hunk's lines. A diff of thousands of lines is
+/// moved through, asked about and redrawn once per keystroke, and each of
+/// those used to flatten the whole thing to read one row of it -- so the
+/// three operations below walk the hunks (a few dozen) rather than the
+/// rows (a few thousand), the same way `tuioutline` does.
+pub int DiffView.count() {
+    int n = 0;
+    for (Hunk h in hunks) {
+        n = n + 1 + h.lines.size();
+    }
+    return n;
+}
+
+/// The row at index `i` of the flattened view, or `None` -- by walking the
+/// hunks' sizes, not by building the rows.
+Option<Row> DiffView.row_at(int i) {
+    if (i < 0) {
+        return Option<Row>.None;
+    }
+    int left = i;
+    int h = 0;
+    while (h < hunks.size()) {
+        if (left == 0) {
+            return Option<Row>.Some(Row(RowKind.Header, h, -1));
+        }
+        left = left - 1;
+        int n = hunks[h].lines.size();
+        if (left < n) {
+            return Option<Row>.Some(Row(RowKind.Body, h, left));
+        }
+        left = left - n;
+        h = h + 1;
+    }
+    return Option<Row>.None;
+}
+
 /// What is under the cursor right now -- a hunk header, or a particular
 /// line of a particular hunk -- or `None` when the diff is empty.
 pub Option<Row> DiffView.at() {
-    List<Row> rs = rows();
-    if (cursor < 0 || cursor >= rs.size()) {
-        return Option<Row>.None;
-    }
-    return Option<Row>.Some(rs[cursor]);
+    return row_at(cursor);
 }
 
 /// Move the cursor by `delta` rows of the flattened view, stopping at the
 /// ends.
 pub void DiffView.move(int delta) {
-    int n = rows().size();
+    int n = count();
     if (n == 0) {
         cursor = 0;
         return;
@@ -170,42 +204,57 @@ pub void DiffView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         return;
     }
     buf.fill(area, " ", context_style);
-    List<Row> rs = rows();
-    if (cursor >= rs.size()) {
-        cursor = rs.size() - 1;
+    int total = count();
+    if (cursor >= total) {
+        cursor = total - 1;
     }
     if (cursor < 0) {
         cursor = 0;
     }
-    view.reveal(cursor, rs.size(), area.h);
-    view.offset = view.clamped(rs.size(), area.h);
+    view.reveal(cursor, total, area.h);
+    view.offset = view.clamped(total, area.h);
     int off = view.offset;
+    // Find the first row on screen once, then step through the hunks in
+    // order: `h`/`l` are the row's hunk and line, `l` of -1 being its header.
+    int h = 0;
+    int l = -1;
+    match (row_at(off)) {
+        case Some(Row first): {
+            h = first.hunk;
+            l = first.line;
+        }
+        case None: {
+            return;
+        }
+    }
     int i = 0;
     while (i < area.h) {
         int k = off + i;
-        if (k >= rs.size()) {
+        if (k >= total) {
             return;
         }
-        Row row = rs[k];
         int y = area.y + i;
         str text = "";
         tuistyle.Style st = context_style;
-        match (row.kind) {
-            case Header: {
-                text = hunks[row.hunk].header;
-                st = header_style;
-            }
-            case Body: {
-                Line l = hunks[row.hunk].lines[row.line];
-                text = marker(l) + l.text;
-                st = line_style(l);
-            }
+        if (l < 0) {
+            text = hunks[h].header;
+            st = header_style;
+        } else {
+            Line ln = hunks[h].lines[l];
+            text = marker(ln) + ln.text;
+            st = line_style(ln);
         }
         if (k == cursor) {
             st = st.merged(highlight_style);
             buf.fill(tuigeom.Rect(area.x, y, area.w, 1), " ", st);
         }
         buf.set_str(area.x, y, tuitext.truncate(text, area.w), st, max: area.w);
+        if (l + 1 < hunks[h].lines.size()) {
+            l = l + 1;
+        } else {
+            h = h + 1;
+            l = -1;
+        }
         i = i + 1;
     }
 }

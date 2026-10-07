@@ -10,6 +10,7 @@
 //   tuioutline.Node.section(id, label, children)  a row that can fold
 //   tuioutline.Outline(roots)                     the widget itself
 //   outline.rows()             -> List<Row>       the FLATTENED, visible rows
+//   outline.count()            -> int             how many of them, without building them
 //   outline.current()          -> Option<Row>     the row under the cursor
 //   outline.move(delta)                           step the cursor
 //   outline.toggle() / .expand() / .collapse()    fold the row under the cursor
@@ -22,10 +23,18 @@
 // A node's children are rows only when every ancestor down to it is
 // expanded. Collapsing a section removes its whole subtree from the
 // flattened list in one step, which is what makes folding a thousand-line
-// diff one keystroke rather than one per line -- and what makes `rows()`
-// recomputed on demand rather than cached: an outline in a terminal is at
-// most a few hundred rows, and the tree walk to flatten it costs nothing a
-// keypress would notice.
+// diff one keystroke rather than one per line.
+//
+// `rows()` is recomputed on demand rather than cached -- `roots` and every
+// `Node.expanded` are public fields a caller may change directly, so there
+// is nothing a cache could be keyed on -- but the widget's OWN operations
+// do not go through it: a 200-commit log with its files unfolded is five
+// thousand rows, a keystroke on it is a move, a `current()` and a redraw,
+// and materialising five thousand `Row`s three times per keystroke was the
+// whole cost of scrolling it. `move` counts, `current`/`toggle`/
+// `select_id` walk to one row, and `render` walks to the first row on screen
+// and stops after the last -- the same tree walk `rows()` makes, allocating
+// only what each caller actually reads.
 //
 // --- why every node has an id ------------------------------------------------
 //
@@ -130,19 +139,48 @@ void Outline.collect(List<Row> out, Node n, int depth) {
     }
 }
 
-/// The row the cursor is on, or `None` when the outline has none.
-pub Option<Row> Outline.current() {
-    List<Row> rs = rows();
-    if (cursor < 0 || cursor >= rs.size()) {
+/// How many rows `rows()` would answer, without building them.
+pub int Outline.count() {
+    int n = 0;
+    for (Node r in roots) {
+        n = n + visible(r);
+    }
+    return n;
+}
+
+/// Rows `from` up to `from + want` of the flattened, visible list -- what
+/// `render` draws, and nothing past the bottom of the screen.
+List<Row> Outline.window(int from, int want) {
+    Walk w = Walk(from, want, []);
+    for (Node r in roots) {
+        if (w.visit(r, 0)) {
+            return w.out;
+        }
+    }
+    return w.out;
+}
+
+/// The row at index `i` of the flattened, visible list, or `None`.
+Option<Row> Outline.row_at(int i) {
+    if (i < 0) {
         return Option<Row>.None;
     }
-    return Option<Row>.Some(rs[cursor]);
+    List<Row> one = window(i, 1);
+    if (one.size() == 0) {
+        return Option<Row>.None;
+    }
+    return Option<Row>.Some(one[0]);
+}
+
+/// The row the cursor is on, or `None` when the outline has none.
+pub Option<Row> Outline.current() {
+    return row_at(cursor);
 }
 
 /// Move the cursor by `delta` rows of the flattened, visible list, stopping
 /// at the ends -- `tuilists.ListView.step`'s own rule.
 pub void Outline.move(int delta) {
-    int n = rows().size();
+    int n = count();
     if (n == 0) {
         cursor = 0;
         return;
@@ -197,14 +235,12 @@ pub void Outline.collapse() {
 /// was found -- a row hidden inside a folded section is not, which is
 /// correct: there is nothing on screen yet to put the cursor on.
 pub bool Outline.select_id(str id) {
-    List<Row> rs = rows();
-    int i = 0;
-    while (i < rs.size()) {
-        if (rs[i].node.id == id) {
-            cursor = i;
+    Seek s = Seek(id);
+    for (Node r in roots) {
+        if (s.visit(r)) {
+            cursor = s.index;
             return true;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -214,23 +250,24 @@ pub void Outline.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         return;
     }
     buf.fill(area, " ", style);
-    List<Row> rs = rows();
-    if (cursor >= rs.size()) {
-        cursor = rs.size() - 1;
+    int total = count();
+    if (cursor >= total) {
+        cursor = total - 1;
     }
     if (cursor < 0) {
         cursor = 0;
     }
-    view.reveal(cursor, rs.size(), area.h);
-    view.offset = view.clamped(rs.size(), area.h);
+    view.reveal(cursor, total, area.h);
+    view.offset = view.clamped(total, area.h);
     int off = view.offset;
+    List<Row> rs = window(off, area.h);
     int i = 0;
     while (i < area.h) {
-        int k = off + i;
-        if (k >= rs.size()) {
+        if (i >= rs.size()) {
             return;
         }
-        Row row = rs[k];
+        int k = off + i;
+        Row row = rs[i];
         int y = area.y + i;
         tuistyle.Style st = style.merged(row.node.style);
         if (k == cursor) {
@@ -253,4 +290,66 @@ pub void Outline.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         }
         i = i + 1;
     }
+}
+
+int visible(Node n) {
+    int c = 1;
+    if (n.expanded) {
+        for (Node k in n.children) {
+            c = c + visible(k);
+        }
+    }
+    return c;
+}
+
+/// A walk that stops at one row, or collects a window of them: `skip` rows
+/// are passed over, then `want` are collected into `out` (a negative `want`
+/// means "no limit", which is what `rows()` is). Shared by every operation
+/// below that used to flatten the whole tree to read one row of it.
+type Walk {
+    int skip;
+    int want;
+    List<Row> out;
+}
+
+/// Answers whether the walk is finished, so a caller stops descending.
+bool Walk.visit(Node n, int depth) {
+    if (skip > 0) {
+        skip = skip - 1;
+    } else {
+        out.push(Row(n, depth));
+        if (want >= 0 && out.size() >= want) {
+            return true;
+        }
+    }
+    if (n.expanded) {
+        for (Node c in n.children) {
+            if (visit(c, depth + 1)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// The id-matching walk `select_id` makes: counts visible rows until one's
+/// `id` is `id`, allocating nothing on the way.
+type Seek {
+    str id;
+    int index = 0;
+}
+
+bool Seek.visit(Node n) {
+    if (n.id == id) {
+        return true;
+    }
+    index = index + 1;
+    if (n.expanded) {
+        for (Node c in n.children) {
+            if (visit(c)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }

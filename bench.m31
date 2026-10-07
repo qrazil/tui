@@ -20,8 +20,10 @@
 import date;
 import tuibuf;
 import tuidiff;
+import tuidiffview;
 import tuigeom;
 import tuilists;
+import tuioutline;
 import tuistyle;
 import tuitext;
 import tuiwidget;
@@ -151,3 +153,97 @@ while (k < runs) {
 }
 t1 = date.now_ns();
 report("frame", t1 - t0, runs, 0);
+// --- the shapes a real client hits that the screen above does not -----------
+//
+// A git client's log is a tall outline -- hundreds of commits, each unfolding
+// into files -- and one keystroke on it is a cursor move, a "what is under
+// the cursor" and a redraw. A diff is a flat run of thousands of lines with
+// the same three operations. Neither is a 50-row screen, and both used to be
+// paid for per visible row of the WHOLE document rather than per row on
+// screen, which is what these four numbers watch.
+print("");
+print("a 5,200-row outline (200 sections of 25), 2,000-line diff, 72-column wrap");
+List<tuioutline.Node> roots = [];
+for (int s in 0 .. 200) {
+    List<tuioutline.Node> kids = [];
+    for (int c in 0 .. 25) {
+        kids.push(tuioutline.Node.leaf("s" + str(s) + ":" + str(c), "M  path/to/some/file-" + str(c) + ".txt  +12 -3"));
+    }
+    roots.push(tuioutline.Node.section("s" + str(s), str(s) + "  a commit subject line of ordinary length", kids));
+}
+tuioutline.Outline o = tuioutline.Outline(roots);
+tuigeom.Rect screen = tuigeom.Rect(0, 0, W, H);
+o.cursor = 2600;
+o.render(back, screen);
+t0 = date.now_ns();
+k = 0;
+while (k < runs) {
+    o.move(1);
+    o.current();
+    o.render(back, screen);
+    k = k + 1;
+}
+t1 = date.now_ns();
+report("outline", t1 - t0, runs, 0);
+t0 = date.now_ns();
+k = 0;
+while (k < runs) {
+    o.select_id("s199:24");
+    k = k + 1;
+}
+t1 = date.now_ns();
+report("select", t1 - t0, runs, 0);
+List<tuidiffview.Hunk> hunks = [];
+for (int h in 0 .. 40) {
+    List<tuidiffview.Line> ls = [];
+    for (int l in 0 .. 50) {
+        if (l % 3 == 0) {
+            ls.push(tuidiffview.Line.added("    added line " + str(l) + " of hunk " + str(h)));
+        } else if (l % 3 == 1) {
+            ls.push(tuidiffview.Line.removed("    removed line " + str(l) + " of hunk " + str(h)));
+        } else {
+            ls.push(tuidiffview.Line.context("    context line " + str(l) + " of hunk " + str(h)));
+        }
+    }
+    hunks.push(tuidiffview.Hunk("@@ -" + str(h * 50) + ",50 +" + str(h * 50) + ",50 @@", ls));
+}
+tuidiffview.DiffView dv = tuidiffview.DiffView(hunks);
+dv.cursor = 1000;
+dv.render(back, screen);
+t0 = date.now_ns();
+k = 0;
+while (k < runs) {
+    dv.move(1);
+    dv.at();
+    dv.render(back, screen);
+    k = k + 1;
+}
+t1 = date.now_ns();
+report("diffview", t1 - t0, runs, 0);
+str prose = "The quick brown fox jumps over the lazy dog, and a commit message of ordinary length is wrapped to seventy-two columns every time the outline is rebuilt. ".repeat(12);
+t0 = date.now_ns();
+k = 0;
+while (k < runs) {
+    tuitext.wrap(prose, 72);
+    k = k + 1;
+}
+t1 = date.now_ns();
+report("wrap", t1 - t0, runs, prose.size());
+// What `tuiapp.Loop` pays before a frame is even drawn: a fresh buffer, or
+// the same one cleared.
+t0 = date.now_ns();
+k = 0;
+while (k < runs) {
+    tuibuf.Buffer.sized(W, H);
+    k = k + 1;
+}
+t1 = date.now_ns();
+report("alloc", t1 - t0, runs, 0);
+t0 = date.now_ns();
+k = 0;
+while (k < runs) {
+    back.clear();
+    k = k + 1;
+}
+t1 = date.now_ns();
+report("clear", t1 - t0, runs, 0);
