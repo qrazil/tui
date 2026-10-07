@@ -1,11 +1,11 @@
 name: Release
 
 # Publishes this library as a source tarball for a pushed version tag. There
-# is no binary to build: a program using it compiles these .m31 files beside
-# its own entry file (the m31 module loader only resolves imports against the
-# entry file's directory), so the release is the files themselves.
+# is no binary to build: a program depends on these .m31 files through its
+# deps file (m31 v0.2.0+), so the release is the files themselves, with the
+# modules at the tarball's top level beside the deps project file.
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag v0.1.1 && git push origin v0.1.1
 #
 # test.yml is a hard precondition: a broken build must never produce a release.
 on:
@@ -33,7 +33,8 @@ jobs:
           set -euo pipefail
           OUT="tui-${GITHUB_REF_NAME}"
           mkdir -p "$OUT"
-          cp tui*.m31 build.sh check.sh README.md FRICTION.md "$OUT/"
+          cp tui*.m31 deps README.md "$OUT/"
+          cp -R scripts docs "$OUT/"
           tar -czf "tui-source.tar.gz" "$OUT"
 
       - name: Publish to GitHub Releases

@@ -1,0 +1,5 @@
+# tui project file (m31 v0.2.0+): this directory is the project root, so a program
+# imports a module of this library as `import tui.tuiapp;` when it lists it as a
+# dependency, and the examples/ and tests/ entries here import them by bare name.
+name tui
+version 0.1.1

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # The TUI library's gate.
 #
-#   M31_ROOT=/path/to/m31 bash check.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash check.sh --bless    rewrite tests.out from what tests.m31 prints
+#   M31_ROOT=/path/to/m31 bash scripts/check.sh            tests, then the benchmark
+#   M31_ROOT=/path/to/m31 bash scripts/check.sh --bless    rewrite tests/tests.out from what tests/tests.m31 prints
 #
 # Four things are checked, and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
-#   1. every .m31 file here is formatted (`m31c fmt --check`)
-#   2. tests.m31, bench.m31, demo.m31 and browse.m31 all compile under gcc
+#   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
+#   2. tests/tests.m31 and examples/{bench,demo,browse}.m31 all compile under gcc
 #      and clang, at -O0 and -O2, with no warning from the emitted C
-#   3. its output matches tests.out, and contains no `FAIL` line
+#   3. its output matches tests/tests.out, and contains no `FAIL` line
 #   4. the refcount invariant holds: `__rc_live=0` at exit
 #
 # Then bench.m31 is built and run, and its numbers printed. They are not
@@ -21,15 +21,15 @@
 # own source files directly -- there is no pre-built runtime library, so
 # this script needs both LANGC (the m31c binary) and M31_ROOT (a checkout
 # of github.com/qrazil/m31, or an extracted release's bundled runtime SDK,
-# containing config.sh and runtime/) -- see build.sh's own header for the
+# containing config.sh and runtime/) -- see scripts/build.sh's own header for the
 # full reasoning, which this mirrors.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 if [ -z "${M31_ROOT:-}" ]; then
     echo "M31_ROOT is not set -- point it at a checkout of github.com/qrazil/m31" \
          "(or an extracted release's runtime SDK) matching the m31c version" \
-         "you're building with. See build.sh's own header comment." >&2
+         "you're building with. See scripts/build.sh's own header comment." >&2
     exit 1
 fi
 if [ ! -f "$M31_ROOT/config.sh" ] || [ ! -d "$M31_ROOT/runtime" ]; then
@@ -62,9 +62,7 @@ fi
 # 1. formatting -------------------------------------------------------------
 note "formatted"
 unformatted=""
-for f in "$DIR"/*."$LANG_EXT"; do
-    out=$("$LANGC" fmt --check "$f" 2>&1) || unformatted="$unformatted$out"$'\n'
-done
+out=$("$LANGC" fmt --check -r "$DIR" 2>&1) || unformatted="$out"
 if [ -n "$unformatted" ]; then bad; echo "$unformatted" | sed 's/^/    /'; else good; fi
 
 # 2. compiles clean, on every compiler present ------------------------------
@@ -73,7 +71,7 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests."$LANG_EXT" "$DIR"/bench."$LANG_EXT" "$DIR"/demo."$LANG_EXT" "$DIR"/browse."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
     note "compiles: $base"
     if ! "$LANGC" --emit-c "$src" -o "$WORK/$base.c" 2>"$WORK/$base.diag"; then
@@ -122,8 +120,8 @@ for entry in "${CCS[@]}"; do
 done
 
 if [ $bless -eq 1 ]; then
-    printf '%s\n' "$ref" > "$DIR/tests.out"
-    echo "blessed $DIR/tests.out"
+    printf '%s\n' "$ref" > "$DIR/tests/tests.out"
+    echo "blessed $DIR/tests/tests.out"
 fi
 
 note "no FAIL line"
@@ -131,9 +129,9 @@ if grep -q '^FAIL' <<<"$ref"; then
     bad; grep -A2 '^FAIL' <<<"$ref" | head -20 | sed 's/^/    /'
 else good; fi
 
-note "output matches tests.out"
-if diff -q <(printf '%s\n' "$ref") "$DIR/tests.out" >/dev/null 2>&1; then good; else
-    bad; diff "$DIR/tests.out" <(printf '%s\n' "$ref") | head -30 | sed 's/^/    /'
+note "output matches tests/tests.out"
+if diff -q <(printf '%s\n' "$ref") "$DIR/tests/tests.out" >/dev/null 2>&1; then good; else
+    bad; diff "$DIR/tests/tests.out" <(printf '%s\n' "$ref") | head -30 | sed 's/^/    /'
 fi
 
 # the benchmark -------------------------------------------------------------

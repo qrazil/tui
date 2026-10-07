@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# Compile one of this library's .m31 files (demo.m31, browse.m31, or your own
-# program importing these modules) into an executable.
+# Compile one of this library's .m31 files (examples/demo.m31,
+# examples/browse.m31, or your own program importing these modules) into an
+# executable. Run from anywhere; paths are relative to the repository root.
 #
-#   M31_ROOT=/path/to/m31 bash build.sh demo.m31          -> ./demo
-#   M31_ROOT=/path/to/m31 bash build.sh browse.m31 -o /tmp/b
+#   M31_ROOT=/path/to/m31 bash scripts/build.sh examples/demo.m31          -> ./demo
+#   M31_ROOT=/path/to/m31 bash scripts/build.sh examples/browse.m31 -o /tmp/b
 #
-# This library is one `.m31` file imported by another (or, for demo.m31/
-# browse.m31, a standalone program of its own), compiled by the m31 compiler
+# This library is one `.m31` file imported by another (or, for the examples,
+# a standalone program of its own), compiled by the m31 compiler
 # (m31c) and then linked, as ordinary C, against the m31 RUNTIME's own
 # source files -- there is no pre-built runtime library to link against
 # instead, so this script needs both:
 #
-#   - LANGC: the m31c compiler binary (env var, default ./m31c beside this
-#     script -- where a downloaded release binary lands).
+#   - LANGC: the m31c compiler binary (env var, default ./m31c in the
+#     repository root -- where a downloaded release binary lands).
 #   - M31_ROOT: a directory containing the m31 project's own config.sh and
 #     runtime/ (a checkout of github.com/qrazil/m31, or an extracted
 #     release's bundled runtime SDK -- see that repo's own release.yml)
 #     matching the version LANGC was built from. No default: a missing
 #     M31_ROOT is a clear error instead of a guess.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 if [ -z "${M31_ROOT:-}" ]; then
     echo "M31_ROOT is not set -- point it at a checkout of github.com/qrazil/m31" \
@@ -39,7 +40,7 @@ fi
 LANGC=${LANGC:-./m31c}
 CC=${CC:-cc}
 
-src=${1:?usage: M31_ROOT=/path/to/m31 bash build.sh <source.m31> [-o out]}
+src=${1:?usage: M31_ROOT=/path/to/m31 bash scripts/build.sh <source.m31> [-o out]}
 out=$(basename "$src" ".$LANG_EXT")
 [ "${2:-}" = "-o" ] && out=${3:?-o needs a name}
 
