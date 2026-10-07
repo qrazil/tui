@@ -17,16 +17,26 @@ real keys through `lib/term.m31` and redraws through this library's own
 renderer. See "Left deliberately undone" below for what stage 2's original
 wishlist dropped, and why.
 
-    M31_ROOT=/path/to/m31 bash check.sh                  # tests, then the benchmark
-    M31_ROOT=/path/to/m31 bash build.sh demo.m31 -o /tmp/d    # a static screen; run /tmp/d
-    M31_ROOT=/path/to/m31 bash build.sh browse.m31 -o /tmp/b  # an interactive one; run /tmp/b
+    M31_ROOT=/path/to/m31 bash scripts/check.sh                              # tests, then the benchmark
+    M31_ROOT=/path/to/m31 bash scripts/build.sh examples/demo.m31 -o /tmp/d    # a static screen; run /tmp/d
+    M31_ROOT=/path/to/m31 bash scripts/build.sh examples/browse.m31 -o /tmp/b  # an interactive one; run /tmp/b
 
 **This library is not part of the standard library.** The compiler knows
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
-in `lib/`. It is an ordinary library that happens to live in this
-repository — and the awkwardness of that is written up in `FRICTION.md` §1,
-because the language has no way yet for a program to depend on a library
-outside `lib/`. Today a program that uses this must live in this directory.
+in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
+depends on it from its own `deps` file and imports each module by path.
+
+    name myapp
+    version 0.1.0
+    tui https://github.com/qrazil/tui <ref>
+
+    import tui.tuiapp;
+
+(`tui path ../tui` uses a checkout in place.) The modules stay at the root of
+this repository so those paths are `tui.<module>`; this repository's own
+`deps` file is what marks the root, so `examples/` and `tests/` import the
+modules by their bare names. What the language used to force instead is
+written up in `docs/FRICTION.md` §1.
 
 ---
 
@@ -35,7 +45,7 @@ outside `lib/`. Today a program that uses this must live in this directory.
 Fourteen, in dependency order. They are all prefixed `tui` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
-`FRICTION.md` §1. `tuiapp` is the one exception worth naming: it is the only
+`docs/FRICTION.md` §1. `tuiapp` is the one exception worth naming: it is the only
 module that imports `lib/term.m31` and touches raw mode, a real read and a
 real write; every other module below it is still pure computation against a
 buffer.
@@ -105,7 +115,7 @@ width is 0. The renderer never writes a continuation, and every write keeps
 the invariant that a continuation has a two-wide cell immediately to its
 left. Overwriting either half of a pair turns the other into a space. That
 is where terminal libraries have bugs, and it is checked from both
-directions in `tests.m31`.
+directions in `tests/tests.m31`.
 
 ---
 
@@ -115,7 +125,7 @@ directions in `tests.m31`.
 **the sizes always sum to exactly `total` and none is negative** — so the
 parts tile the whole with no gap and no overlap. That invariant is checked
 against 2 000 random constraint sets from a seeded generator, horizontally
-and vertically, in `tests.m31`.
+and vertically, in `tests/tests.m31`.
 
 Each constraint states a preferred size, clamped into `0..total`:
 `Length(v)` is `v`, `Percentage(p)` is `total * p / 100`, `Ratio(a, b)` is
@@ -237,14 +247,14 @@ language already use: `Action handle(term.Event ev)`, answering `Continue`,
 resize event — and whether that redraw is a full repaint or a diff against
 the previous frame.
 
-`browse.m31` is a runnable proof: a small interactive file browser
+`examples/browse.m31` is a runnable proof: a small interactive file browser
 built ONLY from widgets that existed before this loop (`ListView`,
 `Block`, `Paragraph`) — j/k or the arrows move, Enter descends into a
 directory, u or Backspace goes back up, q or Escape quits, and the terminal
 is always restored on the way out, trap included, because that is what
 `term.raw()`'s `Session` is for.
 
-    M31_ROOT=/path/to/m31 bash build.sh browse.m31 -o /tmp/browse && /tmp/browse
+    M31_ROOT=/path/to/m31 bash scripts/build.sh examples/browse.m31 -o /tmp/browse && /tmp/browse
 
 ---
 
@@ -263,15 +273,15 @@ A 200×50 frame — 10 000 cells, a full-screen terminal — built with
 
 The 60-frames-a-second budget is 16.67 ms, so a complete frame is about
 **8× inside it**, and a frame in which nothing much moved is 21 bytes on the
-wire. Run `M31_ROOT=/path/to/m31 bash check.sh` for the numbers on your own
+wire. Run `M31_ROOT=/path/to/m31 bash scripts/check.sh` for the numbers on your own
 machine.
 
 ---
 
 ## Testing without a terminal
 
-`tests.m31` prints a report — 163 assertions plus rendered frames — and
-`check.sh` compares it against `tests.out`, checks for a `FAIL` line, checks
+`tests/tests.m31` prints a report — 163 assertions plus rendered frames — and
+`check.sh` compares it against `tests/tests.out`, checks for a `FAIL` line, checks
 `__rc_live=0`, and checks that gcc and clang at `-O0` and `-O2` all agree.
 Every widget and primitive added for stage 2 and stage 3 is in there,
 against synthetic buffers and synthetic `term.Event`s with no terminal
@@ -279,7 +289,7 @@ anywhere near it — `tuiapp.Loop.run` is the one function in this library
 that cannot be (it opens raw mode and blocks on a real read), so its own
 pure pieces are tested instead (`resized`, and a `Handler` written outside
 the library dispatched directly, the same proof `Widget` gets below) and
-the loop itself is proven by `browse.m31` against a real terminal.
+the loop itself is proven by `examples/browse.m31` against a real terminal.
 
 A buffer prints itself: `print(buf)` gives the rows as text, and
 `buf.frame()` puts a rule around them so trailing spaces are visible and an
