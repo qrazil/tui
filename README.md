@@ -202,7 +202,7 @@ none of them git-specific:
   - **`TUI_jump_list.JumpList`** — a flat, selectable index of an `Outline`'s
     current rows, synced two ways: `sync_from` rebuilds it from the
     outline's flattened rows, `follow` highlights the entry matching wherever
-    the outline's cursor now is, and `activate` moves the outline's cursor
+    the outline's cursor now is, and `did_activate` moves the outline's cursor
     to whatever is selected here. Matching is always by `id`, never by row
     number, which is what keeps the two in step regardless of what is
     currently folded.
@@ -287,7 +287,7 @@ Every widget and primitive added for stage 2 and stage 3 is in there,
 against synthetic buffers and synthetic `term.Event`s with no terminal
 anywhere near it — `TUI_app.Loop.run` is the one function in this library
 that cannot be (it opens raw mode and blocks on a real read), so its own
-pure pieces are tested instead (`resized`, and a `Handler` written outside
+pure pieces are tested instead (`has_resized`, and a `Handler` written outside
 the library dispatched directly, the same proof `Widget` gets below) and
 the loop itself is proven by `examples/browse.m31` against a real terminal.
 

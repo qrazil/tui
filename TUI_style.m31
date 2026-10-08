@@ -305,14 +305,14 @@ pub void sgr(bytes out, int from, int target, Depth depth) {
 /// first bare, every later one after a `;`.
 type Sgr {
     bytes out;
-    bool first = true;
+    bool is_first = true;
 }
 
 void Sgr.code(int value) {
-    if (!first) {
+    if (!is_first) {
         out.push(';');
     }
-    first = false;
+    is_first = false;
     push_int(out, value);
 }
 
@@ -329,9 +329,9 @@ pub const int RESET_STYLE = 0;
 
 /// The SGR parameters for colour code `colour_code`, at this depth, on the foreground
 /// or on the background.
-void colour_codes(Sgr codes, int colour_code, Depth depth, bool back) {
+void colour_codes(Sgr codes, int colour_code, Depth depth, bool is_background) {
     int base = 30;
-    if (back) {
+    if (is_background) {
         base = 40;
     }
     if (colour_code == 0) {

@@ -237,11 +237,11 @@ integer overflow because it does not trust the programmer with that.
 
 ```c
 int l = 0;
-if (drawn(LEFT)) {
+if (is_drawn(LEFT)) {
     l = 1;
 }
 int r = 0;
-if (drawn(RIGHT)) {
+if (is_drawn(RIGHT)) {
     r = 1;
 }
 ```
@@ -249,7 +249,7 @@ if (drawn(RIGHT)) {
 twenty lines for what is
 
 ```c
-int l = drawn(LEFT) ? 1 : 0;
+int l = is_drawn(LEFT) ? 1 : 0;
 ```
 
 or, better and in keeping with the language's own taste, an `if` that is an
@@ -360,8 +360,8 @@ What I had to write, inside `TUI_buffer` where the `str` is in hand without a
 retain:
 
 ```c
-pub void Buffer.append_sym(bytes out, int x, int y) {
-    str s = sym[at(x, y)];
+pub void Buffer.append_symbol(bytes out, int x, int y) {
+    str s = symbols[at(x, y)];
     int n = s.size();
     int i = 0;
     while (i < n) {
@@ -385,14 +385,14 @@ The renderer's inner question is "is this cell the same as last frame's".
 The obvious spelling, across module boundaries, is three accessor calls:
 
 ```c
-bool changed(Buffer prev, Buffer next, int x, int y) {
+bool has_changed(Buffer prev, Buffer next, int x, int y) {
     if (prev.width_at(x, y) != next.width_at(x, y)) { return true; }
     if (prev.style_at(x, y) != next.style_at(x, y)) { return true; }
-    return prev.sym_at(x, y) != next.sym_at(x, y);      // two owned strs
+    return prev.symbol_at(x, y) != next.symbol_at(x, y);      // two owned strs
 }
 ```
 
-Returns are owned, +1 (§7.2), so each `sym_at` is a retain in the callee and
+Returns are owned, +1 (§7.2), so each `symbol_at` is a retain in the callee and
 a release in the caller, and `rc_inc`/`rc_dec` are deliberately out-of-line
 (`gates.sh` enforces that they stay in `rt.c`). Four non-inlinable calls per
 cell, forty thousand per frame.
@@ -400,7 +400,7 @@ cell, forty thousand per frame.
 The fix was to put the comparison where the data is:
 
 ```c
-pub bool Buffer.same_cell(Buffer other, int x, int y) { ... }
+pub bool Buffer.is_same_cell(Buffer other, int x, int y) { ... }
 ```
 
 **Measured, 200×50 diff with nothing changed: 1.36 ms → 0.50 ms.** A 2.7×
@@ -427,7 +427,7 @@ is entirely printable ASCII, where the answer is `s.size()`.
 I could not change `lib/`, so `TUI_text` has its own:
 
 ```c
-bool plain(str s) {                     // every byte printable ASCII?
+bool is_plain(str s) {                     // every byte printable ASCII?
     int n = s.size();
     int i = 0;
     while (i < n) {
@@ -439,7 +439,7 @@ bool plain(str s) {                     // every byte printable ASCII?
 }
 
 pub int width(str s) {
-    if (plain(s)) { return s.size(); }
+    if (is_plain(s)) { return s.size(); }
     return unicode.width(s);
 }
 ```

@@ -4,11 +4,11 @@
 // ---
 //   TUI_geometry.Rect(x, y, width, height)      a rectangle in terminal cells
 //   r.right(), r.bottom()           one past the last column / row
-//   r.is_empty(), r.contains(point_x, point_y), r.intersect(other)
+//   r.is_empty(), r.has_point(point_x, point_y), r.intersect(other)
 //   r.inset(margin), r.inset_xy(margin_x, margin_y)  a margin taken off every side
 //   TUI_geometry.Constraint              Length | Percentage | Ratio | Min | Max | Fill
-//   TUI_geometry.rows(area, constraints)          cut top to bottom
-//   TUI_geometry.cols(area, constraints)          cut left to right
+//   TUI_geometry.rows(area, constraints) cut top to bottom
+//   TUI_geometry.columns(area, constraints) cut left to right
 //   TUI_geometry.Layout(direction, parts, ...) the same with margins and spacing
 //   TUI_geometry.resolve(total, constraints)      the solver alone, on one dimension
 //
@@ -104,7 +104,7 @@ pub int Rect.cells() {
 }
 
 /// Is the cell at `point_x`, `point_y` inside?
-pub bool Rect.contains(int point_x, int point_y) {
+pub bool Rect.has_point(int point_x, int point_y) {
     return point_x >= x && point_x < right() && point_y >= y && point_y < bottom();
 }
 
@@ -596,6 +596,6 @@ pub List<Rect> rows(Rect area, List<Constraint> constraints) {
 }
 
 /// Cut `area` left to right. The short spelling of a horizontal `Layout`.
-pub List<Rect> cols(Rect area, List<Constraint> constraints) {
+pub List<Rect> columns(Rect area, List<Constraint> constraints) {
     return Layout(Direction.Horizontal, constraints).split(area);
 }

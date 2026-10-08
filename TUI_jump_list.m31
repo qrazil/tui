@@ -13,7 +13,7 @@
 //   jump.sync_from(outline)           rebuild `entries` from the outline's
 //                                     CURRENT flattened, visible rows
 //   jump.follow(outline)              outline moved -> highlight the match here
-//   jump.activate(outline)  -> bool   here selected -> move the outline there
+//   jump.did_activate(outline) -> bool here selected -> move the outline there
 //   jump.step(delta), jump.render(buf, area)
 //
 // --- why matching is by id, not by row number --------------------------------
@@ -21,7 +21,7 @@
 // Folding a section in the outline changes every row number below the fold,
 // but changes no `id`. `sync_from` copies the outline's rows (and their
 // ids) fresh every time it is called -- after a toggle, after a reload -- and
-// `follow`/`activate` always look a row up by `id`, never by position, which
+// `follow`/`did_activate` always look a row up by `id`, never by position, which
 // is what keeps the two lists in step with each other regardless of what is
 // currently folded.
 
@@ -42,7 +42,7 @@ pub type Entry {
 
 /// The widget: a flat list of `Entry`, with its own selection and scroll,
 /// kept in step with an `Outline` through `sync_from`, `follow` and
-/// `activate` rather than owning the tree itself.
+/// `did_activate` rather than owning the tree itself.
 pub type JumpList {
     pub List<Entry> entries;
     pub int selected = -1;
@@ -74,7 +74,7 @@ pub void JumpList.sync_from(TUI_outline.Outline outline) {
 pub void JumpList.follow(TUI_outline.Outline outline) {
     match (outline.current()) {
         case Some(TUI_outline.Row row): {
-            select_id(row.node.id);
+            did_select_id(row.node.id);
         }
         case None: {
         }
@@ -84,16 +84,16 @@ pub void JumpList.follow(TUI_outline.Outline outline) {
 /// The jump-list half of the sync: move the outline's cursor (and its own
 /// scroll, through `Outline.render`) to the entry selected here. Answers
 /// whether the selection named a row the outline currently shows.
-pub bool JumpList.activate(TUI_outline.Outline outline) {
+pub bool JumpList.did_activate(TUI_outline.Outline outline) {
     if (selected < 0 || selected >= entries.size()) {
         return false;
     }
-    return outline.select_id(entries[selected].id);
+    return outline.did_select_id(entries[selected].id);
 }
 
 /// Select the entry with this `id`, if there is one. Answers whether one was
 /// found.
-pub bool JumpList.select_id(str id) {
+pub bool JumpList.did_select_id(str id) {
     int index = 0;
     while (index < entries.size()) {
         if (entries[index].id == id) {

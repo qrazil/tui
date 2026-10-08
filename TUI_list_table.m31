@@ -134,7 +134,7 @@ pub void ListView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
 ///     [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8)])
 /// ```
 ///
-/// The columns are cut by `TUI_geometry.cols`, so every constraint and every rule
+/// The columns are cut by `TUI_geometry.columns`, so every constraint and every rule
 /// in `TUI_geometry` applies: a table whose columns do not fit shrinks them by
 /// the documented order, and a cell too wide for its column is truncated
 /// with an ellipsis rather than spilling into the next one.

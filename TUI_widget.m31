@@ -130,7 +130,7 @@ pub type Block {
     pub int pad_y = 0;
 }
 
-bool Block.drawn(int side) {
+bool Block.is_drawn(int side) {
     return borders.row() >= 0 && (sides & side) != 0;
 }
 
@@ -141,16 +141,16 @@ pub TUI_geometry.Rect Block.inner(TUI_geometry.Rect area) {
     int right = 0;
     int top = 0;
     int bottom = 0;
-    if (drawn(LEFT)) {
+    if (is_drawn(LEFT)) {
         left = 1;
     }
-    if (drawn(RIGHT)) {
+    if (is_drawn(RIGHT)) {
         right = 1;
     }
-    if (drawn(TOP)) {
+    if (is_drawn(TOP)) {
         top = 1;
     }
-    if (drawn(BOTTOM)) {
+    if (is_drawn(BOTTOM)) {
         bottom = 1;
     }
     if (top == 0 && title != "") {
@@ -179,28 +179,28 @@ pub void Block.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
         int base = row * 6;
         str horizontal = BORDER[base];
         str vertical = BORDER[base + 1];
-        if (drawn(TOP)) {
+        if (is_drawn(TOP)) {
             buffer.fill(TUI_geometry.Rect(area.x, area.y, area.width, 1), horizontal, style);
         }
-        if (drawn(BOTTOM) && area.height >= 2) {
+        if (is_drawn(BOTTOM) && area.height >= 2) {
             buffer.fill(TUI_geometry.Rect(area.x, area.bottom() - 1, area.width, 1), horizontal, style);
         }
-        if (drawn(LEFT)) {
+        if (is_drawn(LEFT)) {
             buffer.fill(TUI_geometry.Rect(area.x, area.y, 1, area.height), vertical, style);
         }
-        if (drawn(RIGHT) && area.width >= 2) {
+        if (is_drawn(RIGHT) && area.width >= 2) {
             buffer.fill(TUI_geometry.Rect(area.right() - 1, area.y, 1, area.height), vertical, style);
         }
-        if (drawn(TOP) && drawn(LEFT)) {
+        if (is_drawn(TOP) && is_drawn(LEFT)) {
             buffer.set_str(area.x, area.y, BORDER[base + 2], style);
         }
-        if (drawn(TOP) && drawn(RIGHT) && area.width >= 2) {
+        if (is_drawn(TOP) && is_drawn(RIGHT) && area.width >= 2) {
             buffer.set_str(area.right() - 1, area.y, BORDER[base + 3], style);
         }
-        if (drawn(BOTTOM) && drawn(LEFT) && area.height >= 2) {
+        if (is_drawn(BOTTOM) && is_drawn(LEFT) && area.height >= 2) {
             buffer.set_str(area.x, area.bottom() - 1, BORDER[base + 4], style);
         }
-        if (drawn(BOTTOM) && drawn(RIGHT) && area.width >= 2 && area.height >= 2) {
+        if (is_drawn(BOTTOM) && is_drawn(RIGHT) && area.width >= 2 && area.height >= 2) {
             buffer.set_str(area.right() - 1, area.bottom() - 1, BORDER[base + 5], style);
         }
     }
@@ -209,10 +209,10 @@ pub void Block.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     }
     int left = 0;
     int right = 0;
-    if (drawn(LEFT)) {
+    if (is_drawn(LEFT)) {
         left = 1;
     }
-    if (drawn(RIGHT)) {
+    if (is_drawn(RIGHT)) {
         right = 1;
     }
     int room = area.width - left - right;
@@ -235,12 +235,12 @@ pub type Paragraph {
     pub str text;
     /// Break long lines to the width of the rectangle. With this off, a long
     /// line is truncated instead.
-    pub bool wrap = true;
+    pub bool should_wrap = true;
     pub TUI_text.Align align = TUI_text.Align.Left;
     /// How many wrapped lines to skip at the top.
     pub int scroll = 0;
     pub TUI_style.Style style = TUI_style.Style();
-    /// Put on the end of a line that had to be cut. Only used when `wrap` is
+    /// Put on the end of a line that had to be cut. Only used when `should_wrap` is
     /// off.
     pub str ellipsis = TUI_text.ELLIPSIS;
 }
@@ -248,7 +248,7 @@ pub type Paragraph {
 /// The lines this paragraph would draw in a rectangle `room` columns wide --
 /// what a scrollbar needs to know, and what `scroll` counts.
 pub List<str> Paragraph.lines(int room) {
-    if (wrap) {
+    if (should_wrap) {
         return TUI_text.wrap(text, room);
     }
     List<str> out = [];

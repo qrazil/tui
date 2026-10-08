@@ -3,10 +3,10 @@
 // API
 // ---
 //   TUI_text.Align                      Left | Center | Right
-//   TUI_text.wrap(text, cols)              -> List<str>, greedy, width-aware
-//   TUI_text.truncate(text, cols, ellipsis:) -> str, with an ellipsis
-//   TUI_text.pad(text, cols, align)        -> str, to exactly `cols` if it is short
-//   TUI_text.fit(text, cols, align)        -> str, truncated AND padded
+//   TUI_text.wrap(text, columns)        -> List<str>, greedy, width-aware
+//   TUI_text.truncate(text, columns, ellipsis:) -> str, with an ellipsis
+//   TUI_text.pad(text, columns, align)  -> str, to exactly `columns` if it is short
+//   TUI_text.fit(text, columns, align)  -> str, truncated AND padded
 //
 // Everything here counts **terminal columns**, by `unicode.width`: a CJK
 // ideograph is two, a combining mark is none, and an emoji sequence is one
@@ -65,7 +65,7 @@ pub const str ELLIPSIS = "\u{2026}";
 // cluster is one column wide.
 
 /// Is every byte of `text` printable ASCII?
-bool plain(str text) {
+bool is_plain(str text) {
     int length = text.size();
     for (int i in 0 .. length) {
         int byte_value = text.byte_at(i);
@@ -78,7 +78,7 @@ bool plain(str text) {
 
 /// How many columns `text` takes: `unicode.width`, with the ASCII fast path.
 pub int width(str text) {
-    if (plain(text)) {
+    if (is_plain(text)) {
         return text.size();
     }
     return unicode.width(text);
@@ -87,7 +87,7 @@ pub int width(str text) {
 /// The grapheme clusters of `text`: `unicode.graphemes`, with the same fast
 /// path.
 List<str> clusters(str text) {
-    if (!plain(text)) {
+    if (!is_plain(text)) {
         return unicode.graphemes(text);
     }
     List<str> out = [];
@@ -98,10 +98,10 @@ List<str> clusters(str text) {
     return out;
 }
 
-/// `text` broken into lines of at most `cols` columns. See the header for the
-/// rules. `cols` below 1 is treated as 1.
-pub List<str> wrap(str text, int cols) {
-    int room = cols;
+/// `text` broken into lines of at most `columns` columns. See the header for the
+/// rules. `columns` below 1 is treated as 1.
+pub List<str> wrap(str text, int columns) {
+    int room = columns;
     if (room < 1) {
         room = 1;
     }
@@ -116,22 +116,22 @@ pub List<str> wrap(str text, int cols) {
     return out;
 }
 
-void wrap_line(List<str> out, str line, int cols) {
-    if (plain(line)) {
-        wrap_plain(out, line, cols);
+void wrap_line(List<str> out, str line, int columns) {
+    if (is_plain(line)) {
+        wrap_plain(out, line, columns);
         return;
     }
     List<str> current = [];
-    int cur_w = 0;
+    int current_width = 0;
     List<str> word = [];
     int word_w = 0;
     int gap = 0;
     for (str cluster in clusters(line)) {
         int cluster_width = width(cluster);
         if (cluster == " " || cluster == "\t") {
-            bool had = word.size() > 0;
-            cur_w = flush(out, current, cur_w, word, word_w, gap, cols);
-            if (had) {
+            bool has_word = word.size() > 0;
+            current_width = flush(out, current, current_width, word, word_w, gap, columns);
+            if (has_word) {
                 gap = 0;
             }
             word = [];
@@ -144,22 +144,22 @@ void wrap_line(List<str> out, str line, int cols) {
         }
         if (cluster_width >= 2) {
             // A wide cluster is a word of its own: CJK breaks anywhere.
-            bool had = word.size() > 0;
-            cur_w = flush(out, current, cur_w, word, word_w, gap, cols);
-            if (had) {
+            bool has_word = word.size() > 0;
+            current_width = flush(out, current, current_width, word, word_w, gap, columns);
+            if (has_word) {
                 gap = 0;
             }
             word = [];
             word_w = 0;
             List<str> one = [cluster];
-            cur_w = flush(out, current, cur_w, one, cluster_width, gap, cols);
+            current_width = flush(out, current, current_width, one, cluster_width, gap, columns);
             gap = 0;
             continue;
         }
         word.push(cluster);
         word_w = word_w + cluster_width;
     }
-    cur_w = flush(out, current, cur_w, word, word_w, gap, cols);
+    current_width = flush(out, current, current_width, word, word_w, gap, columns);
     out.push(current.join(""));
 }
 
@@ -173,22 +173,22 @@ void wrap_line(List<str> out, str line, int cols) {
 /// separator here: a tab is not printable ASCII, so a line with one in it
 /// never reaches this. The same breaks, in the same places, as the general
 /// path above -- `tests.m31`'s wrapping cases are the proof.
-void wrap_plain(List<str> out, str line, int cols) {
+void wrap_plain(List<str> out, str line, int columns) {
     List<str> current = [];
-    int cur_w = 0;
+    int current_width = 0;
     int gap = 0;
     int length = line.size();
     int index = 0;
     int start = 0;
     while (index <= length) {
-        bool at_space = index < length && line.byte_at(index) == ' ';
-        if (index == length || at_space) {
+        bool is_at_space = index < length && line.byte_at(index) == ' ';
+        if (index == length || is_at_space) {
             int word_w = index - start;
             if (word_w > 0) {
-                cur_w = flush(out, current, cur_w, plain_word(line, start, index, cols), word_w, gap, cols);
+                current_width = flush(out, current, current_width, plain_word(line, start, index, columns), word_w, gap, columns);
                 gap = 0;
             }
-            if (at_space) {
+            if (is_at_space) {
                 gap = gap + 1;
             }
             start = index + 1;
@@ -201,8 +201,8 @@ void wrap_plain(List<str> out, str line, int cols) {
 /// `line[from .. end]` as the list `flush` takes: one string, or -- when it
 /// is wider than a whole line and `flush` will have to cut it -- one string
 /// per character, which is what `clusters` would have made of it.
-List<str> plain_word(str line, int from, int end, int cols) {
-    if (end - from <= cols) {
+List<str> plain_word(str line, int from, int end, int columns) {
+    if (end - from <= columns) {
         return [line.substr(from, end)];
     }
     List<str> out = [];
@@ -215,16 +215,16 @@ List<str> plain_word(str line, int from, int end, int cols) {
 /// Put `word` on `cur`, breaking the line first if it does not fit and
 /// breaking the word itself if it is longer than a whole line. Answers the
 /// new width of `cur`, which it changes in place.
-int flush(List<str> out, List<str> current, int cur_w, List<str> word, int word_w, int gap, int cols) {
+int flush(List<str> out, List<str> current, int current_width, List<str> word, int word_w, int gap, int columns) {
     if (word.size() == 0) {
-        return cur_w;
+        return current_width;
     }
-    int used = cur_w;
+    int used = current_width;
     int spaces = gap;
     if (used == 0) {
         spaces = 0;
     }
-    if (used + spaces + word_w <= cols) {
+    if (used + spaces + word_w <= columns) {
         for (int i in 0 .. spaces) {
             current.push(" ");
         }
@@ -240,7 +240,7 @@ int flush(List<str> out, List<str> current, int cur_w, List<str> word, int word_
         current.clear();
         used = 0;
     }
-    if (word_w <= cols) {
+    if (word_w <= columns) {
         for (str cluster in word) {
             current.push(cluster);
         }
@@ -250,7 +250,7 @@ int flush(List<str> out, List<str> current, int cur_w, List<str> word, int word_
     int line_w = 0;
     for (str cluster in word) {
         int cluster_width = width(cluster);
-        if (line_w > 0 && line_w + cluster_width > cols) {
+        if (line_w > 0 && line_w + cluster_width > columns) {
             out.push(current.join(""));
             current.clear();
             line_w = 0;
@@ -261,45 +261,45 @@ int flush(List<str> out, List<str> current, int cur_w, List<str> word, int word_
     return line_w;
 }
 
-/// `text` cut to at most `cols` columns, with `ellipsis` on the end to say it was.
+/// `text` cut to at most `columns` columns, with `ellipsis` on the end to say it was.
 ///
 /// Nothing is cut when it already fits. When even the ellipsis does not fit,
-/// the text is cut to `cols` with no ellipsis -- one column of `...` says
+/// the text is cut to `columns` with no ellipsis -- one column of `...` says
 /// nothing a bare cut does not.
-pub str truncate(str text, int cols, str ellipsis = ELLIPSIS) {
-    if (cols <= 0) {
+pub str truncate(str text, int columns, str ellipsis = ELLIPSIS) {
+    if (columns <= 0) {
         return "";
     }
-    if (width(text) <= cols) {
+    if (width(text) <= columns) {
         return text;
     }
     int ellipsis_width = width(ellipsis);
-    if (ellipsis_width >= cols) {
-        return cut(text, cols);
+    if (ellipsis_width >= columns) {
+        return cut(text, columns);
     }
-    return cut(text, cols - ellipsis_width) + ellipsis;
+    return cut(text, columns - ellipsis_width) + ellipsis;
 }
 
-/// The longest prefix of `text` that is at most `cols` columns, cut between
+/// The longest prefix of `text` that is at most `columns` columns, cut between
 /// grapheme clusters.
-pub str cut(str text, int cols) {
-    if (cols <= 0) {
+pub str cut(str text, int columns) {
+    if (columns <= 0) {
         return "";
     }
     // No encoding is narrower than one byte a column -- an East Asian wide
     // character is three bytes or four -- so fewer bytes than columns is
     // already the whole answer.
-    if (text.size() <= cols) {
+    if (text.size() <= columns) {
         return text;
     }
-    if (plain(text)) {
-        return text.substr(0, cols);
+    if (is_plain(text)) {
+        return text.substr(0, columns);
     }
     List<str> out = [];
     int used = 0;
     for (str cluster in clusters(text)) {
         int cluster_width = width(cluster);
-        if (used + cluster_width > cols) {
+        if (used + cluster_width > columns) {
             return out.join("");
         }
         out.push(cluster);
@@ -308,25 +308,25 @@ pub str cut(str text, int cols) {
     return out.join("");
 }
 
-/// `text` with its first `cols` columns removed, cut between grapheme
+/// `text` with its first `columns` columns removed, cut between grapheme
 /// clusters -- `cut`'s complement, for a horizontally scrolled window into
 /// text wider than the room for it. Dropping partway through a wide cluster
 /// drops the whole cluster, the same "never split a cluster" rule `cut`
 /// follows, rather than showing half of one.
-pub str drop_columns(str text, int cols) {
-    if (cols <= 0) {
+pub str drop_columns(str text, int columns) {
+    if (columns <= 0) {
         return text;
     }
-    if (text.size() <= cols) {
+    if (text.size() <= columns) {
         return "";
     }
-    if (plain(text)) {
-        return text.substr(cols, text.size());
+    if (is_plain(text)) {
+        return text.substr(columns, text.size());
     }
     List<str> out = [];
     int used = 0;
     for (str cluster in clusters(text)) {
-        if (used < cols) {
+        if (used < columns) {
             used = used + width(cluster);
             continue;
         }
@@ -335,15 +335,15 @@ pub str drop_columns(str text, int cols) {
     return out.join("");
 }
 
-/// `text` padded with spaces to `cols` columns. Text already that wide or wider
+/// `text` padded with spaces to `columns` columns. Text already that wide or wider
 /// is returned as it is -- padding never truncates, so that the two
 /// decisions stay separate.
-pub str pad(str text, int cols, Align align) {
+pub str pad(str text, int columns, Align align) {
     int text_width = width(text);
-    if (text_width >= cols) {
+    if (text_width >= columns) {
         return text;
     }
-    int room = cols - text_width;
+    int room = columns - text_width;
     match (align) {
         case Left: {
             return text + " ".repeat(room);
@@ -358,16 +358,16 @@ pub str pad(str text, int cols, Align align) {
     }
 }
 
-/// `text` in exactly `cols` columns: truncated if it is too long, padded if it
+/// `text` in exactly `columns` columns: truncated if it is too long, padded if it
 /// is too short. This is what a table cell wants.
-pub str fit(str text, int cols, Align align, str ellipsis = ELLIPSIS) {
-    return pad(truncate(text, cols, ellipsis: ellipsis), cols, align);
+pub str fit(str text, int columns, Align align, str ellipsis = ELLIPSIS) {
+    return pad(truncate(text, columns, ellipsis: ellipsis), columns, align);
 }
 
-/// Where `text` starts, in columns, when it is placed in `cols` columns.
-pub int offset(str text, int cols, Align align) {
+/// Where `text` starts, in columns, when it is placed in `columns` columns.
+pub int offset(str text, int columns, Align align) {
     int text_width = width(text);
-    if (text_width >= cols) {
+    if (text_width >= columns) {
         return 0;
     }
     match (align) {
@@ -375,10 +375,10 @@ pub int offset(str text, int cols, Align align) {
             return 0;
         }
         case Right: {
-            return cols - text_width;
+            return columns - text_width;
         }
         case Center: {
-            return (cols - text_width) / 2;
+            return (columns - text_width) / 2;
         }
     }
 }

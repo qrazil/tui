@@ -114,18 +114,18 @@ pub void Scrollbar.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int 
     if (length <= 0) {
         return;
     }
-    int vis = visible;
-    if (vis <= 0) {
-        vis = 1;
+    int visible_count = visible;
+    if (visible_count <= 0) {
+        visible_count = 1;
     }
-    int thumb = length * vis / total;
+    int thumb = length * visible_count / total;
     if (thumb < 1) {
         thumb = 1;
     }
     if (thumb > length) {
         thumb = length;
     }
-    int span = total - vis;
+    int span = total - visible_count;
     if (span < 0) {
         span = 0;
     }
@@ -143,17 +143,17 @@ pub void Scrollbar.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int 
     int cell_index = 0;
     while (cell_index < length) {
         TUI_style.Style cell_style = track_style;
-        str sym = track_symbol;
+        str symbol = track_symbol;
         if (cell_index >= position && cell_index < position + thumb) {
             cell_style = thumb_style;
-            sym = thumb_symbol;
+            symbol = thumb_symbol;
         }
         match (orient) {
             case Vertical: {
-                buffer.set_str(area.x, area.y + cell_index, sym, cell_style);
+                buffer.set_str(area.x, area.y + cell_index, symbol, cell_style);
             }
             case Horizontal: {
-                buffer.set_str(area.x + cell_index, area.y, sym, cell_style);
+                buffer.set_str(area.x + cell_index, area.y, symbol, cell_style);
             }
         }
         cell_index = cell_index + 1;

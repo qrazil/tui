@@ -170,7 +170,7 @@ void State.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     TUI_style.Style bold = TUI_style.Style(attrs: TUI_style.BOLD);
     buffer.fill(band[0], " ", bold);
     buffer.set_str(band[0].x, band[0].y, " " + path(), bold);
-    List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
+    List<TUI_geometry.Rect> mid = TUI_geometry.columns(band[1], [TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
     TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
     left.render(buffer, mid[0]);
     list.render(buffer, left.inner(mid[0]));

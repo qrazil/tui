@@ -35,7 +35,7 @@ TUI_widget.Block banner = TUI_widget.Block(title: " a terminal user interface ",
 banner.render(screen, band[0]);
 TUI_widget.Paragraph("cells are grapheme clusters \u{00B7} \u{6F22}\u{5B57} takes two columns \u{00B7} \u{1F44D}\u{1F3FD} is one cell", align: TUI_text.Align.Center).render(screen, banner.inner(band[0]));
 // Three panels.
-List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Length(22), TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
+List<TUI_geometry.Rect> mid = TUI_geometry.columns(band[1], [TUI_geometry.Constraint.Length(22), TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
 TUI_widget.Block files = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded, style: TUI_style.Style(foreground: grey));
 files.render(screen, mid[0]);
 TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "gates.sh", "run.sh", "Cargo.toml", "\u{1F44D}\u{1F3FD}.png", "notes.md", "TODO"], selected: 4, highlight_symbol: "\u{25B8} ", highlight_style: TUI_style.Style(foreground: ink, background: cream)).render(screen, files.inner(mid[0]));

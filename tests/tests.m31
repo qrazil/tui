@@ -55,8 +55,8 @@ void check_int(Tally tally, str name, int got, int want) {
     check(tally, name, str(got), str(want));
 }
 
-void ok(Tally tally, str name, bool cond) {
-    check(tally, name, str(cond), "true");
+void ok(Tally tally, str name, bool is_condition_true) {
+    check(tally, name, str(is_condition_true), "true");
 }
 
 void head(str text) {
@@ -73,7 +73,7 @@ void buffer_tests(Tally tally) {
     check(tally, "blank row", buffer.row_text(0), "          ");
     check_int(tally, "set_str returns columns", buffer.set_str(0, 0, "hello", TUI_style.Style()), 5);
     check(tally, "text landed", buffer.row_text(0), "hello     ");
-    check(tally, "get a cell", buffer.get(1, 0).sym, "e");
+    check(tally, "get a cell", buffer.get(1, 0).symbol, "e");
     // Clipping at the right edge.
     check_int(tally, "clipped at the edge", buffer.set_str(6, 0, "abcdefgh", TUI_style.Style()), 4);
     check(tally, "clipped text", buffer.row_text(0), "hello abcd");
@@ -87,7 +87,7 @@ void buffer_tests(Tally tally) {
     check(tally, "two wide characters", wide_buffer.row_text(0), "\u{6F22}\u{5B57}  ");
     check_int(tally, "head width", wide_buffer.width_at(0, 0), 2);
     check_int(tally, "continuation width", wide_buffer.width_at(1, 0), 0);
-    check(tally, "continuation symbol is empty", wide_buffer.sym_at(1, 0), "");
+    check(tally, "continuation symbol is empty", wide_buffer.symbol_at(1, 0), "");
     // A wide character with one column left is not written; a space is.
     check_int(tally, "wide at the boundary returns 6", wide_buffer.set_str(0, 1, "abcde\u{6F22}", TUI_style.Style()), 6);
     check(tally, "wide at the boundary", wide_buffer.row_text(1), "abcde ");
@@ -100,15 +100,15 @@ void buffer_tests(Tally tally) {
     // An emoji with a modifier is one cluster, two columns.
     TUI_buffer.Buffer emoji_buffer = TUI_buffer.Buffer.sized(6, 1);
     emoji_buffer.set_str(0, 0, "\u{1F44D}\u{1F3FD}!", TUI_style.Style());
-    check(tally, "emoji is one cell", emoji_buffer.sym_at(0, 0), "\u{1F44D}\u{1F3FD}");
+    check(tally, "emoji is one cell", emoji_buffer.symbol_at(0, 0), "\u{1F44D}\u{1F3FD}");
     check_int(tally, "emoji is two columns", emoji_buffer.width_at(0, 0), 2);
     check(tally, "emoji row", emoji_buffer.row_text(0), "\u{1F44D}\u{1F3FD}!   ");
     // Zero-width marks join the cell before them; one with no cell before it
     // is dropped.
     TUI_buffer.Buffer mark_buffer = TUI_buffer.Buffer.sized(4, 2);
     mark_buffer.set_str(0, 0, "e\u{301}x", TUI_style.Style());
-    check(tally, "combining mark joins its base", mark_buffer.sym_at(0, 0), "e\u{301}");
-    check(tally, "and does not take a cell", mark_buffer.sym_at(1, 0), "x");
+    check(tally, "combining mark joins its base", mark_buffer.symbol_at(0, 0), "e\u{301}");
+    check(tally, "and does not take a cell", mark_buffer.symbol_at(1, 0), "x");
     mark_buffer.set_str(0, 1, "\u{301}ab", TUI_style.Style());
     check(tally, "a leading mark is dropped", mark_buffer.row_text(1), "ab  ");
     // Styles.
@@ -161,7 +161,7 @@ void layout_tests(Tally tally) {
     List<TUI_geometry.Rect> row_rects = TUI_geometry.rows(area, [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1)]);
     check(tally, "rows: first", row_rects[0].to_str(), "2,1 20x3");
     check(tally, "rows: second", row_rects[1].to_str(), "2,4 20x7");
-    List<TUI_geometry.Rect> column_rects = TUI_geometry.cols(row_rects[1], [TUI_geometry.Constraint.Percentage(25), TUI_geometry.Constraint.Fill(1)]);
+    List<TUI_geometry.Rect> column_rects = TUI_geometry.columns(row_rects[1], [TUI_geometry.Constraint.Percentage(25), TUI_geometry.Constraint.Fill(1)]);
     check(tally, "nested cols: first", column_rects[0].to_str(), "2,4 5x7");
     check(tally, "nested cols: second", column_rects[1].to_str(), "7,4 15x7");
     List<TUI_geometry.Rect> margin_rects = TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Fill(1)], margin_x: 2, margin_y: 1).split(area);
@@ -212,24 +212,24 @@ void property_tests(Tally tally) {
         }
         List<int> got = TUI_geometry.resolve(total, constraints);
         int sum = 0;
-        bool neg = false;
+        bool is_negative = false;
         for (int size in got) {
             sum = sum + size;
             if (size < 0) {
-                neg = true;
+                is_negative = true;
             }
         }
         if (got.size() != constraint_count || sum != total) {
             bad_sum = bad_sum + 1;
             worst = describe(total, constraints, got);
         }
-        if (neg) {
+        if (is_negative) {
             bad_sign = bad_sign + 1;
             worst = describe(total, constraints, got);
         }
         // And the same through real rectangles, horizontally and vertically.
         TUI_geometry.Rect area = TUI_geometry.Rect(random_source.integer(0, 5), random_source.integer(0, 5), total, random_source.integer(0, 8));
-        List<TUI_geometry.Rect> parts = TUI_geometry.cols(area, constraints);
+        List<TUI_geometry.Rect> parts = TUI_geometry.columns(area, constraints);
         int next_x = area.x;
         for (TUI_geometry.Rect part in parts) {
             if (part.x != next_x || part.width < 0 || part.y != area.y || part.height != area.height) {
@@ -276,8 +276,8 @@ str describe(int total, List<TUI_geometry.Constraint> constraints, List<int> got
 
 // --- 4. text ----------------------------------------------------------------
 
-str wrapped(str text, int cols) {
-    return TUI_text.wrap(text, cols).join("/");
+str wrapped(str text, int columns) {
+    return TUI_text.wrap(text, columns).join("/");
 }
 
 void text_tests(Tally tally) {
@@ -396,7 +396,7 @@ void paragraph_tests(Tally tally) {
     check_int(tally, "line count at 20 columns", paragraph.lines(20).size(), 5);
     check_int(tally, "line count at 10 columns", paragraph.lines(10).size(), 11);
     TUI_buffer.Buffer unwrapped_buffer = TUI_buffer.Buffer.sized(14, 3);
-    TUI_widget.Paragraph("a long single line that will not be wrapped", wrap: false).render(unwrapped_buffer, TUI_geometry.Rect(0, 0, 14, 3));
+    TUI_widget.Paragraph("a long single line that will not be wrapped", should_wrap: false).render(unwrapped_buffer, TUI_geometry.Rect(0, 0, 14, 3));
     check(tally, "unwrapped text is truncated", unwrapped_buffer.row_text(0), "a long single\u{2026}");
     TUI_buffer.Buffer empty_buffer = TUI_buffer.Buffer.sized(8, 2);
     TUI_widget.Paragraph("x").render(empty_buffer, TUI_geometry.Rect(0, 0, 0, 0));
@@ -511,7 +511,7 @@ void scroll_tests(Tally tally) {
 }
 
 TUI_outline.Outline sample_outline() {
-    return TUI_outline.Outline([TUI_outline.Node.section("wip", "Unstaged changes", [TUI_outline.Node.leaf("a.txt", "modified: a.txt"), TUI_outline.Node.leaf("b.txt", "modified: b.txt")]), TUI_outline.Node.section("staged", "Staged changes", [TUI_outline.Node.leaf("c.txt", "new file: c.txt")], expanded: false), TUI_outline.Node.leaf("stash", "stash@{0}: on main: wip")]);
+    return TUI_outline.Outline([TUI_outline.Node.section("wip", "Unstaged changes", [TUI_outline.Node.leaf("a.txt", "modified: a.txt"), TUI_outline.Node.leaf("b.txt", "modified: b.txt")]), TUI_outline.Node.section("staged", "Staged changes", [TUI_outline.Node.leaf("c.txt", "new file: c.txt")], is_expanded: false), TUI_outline.Node.leaf("stash", "stash@{0}: on main: wip")]);
 }
 
 void outline_tests(Tally tally) {
@@ -536,11 +536,11 @@ void outline_tests(Tally tally) {
     check_int(tally, "collapsing a section removes its children", outline.rows().size(), 3);
     outline.toggle();
     check_int(tally, "expanding it again restores them", outline.rows().size(), 5);
-    ok(tally, "a row hidden by a fold cannot be selected", !outline.select_id("c.txt"));
+    ok(tally, "a row hidden by a fold cannot be selected", !outline.did_select_id("c.txt"));
     outline.cursor = 3;
     outline.toggle();
     check_int(tally, "expanding the other section adds its child", outline.rows().size(), 6);
-    ok(tally, "select_id finds a row once it is visible", outline.select_id("c.txt"));
+    ok(tally, "select_id finds a row once it is visible", outline.did_select_id("c.txt"));
     match (outline.current()) {
         case Some(TUI_outline.Row row): {
             check(tally, "select_id moved the cursor to it", row.node.id, "c.txt");
@@ -591,7 +591,7 @@ void jump_tests(Tally tally) {
         }
     }
     jump_list.step(-1);
-    ok(tally, "activate moves the outline's cursor to the selection", jump_list.activate(outline));
+    ok(tally, "activate moves the outline's cursor to the selection", jump_list.did_activate(outline));
     match (outline.current()) {
         case Some(TUI_outline.Row row): {
             check(tally, "and it is the row the jump list had selected", row.node.id, jump_list.entries[jump_list.selected].id);
@@ -773,9 +773,9 @@ str action_desc(TUI_app.Action action) {
 
 void app_tests(Tally tally) {
     head("the application loop's own pieces (no terminal touched here)");
-    ok(tally, "the same size twice is not a resize", !TUI_app.resized(term.Size(24, 80), term.Size(24, 80)));
-    ok(tally, "a different width is a resize", TUI_app.resized(term.Size(24, 80), term.Size(24, 100)));
-    ok(tally, "a different height is a resize", TUI_app.resized(term.Size(24, 80), term.Size(30, 80)));
+    ok(tally, "the same size twice is not a resize", !TUI_app.has_resized(term.Size(24, 80), term.Size(24, 80)));
+    ok(tally, "a different width is a resize", TUI_app.has_resized(term.Size(24, 80), term.Size(24, 100)));
+    ok(tally, "a different height is a resize", TUI_app.has_resized(term.Size(24, 80), term.Size(30, 80)));
     CountKeys handler = CountKeys();
     check(tally, "a plain key redraws", action_desc(handler.handle(term.Event.Key(term.Key(term.Code.Char('x'), 0)))), "Redraw");
     check(tally, "q quits", action_desc(handler.handle(term.Event.Key(term.Key(term.Code.Char('q'), 0)))), "Quit");
@@ -848,7 +848,7 @@ void screen_test(Tally tally) {
     TUI_widget.Block header = TUI_widget.Block(title: " a terminal user interface ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center);
     header.render(buffer, band[0]);
     TUI_widget.Paragraph("built on a buffer of grapheme clusters", align: TUI_text.Align.Center).render(buffer, header.inner(band[0]));
-    List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
+    List<TUI_geometry.Rect> mid = TUI_geometry.columns(band[1], [TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
     TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
     left.render(buffer, mid[0]);
     TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "Cargo.toml", "gates.sh"], selected: 3, highlight_symbol: "\u{25B8} ").render(buffer, left.inner(mid[0]));

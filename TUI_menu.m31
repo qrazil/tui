@@ -84,10 +84,10 @@ void Popup.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     }
 }
 
-/// `key`, padded to `keyw` columns, two spaces, then `label` -- the row
+/// `key`, padded to `key_width` columns, two spaces, then `label` -- the row
 /// layout both overlays use.
-str keyed_row(str key, str label, int keyw) {
-    return TUI_text.pad(key, keyw, TUI_text.Align.Left) + "  " + label;
+str keyed_row(str key, str label, int key_width) {
+    return TUI_text.pad(key, key_width, TUI_text.Align.Left) + "  " + label;
 }
 
 int widest(List<str> keys) {

@@ -38,7 +38,7 @@ void paint(TUI_buffer.Buffer buffer, int tick, List<str> names, List<List<str>> 
     TUI_widget.Block top = TUI_widget.Block(title: " frame " + str(tick) + " ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center);
     top.render(buffer, band[0]);
     TUI_widget.Paragraph("a terminal user interface, drawn into a buffer of grapheme clusters", align: TUI_text.Align.Center).render(buffer, top.inner(band[0]));
-    List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Length(24), TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
+    List<TUI_geometry.Rect> mid = TUI_geometry.columns(band[1], [TUI_geometry.Constraint.Length(24), TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
     TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
     left.render(buffer, mid[0]);
     TUI_list_table.ListView(names, selected: tick % 60, highlight_symbol: "\u{25B8} ").render(buffer, left.inner(mid[0]));
@@ -188,7 +188,7 @@ report("outline", stop_ns - start_ns, runs, 0);
 start_ns = date.now_ns();
 run_index = 0;
 while (run_index < runs) {
-    outline.select_id("s199:24");
+    outline.did_select_id("s199:24");
     run_index = run_index + 1;
 }
 stop_ns = date.now_ns();

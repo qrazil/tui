@@ -14,7 +14,7 @@
 //   outline.current()          -> Option<Row>     the row under the cursor
 //   outline.move(delta)                           step the cursor
 //   outline.toggle() / .expand() / .collapse()    fold the row under the cursor
-//   outline.select_id(id)      -> bool            move the cursor to a row by id
+//   outline.did_select_id(id)  -> bool            move the cursor to a row by id
 //   outline.scroll_h(delta)                       pan every row sideways
 //   outline.render(buf, area)
 //
@@ -26,13 +26,13 @@
 // diff one keystroke rather than one per line.
 //
 // `rows()` is recomputed on demand rather than cached -- `roots` and every
-// `Node.expanded` are public fields a caller may change directly, so there
+// `Node.is_expanded` are public fields a caller may change directly, so there
 // is nothing a cache could be keyed on -- but the widget's OWN operations
 // do not go through it: a 200-commit log with its files unfolded is five
 // thousand rows, a keystroke on it is a move, a `current()` and a redraw,
 // and materialising five thousand `Row`s three times per keystroke was the
 // whole cost of scrolling it. `move` counts, `current`/`toggle`/
-// `select_id` walk to one row, and `render` walks to the first row on screen
+// `did_select_id` walk to one row, and `render` walks to the first row on screen
 // and stops after the last -- the same tree walk `rows()` makes, allocating
 // only what each caller actually reads.
 //
@@ -57,7 +57,7 @@ pub type Node {
     pub str label;
     pub List<Node> children;
     pub TUI_style.Style style = TUI_style.Style();
-    pub bool expanded = true;
+    pub bool is_expanded = true;
 }
 
 /// A row with no children: nothing to fold, so `toggle` on it does nothing.
@@ -66,8 +66,8 @@ pub static Node Node.leaf(str id, str label) {
 }
 
 /// A row that can fold, expanded by default.
-pub static Node Node.section(str id, str label, List<Node> children, bool expanded = true) {
-    return Node(id, label, children, expanded: expanded);
+pub static Node Node.section(str id, str label, List<Node> children, bool is_expanded = true) {
+    return Node(id, label, children, is_expanded: is_expanded);
 }
 
 pub bool Node.has_children() {
@@ -132,7 +132,7 @@ pub List<Row> Outline.rows() {
 
 void Outline.collect(List<Row> out, Node node, int depth) {
     out.push(Row(node, depth));
-    if (node.expanded) {
+    if (node.is_expanded) {
         for (Node child in node.children) {
             collect(out, child, depth + 1);
         }
@@ -153,7 +153,7 @@ pub int Outline.count() {
 List<Row> Outline.window(int from, int want) {
     Walk walk = Walk(from, want, []);
     for (Node root in roots) {
-        if (walk.visit(root, 0)) {
+        if (walk.did_finish(root, 0)) {
             return walk.out;
         }
     }
@@ -201,7 +201,7 @@ pub void Outline.toggle() {
     match (current()) {
         case Some(Row row): {
             if (row.node.has_children()) {
-                row.node.expanded = !row.node.expanded;
+                row.node.is_expanded = !row.node.is_expanded;
             }
         }
         case None: {
@@ -213,7 +213,7 @@ pub void Outline.toggle() {
 pub void Outline.expand() {
     match (current()) {
         case Some(Row row): {
-            row.node.expanded = true;
+            row.node.is_expanded = true;
         }
         case None: {
         }
@@ -224,7 +224,7 @@ pub void Outline.expand() {
 pub void Outline.collapse() {
     match (current()) {
         case Some(Row row): {
-            row.node.expanded = false;
+            row.node.is_expanded = false;
         }
         case None: {
         }
@@ -234,10 +234,10 @@ pub void Outline.collapse() {
 /// Move the cursor to the visible row whose `id` is `id`. Answers whether one
 /// was found -- a row hidden inside a folded section is not, which is
 /// correct: there is nothing on screen yet to put the cursor on.
-pub bool Outline.select_id(str id) {
+pub bool Outline.did_select_id(str id) {
     Seek seek = Seek(id);
     for (Node root in roots) {
-        if (seek.visit(root)) {
+        if (seek.did_find(root)) {
             cursor = seek.index;
             return true;
         }
@@ -276,7 +276,7 @@ pub void Outline.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
         }
         str mark = leaf_mark;
         if (row.node.has_children()) {
-            if (row.node.expanded) {
+            if (row.node.is_expanded) {
                 mark = expanded_mark;
             } else {
                 mark = collapsed_mark;
@@ -294,7 +294,7 @@ pub void Outline.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
 
 int visible(Node node) {
     int row_count = 1;
-    if (node.expanded) {
+    if (node.is_expanded) {
         for (Node child in node.children) {
             row_count = row_count + visible(child);
         }
@@ -313,7 +313,7 @@ type Walk {
 }
 
 /// Answers whether the walk is finished, so a caller stops descending.
-bool Walk.visit(Node node, int depth) {
+bool Walk.did_finish(Node node, int depth) {
     if (skip > 0) {
         skip = skip - 1;
     } else {
@@ -322,9 +322,9 @@ bool Walk.visit(Node node, int depth) {
             return true;
         }
     }
-    if (node.expanded) {
+    if (node.is_expanded) {
         for (Node child in node.children) {
-            if (visit(child, depth + 1)) {
+            if (did_finish(child, depth + 1)) {
                 return true;
             }
         }
@@ -332,21 +332,21 @@ bool Walk.visit(Node node, int depth) {
     return false;
 }
 
-/// The id-matching walk `select_id` makes: counts visible rows until one's
+/// The id-matching walk `did_select_id` makes: counts visible rows until one's
 /// `id` is `id`, allocating nothing on the way.
 type Seek {
     str id;
     int index = 0;
 }
 
-bool Seek.visit(Node node) {
+bool Seek.did_find(Node node) {
     if (node.id == id) {
         return true;
     }
     index = index + 1;
-    if (node.expanded) {
+    if (node.is_expanded) {
         for (Node child in node.children) {
-            if (visit(child)) {
+            if (did_find(child)) {
                 return true;
             }
         }

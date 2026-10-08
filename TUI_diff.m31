@@ -78,7 +78,7 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
-            next.append_sym(out, x, y);
+            next.append_symbol(out, x, y);
             x = x + cell_width;
         }
     }
@@ -102,13 +102,13 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
     }
     bytes out = [];
     int pen = TUI_style.RESET_STYLE;
-    int cur_x = -1;
-    int cur_y = -1;
+    int current_x = -1;
+    int current_y = -1;
     for (int y in area.y .. area.bottom()) {
         // Most rows of most frames are untouched -- a cursor moved, two
         // rows changed -- and an untouched row writes nothing, so it is not
         // worth a per-cell look, let alone the trailing-blank scan.
-        if (previous.same_row(next, y)) {
+        if (previous.is_same_row(next, y)) {
             continue;
         }
         int tail = tail_start(next, y);
@@ -119,27 +119,27 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
                 x = x + 1;
                 continue;
             }
-            if (!changed(previous, next, x, y)) {
+            if (!has_changed(previous, next, x, y)) {
                 x = x + cell_width;
                 continue;
             }
             // Put the cursor on this cell, by whichever route is shorter.
-            if (cur_y != y || cur_x < 0 || cur_x > x) {
+            if (current_y != y || current_x < 0 || current_x > x) {
                 move_to(out, x, y);
-            } else if (cur_x < x) {
-                cross(out, next, cur_x, x, y, pen);
+            } else if (current_x < x) {
+                cross(out, next, current_x, x, y, pen);
             }
-            cur_y = y;
+            current_y = y;
             if (x >= tail && area.right() - x >= ERASE_WORTH) {
                 pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
                 erase_line(out);
-                cur_x = x;
+                current_x = x;
                 x = area.right();
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
-            next.append_sym(out, x, y);
-            cur_x = x + cell_width;
+            next.append_symbol(out, x, y);
+            current_x = x + cell_width;
             x = x + cell_width;
         }
     }
@@ -150,8 +150,8 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
 }
 
 /// Does the cell at `x`, `y` have to be written again?
-bool changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int y) {
-    return !previous.same_cell(next, x, y);
+bool has_changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int y) {
+    return !previous.is_same_cell(next, x, y);
 }
 
 /// Get from column `from` to column `target` in row `y`: either by walking over
@@ -163,7 +163,7 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
         jump = 3 + digits(gap);
     }
     int walk = 0;
-    bool same_style = true;
+    bool is_same_style = true;
     int x = from;
     while (x < target) {
         int cell_width = next.width_at(x, y);
@@ -172,11 +172,11 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
             continue;
         }
         if (next.style_at(x, y) != pen) {
-            same_style = false;
+            is_same_style = false;
             x = target;
             continue;
         }
-        walk = walk + next.sym_at(x, y).size();
+        walk = walk + next.symbol_at(x, y).size();
         if (walk > jump) {
             // Already dearer than the escape; the rest of the run cannot
             // make it cheaper, and measuring it costs a reference each.
@@ -185,7 +185,7 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
         }
         x = x + cell_width;
     }
-    if (same_style && walk <= jump) {
+    if (is_same_style && walk <= jump) {
         x = from;
         while (x < target) {
             int cell_width = next.width_at(x, y);
@@ -193,7 +193,7 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
                 x = x + 1;
                 continue;
             }
-            next.append_sym(out, x, y);
+            next.append_symbol(out, x, y);
             x = x + cell_width;
         }
         return;
