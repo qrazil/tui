@@ -28,42 +28,42 @@ import TUI_style;
 import TUI_text;
 import TUI_widget;
 
-const int W = 200;
-const int H = 50;
+const int SCREEN_WIDTH = 200;
+const int SCREEN_HEIGHT = 50;
 
 /// Lay a plausible screen into `b`: a title bar, a file list, a table and a
 /// paragraph, all inside blocks.
-void paint(TUI_buffer.Buffer b, int tick, List<str> names, List<List<str>> rows) {
-    List<TUI_geometry.Rect> band = TUI_geometry.rows(b.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
+void paint(TUI_buffer.Buffer buffer, int tick, List<str> names, List<List<str>> rows) {
+    List<TUI_geometry.Rect> band = TUI_geometry.rows(buffer.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
     TUI_widget.Block top = TUI_widget.Block(title: " frame " + str(tick) + " ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center);
-    top.render(b, band[0]);
-    TUI_widget.Paragraph("a terminal user interface, drawn into a buffer of grapheme clusters", align: TUI_text.Align.Center).render(b, top.inner(band[0]));
+    top.render(buffer, band[0]);
+    TUI_widget.Paragraph("a terminal user interface, drawn into a buffer of grapheme clusters", align: TUI_text.Align.Center).render(buffer, top.inner(band[0]));
     List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Length(24), TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
     TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
-    left.render(b, mid[0]);
-    TUI_list_table.ListView(names, selected: tick % 60, highlight_symbol: "\u{25B8} ").render(b, left.inner(mid[0]));
+    left.render(buffer, mid[0]);
+    TUI_list_table.ListView(names, selected: tick % 60, highlight_symbol: "\u{25B8} ").render(buffer, left.inner(mid[0]));
     TUI_widget.Block table = TUI_widget.Block(title: "table", pad_x: 1);
-    table.render(b, mid[1]);
-    TUI_list_table.Table(["#", "name", "size", "when"], rows, [TUI_geometry.Constraint.Length(4), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8), TUI_geometry.Constraint.Length(9)], selected: tick % 60, highlight_symbol: "\u{25B8} ").render(b, table.inner(mid[1]));
+    table.render(buffer, mid[1]);
+    TUI_list_table.Table(["#", "name", "size", "when"], rows, [TUI_geometry.Constraint.Length(4), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8), TUI_geometry.Constraint.Length(9)], selected: tick % 60, highlight_symbol: "\u{25B8} ").render(buffer, table.inner(mid[1]));
     TUI_widget.Block right = TUI_widget.Block(title: "detail", pad_x: 1);
-    right.render(b, mid[2]);
-    TUI_widget.Paragraph("The quick brown fox jumps over the lazy dog. \u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}\u{5B57}. Wrapping this paragraph is the part of the work that has to look at every grapheme cluster, so it is the part that decides whether a frame is fast. ".repeat(6)).render(b, right.inner(mid[2]));
-    b.fill(band[2], " ", TUI_style.Style(fg: TUI_style.Colour.Indexed(0), bg: TUI_style.Colour.Indexed(7)));
-    b.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", TUI_style.Style(fg: TUI_style.Colour.Indexed(0), bg: TUI_style.Colour.Indexed(7)));
+    right.render(buffer, mid[2]);
+    TUI_widget.Paragraph("The quick brown fox jumps over the lazy dog. \u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}\u{5B57}. Wrapping this paragraph is the part of the work that has to look at every grapheme cluster, so it is the part that decides whether a frame is fast. ".repeat(6)).render(buffer, right.inner(mid[2]));
+    buffer.fill(band[2], " ", TUI_style.Style(foreground: TUI_style.Colour.Indexed(0), background: TUI_style.Colour.Indexed(7)));
+    buffer.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", TUI_style.Style(foreground: TUI_style.Colour.Indexed(0), background: TUI_style.Colour.Indexed(7)));
 }
 
 /// Nanoseconds, as milliseconds with three decimals, without floats.
-str ms(int ns) {
-    int us = ns / 1000;
-    return str(us / 1000) + "." + pad3(us % 1000) + " ms";
+str to_milliseconds(int nanoseconds) {
+    int microseconds = nanoseconds / 1000;
+    return str(microseconds / 1000) + "." + pad3(microseconds % 1000) + " ms";
 }
 
-str pad3(int v) {
-    str s = str(v);
-    while (s.size() < 3) {
-        s = "0" + s;
+str pad3(int value) {
+    str text = str(value);
+    while (text.size() < 3) {
+        text = "0" + text;
     }
-    return s;
+    return text;
 }
 
 void report(str name, int total_ns, int runs, int size) {
@@ -71,88 +71,88 @@ void report(str name, int total_ns, int runs, int size) {
     while (line.size() < 8) {
         line = line + " ";
     }
-    print(line + ms(total_ns / runs) + "   " + str(size) + " bytes   (" + str(runs) + " runs)");
+    print(line + to_milliseconds(total_ns / runs) + "   " + str(size) + " bytes   (" + str(runs) + " runs)");
 }
 
 int budget = 16666666;
-print("a " + str(W) + "x" + str(H) + " frame, " + str(W * H) + " cells");
-print("the 60-frames-a-second budget is " + ms(budget));
+print("a " + str(SCREEN_WIDTH) + "x" + str(SCREEN_HEIGHT) + " frame, " + str(SCREEN_WIDTH * SCREEN_HEIGHT) + " cells");
+print("the 60-frames-a-second budget is " + to_milliseconds(budget));
 print("");
 // The data the screen shows, built once: what is being measured is the
 // library's work per frame, not the program's own bookkeeping.
 List<str> names = [];
 List<List<str>> rows = [];
-for (int n in 0 .. 60) {
-    names.push("item-" + str(n) + ".txt");
-    rows.push([str(n), "row " + str(n) + " of the table", str(n * 37 % 1000) + " B", "today"]);
+for (int item_index in 0 .. 60) {
+    names.push("item-" + str(item_index) + ".txt");
+    rows.push([str(item_index), "row " + str(item_index) + " of the table", str(item_index * 37 % 1000) + " B", "today"]);
 }
-TUI_buffer.Buffer front = TUI_buffer.Buffer.sized(W, H);
-TUI_buffer.Buffer back = TUI_buffer.Buffer.sized(W, H);
+TUI_buffer.Buffer front = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+TUI_buffer.Buffer back = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
 TUI_style.Depth depth = TUI_style.Depth.Ansi256;
 // Warm up, so the first measurement is not the first touch of the heap.
 paint(back, 0, names, rows);
 paint(front, 0, names, rows);
 int runs = 200;
-int t0 = date.now_ns();
-int k = 0;
-while (k < runs) {
+int start_ns = date.now_ns();
+int run_index = 0;
+while (run_index < runs) {
     back.clear();
-    paint(back, k, names, rows);
-    k = k + 1;
+    paint(back, run_index, names, rows);
+    run_index = run_index + 1;
 }
-int t1 = date.now_ns();
-report("draw", t1 - t0, runs, 0);
+int stop_ns = date.now_ns();
+report("draw", stop_ns - start_ns, runs, 0);
 back.clear();
 paint(back, 1, names, rows);
 int full_bytes = TUI_diff.full(back, depth).size();
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
     TUI_diff.full(back, depth);
-    k = k + 1;
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("full", t1 - t0, runs, full_bytes);
+stop_ns = date.now_ns();
+report("full", stop_ns - start_ns, runs, full_bytes);
 // One cell changed, which is what a cursor moving looks like.
 front.clear();
 paint(front, 1, names, rows);
 back.clear();
 paint(back, 1, names, rows);
-back.set_str(100, 25, "\u{2588}", TUI_style.Style(fg: TUI_style.Colour.Indexed(9)));
+back.set_str(100, 25, "\u{2588}", TUI_style.Style(foreground: TUI_style.Colour.Indexed(9)));
 int one_bytes = TUI_diff.diff(front, back, depth).size();
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
     TUI_diff.diff(front, back, depth);
-    k = k + 1;
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("diff-1", t1 - t0, runs, one_bytes);
+stop_ns = date.now_ns();
+report("diff-1", stop_ns - start_ns, runs, one_bytes);
 back.clear();
 paint(back, 1, names, rows);
 int zero_bytes = TUI_diff.diff(front, back, depth).size();
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
     TUI_diff.diff(front, back, depth);
-    k = k + 1;
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("diff-0", t1 - t0, runs, zero_bytes);
+stop_ns = date.now_ns();
+report("diff-0", stop_ns - start_ns, runs, zero_bytes);
 // And the honest number a program actually pays per keystroke: paint the
 // next frame and diff it against the last one.
 front.clear();
 paint(front, 0, names, rows);
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
     back.clear();
-    paint(back, k, names, rows);
+    paint(back, run_index, names, rows);
     TUI_diff.diff(front, back, depth);
-    k = k + 1;
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("frame", t1 - t0, runs, 0);
+stop_ns = date.now_ns();
+report("frame", stop_ns - start_ns, runs, 0);
 // --- the shapes a real client hits that the screen above does not -----------
 //
 // A git client's log is a tall outline -- hundreds of commits, each unfolding
@@ -164,86 +164,86 @@ report("frame", t1 - t0, runs, 0);
 print("");
 print("a 5,200-row outline (200 sections of 25), 2,000-line diff, 72-column wrap");
 List<TUI_outline.Node> roots = [];
-for (int s in 0 .. 200) {
+for (int section_index in 0 .. 200) {
     List<TUI_outline.Node> kids = [];
-    for (int c in 0 .. 25) {
-        kids.push(TUI_outline.Node.leaf("s" + str(s) + ":" + str(c), "M  path/to/some/file-" + str(c) + ".txt  +12 -3"));
+    for (int child_index in 0 .. 25) {
+        kids.push(TUI_outline.Node.leaf("s" + str(section_index) + ":" + str(child_index), "M  path/to/some/file-" + str(child_index) + ".txt  +12 -3"));
     }
-    roots.push(TUI_outline.Node.section("s" + str(s), str(s) + "  a commit subject line of ordinary length", kids));
+    roots.push(TUI_outline.Node.section("s" + str(section_index), str(section_index) + "  a commit subject line of ordinary length", kids));
 }
-TUI_outline.Outline o = TUI_outline.Outline(roots);
-TUI_geometry.Rect screen = TUI_geometry.Rect(0, 0, W, H);
-o.cursor = 2600;
-o.render(back, screen);
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
-    o.move(1);
-    o.current();
-    o.render(back, screen);
-    k = k + 1;
+TUI_outline.Outline outline = TUI_outline.Outline(roots);
+TUI_geometry.Rect screen = TUI_geometry.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+outline.cursor = 2600;
+outline.render(back, screen);
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
+    outline.move(1);
+    outline.current();
+    outline.render(back, screen);
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("outline", t1 - t0, runs, 0);
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
-    o.select_id("s199:24");
-    k = k + 1;
+stop_ns = date.now_ns();
+report("outline", stop_ns - start_ns, runs, 0);
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
+    outline.select_id("s199:24");
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("select", t1 - t0, runs, 0);
+stop_ns = date.now_ns();
+report("select", stop_ns - start_ns, runs, 0);
 List<TUI_diff_view.Hunk> hunks = [];
-for (int h in 0 .. 40) {
-    List<TUI_diff_view.Line> ls = [];
-    for (int l in 0 .. 50) {
-        if (l % 3 == 0) {
-            ls.push(TUI_diff_view.Line.added("    added line " + str(l) + " of hunk " + str(h)));
-        } else if (l % 3 == 1) {
-            ls.push(TUI_diff_view.Line.removed("    removed line " + str(l) + " of hunk " + str(h)));
+for (int hunk_index in 0 .. 40) {
+    List<TUI_diff_view.Line> hunk_lines = [];
+    for (int line_index in 0 .. 50) {
+        if (line_index % 3 == 0) {
+            hunk_lines.push(TUI_diff_view.Line.added("    added line " + str(line_index) + " of hunk " + str(hunk_index)));
+        } else if (line_index % 3 == 1) {
+            hunk_lines.push(TUI_diff_view.Line.removed("    removed line " + str(line_index) + " of hunk " + str(hunk_index)));
         } else {
-            ls.push(TUI_diff_view.Line.context("    context line " + str(l) + " of hunk " + str(h)));
+            hunk_lines.push(TUI_diff_view.Line.context("    context line " + str(line_index) + " of hunk " + str(hunk_index)));
         }
     }
-    hunks.push(TUI_diff_view.Hunk("@@ -" + str(h * 50) + ",50 +" + str(h * 50) + ",50 @@", ls));
+    hunks.push(TUI_diff_view.Hunk("@@ -" + str(hunk_index * 50) + ",50 +" + str(hunk_index * 50) + ",50 @@", hunk_lines));
 }
-TUI_diff_view.DiffView dv = TUI_diff_view.DiffView(hunks);
-dv.cursor = 1000;
-dv.render(back, screen);
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
-    dv.move(1);
-    dv.at();
-    dv.render(back, screen);
-    k = k + 1;
+TUI_diff_view.DiffView diff_view = TUI_diff_view.DiffView(hunks);
+diff_view.cursor = 1000;
+diff_view.render(back, screen);
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
+    diff_view.move(1);
+    diff_view.at();
+    diff_view.render(back, screen);
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("diffview", t1 - t0, runs, 0);
+stop_ns = date.now_ns();
+report("diffview", stop_ns - start_ns, runs, 0);
 str prose = "The quick brown fox jumps over the lazy dog, and a commit message of ordinary length is wrapped to seventy-two columns every time the outline is rebuilt. ".repeat(12);
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
     TUI_text.wrap(prose, 72);
-    k = k + 1;
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("wrap", t1 - t0, runs, prose.size());
+stop_ns = date.now_ns();
+report("wrap", stop_ns - start_ns, runs, prose.size());
 // What `TUI_app.Loop` pays before a frame is even drawn: a fresh buffer, or
 // the same one cleared.
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
-    TUI_buffer.Buffer.sized(W, H);
-    k = k + 1;
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
+    TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("alloc", t1 - t0, runs, 0);
-t0 = date.now_ns();
-k = 0;
-while (k < runs) {
+stop_ns = date.now_ns();
+report("alloc", stop_ns - start_ns, runs, 0);
+start_ns = date.now_ns();
+run_index = 0;
+while (run_index < runs) {
     back.clear();
-    k = k + 1;
+    run_index = run_index + 1;
 }
-t1 = date.now_ns();
-report("clear", t1 - t0, runs, 0);
+stop_ns = date.now_ns();
+report("clear", stop_ns - start_ns, runs, 0);

@@ -31,22 +31,22 @@ TUI_style.Colour ink = TUI_style.Colour.Rgb(30, 34, 40);
 TUI_buffer.Buffer screen = TUI_buffer.Buffer.sized(WIDTH, HEIGHT);
 List<TUI_geometry.Rect> band = TUI_geometry.rows(screen.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
 // The banner.
-TUI_widget.Block banner = TUI_widget.Block(title: " a terminal user interface ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center, style: TUI_style.Style(fg: blue));
+TUI_widget.Block banner = TUI_widget.Block(title: " a terminal user interface ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center, style: TUI_style.Style(foreground: blue));
 banner.render(screen, band[0]);
 TUI_widget.Paragraph("cells are grapheme clusters \u{00B7} \u{6F22}\u{5B57} takes two columns \u{00B7} \u{1F44D}\u{1F3FD} is one cell", align: TUI_text.Align.Center).render(screen, banner.inner(band[0]));
 // Three panels.
 List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Length(22), TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
-TUI_widget.Block files = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded, style: TUI_style.Style(fg: grey));
+TUI_widget.Block files = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded, style: TUI_style.Style(foreground: grey));
 files.render(screen, mid[0]);
-TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "gates.sh", "run.sh", "Cargo.toml", "\u{1F44D}\u{1F3FD}.png", "notes.md", "TODO"], selected: 4, highlight_symbol: "\u{25B8} ", highlight_style: TUI_style.Style(fg: ink, bg: cream)).render(screen, files.inner(mid[0]));
-TUI_widget.Block grid = TUI_widget.Block(title: "table", borders: TUI_widget.Borders.Single, style: TUI_style.Style(fg: grey), pad_x: 1);
+TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "gates.sh", "run.sh", "Cargo.toml", "\u{1F44D}\u{1F3FD}.png", "notes.md", "TODO"], selected: 4, highlight_symbol: "\u{25B8} ", highlight_style: TUI_style.Style(foreground: ink, background: cream)).render(screen, files.inner(mid[0]));
+TUI_widget.Block grid = TUI_widget.Block(title: "table", borders: TUI_widget.Borders.Single, style: TUI_style.Style(foreground: grey), pad_x: 1);
 grid.render(screen, mid[1]);
-TUI_list_table.Table(["name", "size", "when"], [["readme.md", "1.2 kB", "today"], ["a-rather-long-name.txt", "44 B", "yesterday"], ["src", "-", "last week"], ["\u{6F22}\u{5B57}.md", "8 kB", "today"], ["gates.sh", "7.7 kB", "March"], ["Cargo.toml", "310 B", "today"]], [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(6), TUI_geometry.Constraint.Length(9)], selected: 3, aligns: [TUI_text.Align.Left, TUI_text.Align.Right, TUI_text.Align.Left], header_style: TUI_style.Style(fg: blue, attrs: TUI_style.BOLD | TUI_style.UNDERLINE)).render(screen, grid.inner(mid[1]));
-TUI_widget.Block detail = TUI_widget.Block(title: "detail", borders: TUI_widget.Borders.Thick, style: TUI_style.Style(fg: grey), pad_x: 1);
+TUI_list_table.Table(["name", "size", "when"], [["readme.md", "1.2 kB", "today"], ["a-rather-long-name.txt", "44 B", "yesterday"], ["src", "-", "last week"], ["\u{6F22}\u{5B57}.md", "8 kB", "today"], ["gates.sh", "7.7 kB", "March"], ["Cargo.toml", "310 B", "today"]], [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(6), TUI_geometry.Constraint.Length(9)], selected: 3, aligns: [TUI_text.Align.Left, TUI_text.Align.Right, TUI_text.Align.Left], header_style: TUI_style.Style(foreground: blue, attrs: TUI_style.BOLD | TUI_style.UNDERLINE)).render(screen, grid.inner(mid[1]));
+TUI_widget.Block detail = TUI_widget.Block(title: "detail", borders: TUI_widget.Borders.Thick, style: TUI_style.Style(foreground: grey), pad_x: 1);
 detail.render(screen, mid[2]);
 TUI_widget.Paragraph("Every panel here came from one constraint layout, and the whole screen is one write. The wrapping counts terminal columns, not bytes.").render(screen, detail.inner(mid[2]));
 // The status bar.
-TUI_style.Style bar = TUI_style.Style(fg: ink, bg: cream);
+TUI_style.Style bar = TUI_style.Style(foreground: ink, background: cream);
 screen.fill(band[2], " ", bar);
 screen.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", bar);
 screen.set_str(band[2].right() - 13, band[2].y, "static frame", bar);
@@ -59,7 +59,7 @@ out.push('\n');
 match (io.stdout().write(out)) {
     case Ok: {
     }
-    case Err(io.Error e): {
-        io.eprint("could not write the frame: " + e.to_str());
+    case Err(io.Error error): {
+        io.eprint("could not write the frame: " + error.to_str());
     }
 }

@@ -62,23 +62,23 @@ str State.path() {
 /// Re-read the current directory and select its first entry.
 void State.reload() {
     match (fs.listdir(path())) {
-        case Ok(List<str> ns): {
-            names = ns;
+        case Ok(List<str> entry_names): {
+            names = entry_names;
             List<str> items = [];
-            for (str n in ns) {
-                if (fs.is_dir(fs.join(path(), n))) {
-                    items.push(n + "/");
+            for (str entry_name in entry_names) {
+                if (fs.is_dir(fs.join(path(), entry_name))) {
+                    items.push(entry_name + "/");
                 } else {
-                    items.push(n);
+                    items.push(entry_name);
                 }
             }
             list = TUI_list_table.ListView(items, selected: 0, highlight_symbol: "\u{25B8} ");
             message = "";
         }
-        case Err(io.Error e): {
+        case Err(io.Error error): {
             names = [];
             list = TUI_list_table.ListView([]);
-            message = "cannot read " + path() + ": " + e.to_str();
+            message = "cannot read " + path() + ": " + error.to_str();
         }
     }
     show_preview();
@@ -99,39 +99,39 @@ void State.show_preview() {
         return;
     }
     match (io.read(full)) {
-        case Ok(str s): {
-            List<str> ls = text.lines(s);
-            int n = ls.size();
-            if (n > PREVIEW_LINES) {
-                n = PREVIEW_LINES;
+        case Ok(str contents): {
+            List<str> file_lines = text.lines(contents);
+            int line_count = file_lines.size();
+            if (line_count > PREVIEW_LINES) {
+                line_count = PREVIEW_LINES;
             }
-            preview = ls.slice(0, n).join("\n");
+            preview = file_lines.slice(0, line_count).join("\n");
         }
-        case Err(io.Error e): {
-            match (e) {
+        case Err(io.Error error): {
+            match (error) {
                 case InvalidUtf8: {
                     preview = "(binary file)";
                 }
                 case NotFound: {
-                    preview = "cannot read: " + e.to_str();
+                    preview = "cannot read: " + error.to_str();
                 }
                 case PermissionDenied: {
-                    preview = "cannot read: " + e.to_str();
+                    preview = "cannot read: " + error.to_str();
                 }
                 case IsDirectory: {
                     preview = "directory";
                 }
                 case NotADirectory: {
-                    preview = "cannot read: " + e.to_str();
+                    preview = "cannot read: " + error.to_str();
                 }
                 case AlreadyExists: {
-                    preview = "cannot read: " + e.to_str();
+                    preview = "cannot read: " + error.to_str();
                 }
                 case NotEmpty: {
-                    preview = "cannot read: " + e.to_str();
+                    preview = "cannot read: " + error.to_str();
                 }
                 case Other(int code): {
-                    preview = "cannot read: " + e.to_str();
+                    preview = "cannot read: " + error.to_str();
                 }
             }
         }
@@ -165,50 +165,50 @@ void State.up() {
 /// preview or a message on the right, a one-line key legend at the bottom --
 /// the same layout `apps/tui/demo.m31` builds once, run here through
 /// `TUI_app.Loop` instead.
-void State.draw(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+void State.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     List<TUI_geometry.Rect> band = TUI_geometry.rows(area, [TUI_geometry.Constraint.Length(1), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
     TUI_style.Style bold = TUI_style.Style(attrs: TUI_style.BOLD);
-    buf.fill(band[0], " ", bold);
-    buf.set_str(band[0].x, band[0].y, " " + path(), bold);
+    buffer.fill(band[0], " ", bold);
+    buffer.set_str(band[0].x, band[0].y, " " + path(), bold);
     List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
     TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
-    left.render(buf, mid[0]);
-    list.render(buf, left.inner(mid[0]));
+    left.render(buffer, mid[0]);
+    list.render(buffer, left.inner(mid[0]));
     TUI_widget.Block right = TUI_widget.Block(title: "preview", borders: TUI_widget.Borders.Single, pad_x: 1);
-    right.render(buf, mid[1]);
+    right.render(buffer, mid[1]);
     str body = preview;
     if (message != "") {
         body = message;
     }
-    TUI_widget.Paragraph(body).render(buf, right.inner(mid[1]));
+    TUI_widget.Paragraph(body).render(buffer, right.inner(mid[1]));
     TUI_style.Style rev = TUI_style.Style(attrs: TUI_style.REVERSE);
-    buf.fill(band[2], " ", rev);
-    buf.set_str(band[2].x + 1, band[2].y, "j/k move   enter open   u up   q quit", rev);
+    buffer.fill(band[2], " ", rev);
+    buffer.set_str(band[2].x + 1, band[2].y, "j/k move   enter open   u up   q quit", rev);
 }
 
 /// What a key does to the browser's state: `Redraw` on anything that changed
 /// it, `Continue` on everything else, `Quit` on q or Escape -- the same
 /// shape `examples/keys.m31` hand-writes its own read loop around, here
 /// answered instead of looped, since `TUI_app.Loop` does the looping.
-TUI_app.Action State.handle(term.Event ev) {
-    match (ev) {
-        case Key(term.Key k): {
-            match (k.code) {
-                case Char(int c): {
-                    if (c == 'q') {
+TUI_app.Action State.handle(term.Event event) {
+    match (event) {
+        case Key(term.Key key): {
+            match (key.code) {
+                case Char(int character): {
+                    if (character == 'q') {
                         return TUI_app.Action.Quit;
                     }
-                    if (c == 'j') {
+                    if (character == 'j') {
                         list.step(1);
                         show_preview();
                         return TUI_app.Action.Redraw;
                     }
-                    if (c == 'k') {
+                    if (character == 'k') {
                         list.step(-1);
                         show_preview();
                         return TUI_app.Action.Redraw;
                     }
-                    if (c == 'u') {
+                    if (character == 'u') {
                         up();
                         return TUI_app.Action.Redraw;
                     }
@@ -265,18 +265,18 @@ TUI_app.Action State.handle(term.Event ev) {
                 case Delete: {
                     return TUI_app.Action.Continue;
                 }
-                case F(int n): {
+                case F(int number): {
                     return TUI_app.Action.Continue;
                 }
             }
         }
-        case Mouse(term.Mouse m): {
+        case Mouse(term.Mouse mouse): {
             return TUI_app.Action.Continue;
         }
-        case Paste(str p): {
+        case Paste(str pasted): {
             return TUI_app.Action.Continue;
         }
-        case Unknown(bytes u): {
+        case Unknown(bytes raw_bytes): {
             return TUI_app.Action.Continue;
         }
     }
@@ -289,11 +289,11 @@ if (!term.is_terminal(0)) {
 State state = State();
 state.reload();
 TUI_app.Loop loop = TUI_app.Loop();
-match (loop.run((TUI_buffer.Buffer buf, TUI_geometry.Rect area) => state.draw(buf, area), (term.Event ev) => state.handle(ev))) {
-    case Ok(int n): {
+match (loop.run((TUI_buffer.Buffer buffer, TUI_geometry.Rect area) => state.draw(buffer, area), (term.Event event) => state.handle(event))) {
+    case Ok(int frame_count): {
     }
-    case Err(term.Error e): {
-        io.eprint("browse: " + e.to_str());
+    case Err(term.Error error): {
+        io.eprint("browse: " + error.to_str());
     }
 }
 print("bye");
