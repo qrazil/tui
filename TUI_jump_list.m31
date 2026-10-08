@@ -57,13 +57,13 @@ pub static JumpList JumpList.empty() {
     return JumpList([]);
 }
 
-/// Rebuild `entries` from `o`'s current, flattened, visible rows. A folded
+/// Rebuild `entries` from `outline`'s current, flattened, visible rows. A folded
 /// section contributes only itself -- the jump list shrinks when the
 /// document folds, which is what "synced" means.
-pub void JumpList.sync_from(TUI_outline.Outline o) {
+pub void JumpList.sync_from(TUI_outline.Outline outline) {
     List<Entry> out = [];
-    for (TUI_outline.Row r in o.rows()) {
-        out.push(Entry(r.node.id, r.node.label, depth: r.depth));
+    for (TUI_outline.Row row in outline.rows()) {
+        out.push(Entry(row.node.id, row.node.label, depth: row.depth));
     }
     entries = out;
 }
@@ -71,10 +71,10 @@ pub void JumpList.sync_from(TUI_outline.Outline o) {
 /// The outline half of the sync: move the highlight to whatever row the
 /// outline's cursor is on now. Call this after any move, toggle or reload of
 /// the outline.
-pub void JumpList.follow(TUI_outline.Outline o) {
-    match (o.current()) {
-        case Some(TUI_outline.Row r): {
-            select_id(r.node.id);
+pub void JumpList.follow(TUI_outline.Outline outline) {
+    match (outline.current()) {
+        case Some(TUI_outline.Row row): {
+            select_id(row.node.id);
         }
         case None: {
         }
@@ -84,23 +84,23 @@ pub void JumpList.follow(TUI_outline.Outline o) {
 /// The jump-list half of the sync: move the outline's cursor (and its own
 /// scroll, through `Outline.render`) to the entry selected here. Answers
 /// whether the selection named a row the outline currently shows.
-pub bool JumpList.activate(TUI_outline.Outline o) {
+pub bool JumpList.activate(TUI_outline.Outline outline) {
     if (selected < 0 || selected >= entries.size()) {
         return false;
     }
-    return o.select_id(entries[selected].id);
+    return outline.select_id(entries[selected].id);
 }
 
 /// Select the entry with this `id`, if there is one. Answers whether one was
 /// found.
 pub bool JumpList.select_id(str id) {
-    int i = 0;
-    while (i < entries.size()) {
-        if (entries[i].id == id) {
-            selected = i;
+    int index = 0;
+    while (index < entries.size()) {
+        if (entries[index].id == id) {
+            selected = index;
             return true;
         }
-        i = i + 1;
+        index = index + 1;
     }
     return false;
 }
@@ -108,55 +108,55 @@ pub bool JumpList.select_id(str id) {
 /// Move the selection by `delta`, stopping at the ends --
 /// `TUI_list_table.ListView.step`'s own rule.
 pub void JumpList.step(int delta) {
-    int n = entries.size();
-    if (n == 0) {
+    int count = entries.size();
+    if (count == 0) {
         selected = -1;
         return;
     }
-    int at = selected + delta;
+    int target = selected + delta;
     if (selected < 0 && delta > 0) {
-        at = 0;
+        target = 0;
     }
-    if (at < 0) {
-        at = 0;
+    if (target < 0) {
+        target = 0;
     }
-    if (at >= n) {
-        at = n - 1;
+    if (target >= count) {
+        target = count - 1;
     }
-    selected = at;
+    selected = target;
 }
 
-pub void JumpList.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void JumpList.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", style);
+    buffer.fill(area, " ", style);
     if (selected >= entries.size()) {
         selected = entries.size() - 1;
     }
     if (selected >= 0) {
-        view.reveal(selected, entries.size(), area.h);
+        view.reveal(selected, entries.size(), area.height);
     }
-    view.offset = view.clamped(entries.size(), area.h);
+    view.offset = view.clamped(entries.size(), area.height);
     int off = view.offset;
-    int i = 0;
-    while (i < area.h) {
-        int k = off + i;
-        if (k >= entries.size()) {
+    int line_index = 0;
+    while (line_index < area.height) {
+        int entry_index = off + line_index;
+        if (entry_index >= entries.size()) {
             return;
         }
-        Entry e = entries[k];
-        int y = area.y + i;
-        TUI_style.Style st = style;
-        if (k == selected) {
-            st = st.merged(highlight_style);
-            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
+        Entry entry = entries[entry_index];
+        int y = area.y + line_index;
+        TUI_style.Style row_style = style;
+        if (entry_index == selected) {
+            row_style = row_style.merged(highlight_style);
+            buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
         }
-        int x = area.x + e.depth * indent;
+        int x = area.x + entry.depth * indent;
         int room = area.right() - x;
         if (room > 0) {
-            buf.set_str(x, y, TUI_text.truncate(e.label, room), st, max: room);
+            buffer.set_str(x, y, TUI_text.truncate(entry.label, room), row_style, max: room);
         }
-        i = i + 1;
+        line_index = line_index + 1;
     }
 }

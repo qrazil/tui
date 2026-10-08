@@ -49,6 +49,6 @@ pub static Footer Footer.of(str text, TUI_style.Style style = TUI_style.Style())
     return Footer([TUI_widget.Span(text, style: style)], style: style);
 }
 
-pub void Footer.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
-    TUI_widget.Line(spans, style: style).render(buf, area);
+pub void Footer.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    TUI_widget.Line(spans, style: style).render(buffer, area);
 }
