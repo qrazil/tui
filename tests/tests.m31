@@ -39,514 +39,514 @@ type Tally {
     int fail = 0;
 }
 
-void check(Tally t, str name, str got, str want) {
+void check(Tally tally, str name, str got, str want) {
     if (got == want) {
-        t.pass = t.pass + 1;
+        tally.pass = tally.pass + 1;
         print("ok   " + name);
         return;
     }
-    t.fail = t.fail + 1;
+    tally.fail = tally.fail + 1;
     print("FAIL " + name);
     print("     got  [" + got + "]");
     print("     want [" + want + "]");
 }
 
-void check_int(Tally t, str name, int got, int want) {
-    check(t, name, str(got), str(want));
+void check_int(Tally tally, str name, int got, int want) {
+    check(tally, name, str(got), str(want));
 }
 
-void ok(Tally t, str name, bool cond) {
-    check(t, name, str(cond), "true");
+void ok(Tally tally, str name, bool cond) {
+    check(tally, name, str(cond), "true");
 }
 
-void head(str s) {
+void head(str text) {
     print("");
-    print("== " + s + " " + "=".repeat(60 - s.size()));
+    print("== " + text + " " + "=".repeat(60 - text.size()));
 }
 
 // --- 1. cells and the buffer ------------------------------------------------
 
-void buffer_tests(Tally t) {
+void buffer_tests(Tally tally) {
     head("buffer");
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(10, 3);
-    check_int(t, "blank buffer area", b.area().cells(), 30);
-    check(t, "blank row", b.row_text(0), "          ");
-    check_int(t, "set_str returns columns", b.set_str(0, 0, "hello", TUI_style.Style()), 5);
-    check(t, "text landed", b.row_text(0), "hello     ");
-    check(t, "get a cell", b.get(1, 0).sym, "e");
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(10, 3);
+    check_int(tally, "blank buffer area", buffer.area().cells(), 30);
+    check(tally, "blank row", buffer.row_text(0), "          ");
+    check_int(tally, "set_str returns columns", buffer.set_str(0, 0, "hello", TUI_style.Style()), 5);
+    check(tally, "text landed", buffer.row_text(0), "hello     ");
+    check(tally, "get a cell", buffer.get(1, 0).sym, "e");
     // Clipping at the right edge.
-    check_int(t, "clipped at the edge", b.set_str(6, 0, "abcdefgh", TUI_style.Style()), 4);
-    check(t, "clipped text", b.row_text(0), "hello abcd");
+    check_int(tally, "clipped at the edge", buffer.set_str(6, 0, "abcdefgh", TUI_style.Style()), 4);
+    check(tally, "clipped text", buffer.row_text(0), "hello abcd");
     // A cell outside the buffer is a no-op, not a trap.
-    b.set_str(20, 20, "nope", TUI_style.Style());
-    b.set(-3, 0, TUI_buffer.Cell.of("x", TUI_style.Style()));
-    check(t, "writes outside are dropped", b.row_text(0), "hello abcd");
+    buffer.set_str(20, 20, "nope", TUI_style.Style());
+    buffer.set(-3, 0, TUI_buffer.Cell.of("x", TUI_style.Style()));
+    check(tally, "writes outside are dropped", buffer.row_text(0), "hello abcd");
     // Wide characters.
-    TUI_buffer.Buffer w = TUI_buffer.Buffer.sized(6, 4);
-    w.set_str(0, 0, "\u{6F22}\u{5B57}", TUI_style.Style());
-    check(t, "two wide characters", w.row_text(0), "\u{6F22}\u{5B57}  ");
-    check_int(t, "head width", w.width_at(0, 0), 2);
-    check_int(t, "continuation width", w.width_at(1, 0), 0);
-    check(t, "continuation symbol is empty", w.sym_at(1, 0), "");
+    TUI_buffer.Buffer wide_buffer = TUI_buffer.Buffer.sized(6, 4);
+    wide_buffer.set_str(0, 0, "\u{6F22}\u{5B57}", TUI_style.Style());
+    check(tally, "two wide characters", wide_buffer.row_text(0), "\u{6F22}\u{5B57}  ");
+    check_int(tally, "head width", wide_buffer.width_at(0, 0), 2);
+    check_int(tally, "continuation width", wide_buffer.width_at(1, 0), 0);
+    check(tally, "continuation symbol is empty", wide_buffer.sym_at(1, 0), "");
     // A wide character with one column left is not written; a space is.
-    check_int(t, "wide at the boundary returns 6", w.set_str(0, 1, "abcde\u{6F22}", TUI_style.Style()), 6);
-    check(t, "wide at the boundary", w.row_text(1), "abcde ");
+    check_int(tally, "wide at the boundary returns 6", wide_buffer.set_str(0, 1, "abcde\u{6F22}", TUI_style.Style()), 6);
+    check(tally, "wide at the boundary", wide_buffer.row_text(1), "abcde ");
     // Overwriting either half of a pair repairs the other.
-    w.set_str(0, 2, "\u{6F22}\u{5B57}", TUI_style.Style());
-    w.set_str(0, 2, "A", TUI_style.Style());
-    check(t, "overwriting the head blanks the tail", w.row_text(2), "A \u{5B57}  ");
-    w.set_str(3, 2, "B", TUI_style.Style());
-    check(t, "overwriting the tail blanks the head", w.row_text(2), "A  B  ");
+    wide_buffer.set_str(0, 2, "\u{6F22}\u{5B57}", TUI_style.Style());
+    wide_buffer.set_str(0, 2, "A", TUI_style.Style());
+    check(tally, "overwriting the head blanks the tail", wide_buffer.row_text(2), "A \u{5B57}  ");
+    wide_buffer.set_str(3, 2, "B", TUI_style.Style());
+    check(tally, "overwriting the tail blanks the head", wide_buffer.row_text(2), "A  B  ");
     // An emoji with a modifier is one cluster, two columns.
-    TUI_buffer.Buffer e = TUI_buffer.Buffer.sized(6, 1);
-    e.set_str(0, 0, "\u{1F44D}\u{1F3FD}!", TUI_style.Style());
-    check(t, "emoji is one cell", e.sym_at(0, 0), "\u{1F44D}\u{1F3FD}");
-    check_int(t, "emoji is two columns", e.width_at(0, 0), 2);
-    check(t, "emoji row", e.row_text(0), "\u{1F44D}\u{1F3FD}!   ");
+    TUI_buffer.Buffer emoji_buffer = TUI_buffer.Buffer.sized(6, 1);
+    emoji_buffer.set_str(0, 0, "\u{1F44D}\u{1F3FD}!", TUI_style.Style());
+    check(tally, "emoji is one cell", emoji_buffer.sym_at(0, 0), "\u{1F44D}\u{1F3FD}");
+    check_int(tally, "emoji is two columns", emoji_buffer.width_at(0, 0), 2);
+    check(tally, "emoji row", emoji_buffer.row_text(0), "\u{1F44D}\u{1F3FD}!   ");
     // Zero-width marks join the cell before them; one with no cell before it
     // is dropped.
-    TUI_buffer.Buffer z = TUI_buffer.Buffer.sized(4, 2);
-    z.set_str(0, 0, "e\u{301}x", TUI_style.Style());
-    check(t, "combining mark joins its base", z.sym_at(0, 0), "e\u{301}");
-    check(t, "and does not take a cell", z.sym_at(1, 0), "x");
-    z.set_str(0, 1, "\u{301}ab", TUI_style.Style());
-    check(t, "a leading mark is dropped", z.row_text(1), "ab  ");
+    TUI_buffer.Buffer mark_buffer = TUI_buffer.Buffer.sized(4, 2);
+    mark_buffer.set_str(0, 0, "e\u{301}x", TUI_style.Style());
+    check(tally, "combining mark joins its base", mark_buffer.sym_at(0, 0), "e\u{301}");
+    check(tally, "and does not take a cell", mark_buffer.sym_at(1, 0), "x");
+    mark_buffer.set_str(0, 1, "\u{301}ab", TUI_style.Style());
+    check(tally, "a leading mark is dropped", mark_buffer.row_text(1), "ab  ");
     // Styles.
-    TUI_style.Style bold = TUI_style.Style(fg: TUI_style.Colour.Indexed(2), attrs: TUI_style.BOLD);
-    TUI_buffer.Buffer s = TUI_buffer.Buffer.sized(4, 1);
-    s.set_str(0, 0, "ab", bold);
-    ok(t, "style round trip", s.get(0, 0).style.eq(bold));
-    check_int(t, "packed style", s.style_at(0, 0), bold.pack());
-    s.restyle(TUI_geometry.Rect(0, 0, 4, 1), TUI_style.Style());
-    check(t, "restyle keeps the glyphs", s.row_text(0), "ab  ");
-    check_int(t, "restyle changes the style", s.style_at(0, 0), 0);
+    TUI_style.Style bold = TUI_style.Style(foreground: TUI_style.Colour.Indexed(2), attrs: TUI_style.BOLD);
+    TUI_buffer.Buffer styled_buffer = TUI_buffer.Buffer.sized(4, 1);
+    styled_buffer.set_str(0, 0, "ab", bold);
+    ok(tally, "style round trip", styled_buffer.get(0, 0).style.eq(bold));
+    check_int(tally, "packed style", styled_buffer.style_at(0, 0), bold.pack());
+    styled_buffer.restyle(TUI_geometry.Rect(0, 0, 4, 1), TUI_style.Style());
+    check(tally, "restyle keeps the glyphs", styled_buffer.row_text(0), "ab  ");
+    check_int(tally, "restyle changes the style", styled_buffer.style_at(0, 0), 0);
     // An empty rectangle.
-    TUI_buffer.Buffer q = TUI_buffer.Buffer.sized(0, 0);
-    check_int(t, "empty buffer has no cells", q.area().cells(), 0);
-    check(t, "empty buffer prints nothing", q.to_str(), "");
-    q.fill(TUI_geometry.Rect(0, 0, 5, 5), "#", TUI_style.Style());
-    check(t, "filling an empty buffer is a no-op", q.to_str(), "");
+    TUI_buffer.Buffer empty_buffer = TUI_buffer.Buffer.sized(0, 0);
+    check_int(tally, "empty buffer has no cells", empty_buffer.area().cells(), 0);
+    check(tally, "empty buffer prints nothing", empty_buffer.to_str(), "");
+    empty_buffer.fill(TUI_geometry.Rect(0, 0, 5, 5), "#", TUI_style.Style());
+    check(tally, "filling an empty buffer is a no-op", empty_buffer.to_str(), "");
     print("");
     print("a buffer as a picture:");
-    print(w.frame());
+    print(wide_buffer.frame());
 }
 
 // --- 2. layout --------------------------------------------------------------
 
-str sizes(int total, List<TUI_geometry.Constraint> cs) {
+str sizes(int total, List<TUI_geometry.Constraint> constraints) {
     List<str> out = [];
-    for (int v in TUI_geometry.resolve(total, cs)) {
-        out.push(str(v));
+    for (int size in TUI_geometry.resolve(total, constraints)) {
+        out.push(str(size));
     }
     return out.join(" ");
 }
 
-void layout_tests(Tally t) {
+void layout_tests(Tally tally) {
     head("layout");
-    check(t, "length then fill", sizes(100, [TUI_geometry.Constraint.Length(10), TUI_geometry.Constraint.Fill(1)]), "10 90");
-    check(t, "two halves", sizes(100, [TUI_geometry.Constraint.Percentage(50), TUI_geometry.Constraint.Percentage(50)]), "50 50");
-    check(t, "thirds of ten, the last absorbing", sizes(10, [TUI_geometry.Constraint.Percentage(33), TUI_geometry.Constraint.Percentage(33), TUI_geometry.Constraint.Percentage(33)]), "3 3 4");
-    check(t, "weighted fills", sizes(100, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(2), TUI_geometry.Constraint.Fill(1)]), "25 50 25");
-    check(t, "fills and a remainder", sizes(7, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1)]), "3 2 2");
-    check(t, "all fills weight zero share equally", sizes(6, [TUI_geometry.Constraint.Fill(0), TUI_geometry.Constraint.Fill(0)]), "3 3");
-    check(t, "a zero fill beside a weighted one gets nothing", sizes(6, [TUI_geometry.Constraint.Fill(0), TUI_geometry.Constraint.Fill(1)]), "0 6");
-    check(t, "mins share the surplus", sizes(100, [TUI_geometry.Constraint.Min(10), TUI_geometry.Constraint.Min(30)]), "40 60");
-    check(t, "lengths that do not fit shrink from the right", sizes(20, [TUI_geometry.Constraint.Length(50), TUI_geometry.Constraint.Length(50), TUI_geometry.Constraint.Length(20)]), "6 7 7");
-    check(t, "a fill gives way before a length", sizes(10, [TUI_geometry.Constraint.Length(8), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8)]), "5 0 5");
-    check(t, "max shrinks", sizes(40, [TUI_geometry.Constraint.Max(30), TUI_geometry.Constraint.Max(30)]), "20 20");
-    check(t, "ratios", sizes(100, [TUI_geometry.Constraint.Ratio(1, 3), TUI_geometry.Constraint.Ratio(2, 3)]), "33 67");
-    check(t, "nothing to share out", sizes(0, [TUI_geometry.Constraint.Length(5), TUI_geometry.Constraint.Fill(1)]), "0 0");
-    check(t, "one constraint takes everything", sizes(13, [TUI_geometry.Constraint.Length(2)]), "13");
-    TUI_geometry.Rect a = TUI_geometry.Rect(2, 1, 20, 10);
-    List<TUI_geometry.Rect> r = TUI_geometry.rows(a, [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1)]);
-    check(t, "rows: first", r[0].to_str(), "2,1 20x3");
-    check(t, "rows: second", r[1].to_str(), "2,4 20x7");
-    List<TUI_geometry.Rect> c = TUI_geometry.cols(r[1], [TUI_geometry.Constraint.Percentage(25), TUI_geometry.Constraint.Fill(1)]);
-    check(t, "nested cols: first", c[0].to_str(), "2,4 5x7");
-    check(t, "nested cols: second", c[1].to_str(), "7,4 15x7");
-    List<TUI_geometry.Rect> m = TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Fill(1)], margin_x: 2, margin_y: 1).split(a);
-    check(t, "margins", m[0].to_str(), "4,2 16x8");
-    List<TUI_geometry.Rect> g = TUI_geometry.Layout(TUI_geometry.Direction.Horizontal, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1)], spacing: 2).split(TUI_geometry.Rect(0, 0, 10, 1));
-    check(t, "spacing: first", g[0].to_str(), "0,0 4x1");
-    check(t, "spacing: second", g[1].to_str(), "6,0 4x1");
+    check(tally, "length then fill", sizes(100, [TUI_geometry.Constraint.Length(10), TUI_geometry.Constraint.Fill(1)]), "10 90");
+    check(tally, "two halves", sizes(100, [TUI_geometry.Constraint.Percentage(50), TUI_geometry.Constraint.Percentage(50)]), "50 50");
+    check(tally, "thirds of ten, the last absorbing", sizes(10, [TUI_geometry.Constraint.Percentage(33), TUI_geometry.Constraint.Percentage(33), TUI_geometry.Constraint.Percentage(33)]), "3 3 4");
+    check(tally, "weighted fills", sizes(100, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(2), TUI_geometry.Constraint.Fill(1)]), "25 50 25");
+    check(tally, "fills and a remainder", sizes(7, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1)]), "3 2 2");
+    check(tally, "all fills weight zero share equally", sizes(6, [TUI_geometry.Constraint.Fill(0), TUI_geometry.Constraint.Fill(0)]), "3 3");
+    check(tally, "a zero fill beside a weighted one gets nothing", sizes(6, [TUI_geometry.Constraint.Fill(0), TUI_geometry.Constraint.Fill(1)]), "0 6");
+    check(tally, "mins share the surplus", sizes(100, [TUI_geometry.Constraint.Min(10), TUI_geometry.Constraint.Min(30)]), "40 60");
+    check(tally, "lengths that do not fit shrink from the right", sizes(20, [TUI_geometry.Constraint.Length(50), TUI_geometry.Constraint.Length(50), TUI_geometry.Constraint.Length(20)]), "6 7 7");
+    check(tally, "a fill gives way before a length", sizes(10, [TUI_geometry.Constraint.Length(8), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8)]), "5 0 5");
+    check(tally, "max shrinks", sizes(40, [TUI_geometry.Constraint.Max(30), TUI_geometry.Constraint.Max(30)]), "20 20");
+    check(tally, "ratios", sizes(100, [TUI_geometry.Constraint.Ratio(1, 3), TUI_geometry.Constraint.Ratio(2, 3)]), "33 67");
+    check(tally, "nothing to share out", sizes(0, [TUI_geometry.Constraint.Length(5), TUI_geometry.Constraint.Fill(1)]), "0 0");
+    check(tally, "one constraint takes everything", sizes(13, [TUI_geometry.Constraint.Length(2)]), "13");
+    TUI_geometry.Rect area = TUI_geometry.Rect(2, 1, 20, 10);
+    List<TUI_geometry.Rect> row_rects = TUI_geometry.rows(area, [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1)]);
+    check(tally, "rows: first", row_rects[0].to_str(), "2,1 20x3");
+    check(tally, "rows: second", row_rects[1].to_str(), "2,4 20x7");
+    List<TUI_geometry.Rect> column_rects = TUI_geometry.cols(row_rects[1], [TUI_geometry.Constraint.Percentage(25), TUI_geometry.Constraint.Fill(1)]);
+    check(tally, "nested cols: first", column_rects[0].to_str(), "2,4 5x7");
+    check(tally, "nested cols: second", column_rects[1].to_str(), "7,4 15x7");
+    List<TUI_geometry.Rect> margin_rects = TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Fill(1)], margin_x: 2, margin_y: 1).split(area);
+    check(tally, "margins", margin_rects[0].to_str(), "4,2 16x8");
+    List<TUI_geometry.Rect> gap_rects = TUI_geometry.Layout(TUI_geometry.Direction.Horizontal, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1)], spacing: 2).split(TUI_geometry.Rect(0, 0, 10, 1));
+    check(tally, "spacing: first", gap_rects[0].to_str(), "0,0 4x1");
+    check(tally, "spacing: second", gap_rects[1].to_str(), "6,0 4x1");
     List<TUI_geometry.Rect> big = TUI_geometry.Layout(TUI_geometry.Direction.Horizontal, [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Fill(1)], spacing: 99).split(TUI_geometry.Rect(0, 0, 10, 1));
-    ok(t, "an impossible gap stays inside the area", big[1].right() <= 10);
+    ok(tally, "an impossible gap stays inside the area", big[1].right() <= 10);
 }
 
 // --- 3. the layout property test --------------------------------------------
 
-TUI_geometry.Constraint a_constraint(random.Seeded r) {
-    int k = r.integer(0, 5);
-    if (k == 0) {
-        return TUI_geometry.Constraint.Length(r.integer(0, 30));
+TUI_geometry.Constraint a_constraint(random.Seeded random_source) {
+    int choice = random_source.integer(0, 5);
+    if (choice == 0) {
+        return TUI_geometry.Constraint.Length(random_source.integer(0, 30));
     }
-    if (k == 1) {
-        return TUI_geometry.Constraint.Percentage(r.integer(0, 120));
+    if (choice == 1) {
+        return TUI_geometry.Constraint.Percentage(random_source.integer(0, 120));
     }
-    if (k == 2) {
-        return TUI_geometry.Constraint.Ratio(r.integer(0, 5), r.integer(0, 5));
+    if (choice == 2) {
+        return TUI_geometry.Constraint.Ratio(random_source.integer(0, 5), random_source.integer(0, 5));
     }
-    if (k == 3) {
-        return TUI_geometry.Constraint.Min(r.integer(0, 30));
+    if (choice == 3) {
+        return TUI_geometry.Constraint.Min(random_source.integer(0, 30));
     }
-    if (k == 4) {
-        return TUI_geometry.Constraint.Max(r.integer(0, 30));
+    if (choice == 4) {
+        return TUI_geometry.Constraint.Max(random_source.integer(0, 30));
     }
-    return TUI_geometry.Constraint.Fill(r.integer(0, 4));
+    return TUI_geometry.Constraint.Fill(random_source.integer(0, 4));
 }
 
-void property_tests(Tally t) {
+void property_tests(Tally tally) {
     head("layout properties, 2000 random constraint sets");
-    random.Seeded r = random.seeded(20260924);
+    random.Seeded random_source = random.seeded(20260924);
     int bad_sum = 0;
     int bad_sign = 0;
     int bad_tile = 0;
     int bad_order = 0;
     str worst = "";
     for (int trial in 0 .. 2000) {
-        int total = r.integer(0, 60);
-        int n = r.integer(1, 6);
-        List<TUI_geometry.Constraint> cs = [];
-        for (int i in 0 .. n) {
-            cs.push(a_constraint(r));
+        int total = random_source.integer(0, 60);
+        int constraint_count = random_source.integer(1, 6);
+        List<TUI_geometry.Constraint> constraints = [];
+        for (int i in 0 .. constraint_count) {
+            constraints.push(a_constraint(random_source));
         }
-        List<int> got = TUI_geometry.resolve(total, cs);
+        List<int> got = TUI_geometry.resolve(total, constraints);
         int sum = 0;
         bool neg = false;
-        for (int v in got) {
-            sum = sum + v;
-            if (v < 0) {
+        for (int size in got) {
+            sum = sum + size;
+            if (size < 0) {
                 neg = true;
             }
         }
-        if (got.size() != n || sum != total) {
+        if (got.size() != constraint_count || sum != total) {
             bad_sum = bad_sum + 1;
-            worst = describe(total, cs, got);
+            worst = describe(total, constraints, got);
         }
         if (neg) {
             bad_sign = bad_sign + 1;
-            worst = describe(total, cs, got);
+            worst = describe(total, constraints, got);
         }
         // And the same through real rectangles, horizontally and vertically.
-        TUI_geometry.Rect area = TUI_geometry.Rect(r.integer(0, 5), r.integer(0, 5), total, r.integer(0, 8));
-        List<TUI_geometry.Rect> parts = TUI_geometry.cols(area, cs);
-        int at = area.x;
-        for (TUI_geometry.Rect p in parts) {
-            if (p.x != at || p.w < 0 || p.y != area.y || p.h != area.h) {
+        TUI_geometry.Rect area = TUI_geometry.Rect(random_source.integer(0, 5), random_source.integer(0, 5), total, random_source.integer(0, 8));
+        List<TUI_geometry.Rect> parts = TUI_geometry.cols(area, constraints);
+        int next_x = area.x;
+        for (TUI_geometry.Rect part in parts) {
+            if (part.x != next_x || part.width < 0 || part.y != area.y || part.height != area.height) {
                 bad_order = bad_order + 1;
-                worst = describe(total, cs, got);
+                worst = describe(total, constraints, got);
             }
-            at = at + p.w;
+            next_x = next_x + part.width;
         }
-        if (at != area.right()) {
+        if (next_x != area.right()) {
             bad_tile = bad_tile + 1;
-            worst = describe(total, cs, got);
+            worst = describe(total, constraints, got);
         }
-        TUI_geometry.Rect varea = TUI_geometry.Rect(area.y, area.x, area.h, total);
-        List<TUI_geometry.Rect> vparts = TUI_geometry.rows(varea, cs);
+        TUI_geometry.Rect varea = TUI_geometry.Rect(area.y, area.x, area.height, total);
+        List<TUI_geometry.Rect> vparts = TUI_geometry.rows(varea, constraints);
         int vat = varea.y;
-        for (TUI_geometry.Rect p in vparts) {
-            vat = vat + p.h;
+        for (TUI_geometry.Rect part in vparts) {
+            vat = vat + part.height;
         }
         if (vat != varea.bottom()) {
             bad_tile = bad_tile + 1;
-            worst = describe(total, cs, got);
+            worst = describe(total, constraints, got);
         }
     }
-    check_int(t, "sizes always sum to the total", bad_sum, 0);
-    check_int(t, "no size is ever negative", bad_sign, 0);
-    check_int(t, "the parts always tile the area", bad_tile, 0);
-    check_int(t, "the parts are in order and never overlap", bad_order, 0);
+    check_int(tally, "sizes always sum to the total", bad_sum, 0);
+    check_int(tally, "no size is ever negative", bad_sign, 0);
+    check_int(tally, "the parts always tile the area", bad_tile, 0);
+    check_int(tally, "the parts are in order and never overlap", bad_order, 0);
     if (worst != "") {
         print("     counterexample: " + worst);
     }
 }
 
-str describe(int total, List<TUI_geometry.Constraint> cs, List<int> got) {
-    List<str> a = [];
-    for (TUI_geometry.Constraint c in cs) {
-        a.push(c.to_str());
+str describe(int total, List<TUI_geometry.Constraint> constraints, List<int> got) {
+    List<str> constraint_texts = [];
+    for (TUI_geometry.Constraint constraint in constraints) {
+        constraint_texts.push(constraint.to_str());
     }
-    List<str> b = [];
-    for (int v in got) {
-        b.push(str(v));
+    List<str> size_texts = [];
+    for (int size in got) {
+        size_texts.push(str(size));
     }
-    return str(total) + " [" + a.join(", ") + "] -> " + b.join(" ");
+    return str(total) + " [" + constraint_texts.join(", ") + "] -> " + size_texts.join(" ");
 }
 
 // --- 4. text ----------------------------------------------------------------
 
-str wrapped(str s, int cols) {
-    return TUI_text.wrap(s, cols).join("/");
+str wrapped(str text, int cols) {
+    return TUI_text.wrap(text, cols).join("/");
 }
 
-void text_tests(Tally t) {
+void text_tests(Tally tally) {
     head("text");
-    check(t, "greedy wrap", wrapped("the quick brown fox jumps over", 10), "the quick/brown fox/jumps over");
-    check(t, "an unbreakable run is cut", wrapped("supercalifragilistic", 8), "supercal/ifragili/stic");
-    check(t, "blank lines survive", wrapped("a\n\nb", 5), "a//b");
-    check(t, "cjk breaks between characters", wrapped("\u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}", 5), "\u{6F22}\u{5B57}/\u{6F22}\u{5B57}/\u{6F22}");
-    check(t, "cjk and latin together", wrapped("mixed \u{6F22}\u{5B57} text", 8), "mixed \u{6F22}/\u{5B57} text");
+    check(tally, "greedy wrap", wrapped("the quick brown fox jumps over", 10), "the quick/brown fox/jumps over");
+    check(tally, "an unbreakable run is cut", wrapped("supercalifragilistic", 8), "supercal/ifragili/stic");
+    check(tally, "blank lines survive", wrapped("a\n\nb", 5), "a//b");
+    check(tally, "cjk breaks between characters", wrapped("\u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}", 5), "\u{6F22}\u{5B57}/\u{6F22}\u{5B57}/\u{6F22}");
+    check(tally, "cjk and latin together", wrapped("mixed \u{6F22}\u{5B57} text", 8), "mixed \u{6F22}/\u{5B57} text");
     // The break lands between clusters, so the accent stays on its letter.
-    check(t, "a cluster is never split", wrapped("abcde\u{301}fgh", 5), "abcde\u{301}/fgh");
-    check(t, "trailing spaces are dropped at a break", wrapped("aaa   bbb", 4), "aaa/bbb");
-    check(t, "a wide character in one column overflows alone", wrapped("\u{6F22}", 1), "\u{6F22}");
-    check(t, "empty text is one empty line", wrapped("", 5), "");
-    check(t, "truncate", TUI_text.truncate("hello world", 8), "hello w\u{2026}");
-    check(t, "truncate keeps what fits", TUI_text.truncate("hello", 8), "hello");
-    check(t, "truncate on a wide boundary", TUI_text.truncate("\u{6F22}\u{5B57}\u{6F22}", 5), "\u{6F22}\u{5B57}\u{2026}");
-    check(t, "no room for an ellipsis", TUI_text.truncate("hello", 1), "h");
-    check(t, "truncate to nothing", TUI_text.truncate("hello", 0), "");
-    check(t, "pad left", "[" + TUI_text.pad("hi", 6, TUI_text.Align.Left) + "]", "[hi    ]");
-    check(t, "pad right", "[" + TUI_text.pad("hi", 6, TUI_text.Align.Right) + "]", "[    hi]");
-    check(t, "pad centre", "[" + TUI_text.pad("hi", 7, TUI_text.Align.Center) + "]", "[  hi   ]");
-    check(t, "pad counts columns, not bytes", "[" + TUI_text.pad("\u{6F22}", 4, TUI_text.Align.Left) + "]", "[\u{6F22}  ]");
-    check(t, "fit does both", "[" + TUI_text.fit("hello world", 6, TUI_text.Align.Left) + "]", "[hello\u{2026}]");
-    check_int(t, "offset centres", TUI_text.offset("abc", 9, TUI_text.Align.Center), 3);
-    check(t, "drop_columns: cut's complement, keeps the tail", TUI_text.drop_columns("hello world", 6), "world");
-    check(t, "drop_columns: dropping nothing returns the whole string", TUI_text.drop_columns("hello", 0), "hello");
-    check(t, "drop_columns: dropping it all returns empty", TUI_text.drop_columns("hello", 5), "");
-    check(t, "drop_columns: dropping past the end returns empty", TUI_text.drop_columns("hi", 50), "");
-    check(t, "drop_columns: a wide character is dropped whole, never split", TUI_text.drop_columns("\u{6F22}\u{5B57}x", 1), "\u{5B57}x");
-    check(t, "drop_columns then cut reproduces a scrolled window", TUI_text.cut(TUI_text.drop_columns("the quick brown fox", 4), 5), "quick");
+    check(tally, "a cluster is never split", wrapped("abcde\u{301}fgh", 5), "abcde\u{301}/fgh");
+    check(tally, "trailing spaces are dropped at a break", wrapped("aaa   bbb", 4), "aaa/bbb");
+    check(tally, "a wide character in one column overflows alone", wrapped("\u{6F22}", 1), "\u{6F22}");
+    check(tally, "empty text is one empty line", wrapped("", 5), "");
+    check(tally, "truncate", TUI_text.truncate("hello world", 8), "hello w\u{2026}");
+    check(tally, "truncate keeps what fits", TUI_text.truncate("hello", 8), "hello");
+    check(tally, "truncate on a wide boundary", TUI_text.truncate("\u{6F22}\u{5B57}\u{6F22}", 5), "\u{6F22}\u{5B57}\u{2026}");
+    check(tally, "no room for an ellipsis", TUI_text.truncate("hello", 1), "h");
+    check(tally, "truncate to nothing", TUI_text.truncate("hello", 0), "");
+    check(tally, "pad left", "[" + TUI_text.pad("hi", 6, TUI_text.Align.Left) + "]", "[hi    ]");
+    check(tally, "pad right", "[" + TUI_text.pad("hi", 6, TUI_text.Align.Right) + "]", "[    hi]");
+    check(tally, "pad centre", "[" + TUI_text.pad("hi", 7, TUI_text.Align.Center) + "]", "[  hi   ]");
+    check(tally, "pad counts columns, not bytes", "[" + TUI_text.pad("\u{6F22}", 4, TUI_text.Align.Left) + "]", "[\u{6F22}  ]");
+    check(tally, "fit does both", "[" + TUI_text.fit("hello world", 6, TUI_text.Align.Left) + "]", "[hello\u{2026}]");
+    check_int(tally, "offset centres", TUI_text.offset("abc", 9, TUI_text.Align.Center), 3);
+    check(tally, "drop_columns: cut's complement, keeps the tail", TUI_text.drop_columns("hello world", 6), "world");
+    check(tally, "drop_columns: dropping nothing returns the whole string", TUI_text.drop_columns("hello", 0), "hello");
+    check(tally, "drop_columns: dropping it all returns empty", TUI_text.drop_columns("hello", 5), "");
+    check(tally, "drop_columns: dropping past the end returns empty", TUI_text.drop_columns("hi", 50), "");
+    check(tally, "drop_columns: a wide character is dropped whole, never split", TUI_text.drop_columns("\u{6F22}\u{5B57}x", 1), "\u{5B57}x");
+    check(tally, "drop_columns then cut reproduces a scrolled window", TUI_text.cut(TUI_text.drop_columns("the quick brown fox", 4), 5), "quick");
 }
 
 // --- 5. the diffing renderer ------------------------------------------------
 
-void diff_tests(Tally t) {
+void diff_tests(Tally tally) {
     head("renderer");
-    TUI_style.Depth d = TUI_style.Depth.Ansi16;
-    TUI_buffer.Buffer a = TUI_buffer.Buffer.sized(12, 2);
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(12, 2);
-    a.set_str(0, 0, "hello world", TUI_style.Style());
-    b.set_str(0, 0, "hello world", TUI_style.Style());
-    check(t, "an unchanged frame writes nothing", TUI_diff.show(TUI_diff.diff(a, b, d)), "");
-    b.set_str(6, 0, "W", TUI_style.Style());
-    check(t, "one cell", TUI_diff.show(TUI_diff.diff(a, b, d)), "\\e[1;7HW");
+    TUI_style.Depth depth = TUI_style.Depth.Ansi16;
+    TUI_buffer.Buffer previous = TUI_buffer.Buffer.sized(12, 2);
+    TUI_buffer.Buffer current = TUI_buffer.Buffer.sized(12, 2);
+    previous.set_str(0, 0, "hello world", TUI_style.Style());
+    current.set_str(0, 0, "hello world", TUI_style.Style());
+    check(tally, "an unchanged frame writes nothing", TUI_diff.show(TUI_diff.diff(previous, current, depth)), "");
+    current.set_str(6, 0, "W", TUI_style.Style());
+    check(tally, "one cell", TUI_diff.show(TUI_diff.diff(previous, current, depth)), "\\e[1;7HW");
     // Two changes with a short gap: walking is cheaper than jumping.
-    TUI_buffer.Buffer c = TUI_buffer.Buffer.sized(12, 1);
-    TUI_buffer.Buffer e = TUI_buffer.Buffer.sized(12, 1);
-    c.fill(TUI_geometry.Rect(0, 0, 12, 1), "#", TUI_style.Style());
-    e.fill(TUI_geometry.Rect(0, 0, 12, 1), "#", TUI_style.Style());
-    e.set_str(0, 0, "a", TUI_style.Style());
-    e.set_str(2, 0, "c", TUI_style.Style());
-    check(t, "a short gap is walked", TUI_diff.show(TUI_diff.diff(c, e, d)), "\\e[1;1Ha#c");
-    e.set_str(11, 0, "z", TUI_style.Style());
-    check(t, "a long gap is jumped", TUI_diff.show(TUI_diff.diff(c, e, d)), "\\e[1;1Ha#c\\e[8Cz");
+    TUI_buffer.Buffer plain_buffer = TUI_buffer.Buffer.sized(12, 1);
+    TUI_buffer.Buffer edited_buffer = TUI_buffer.Buffer.sized(12, 1);
+    plain_buffer.fill(TUI_geometry.Rect(0, 0, 12, 1), "#", TUI_style.Style());
+    edited_buffer.fill(TUI_geometry.Rect(0, 0, 12, 1), "#", TUI_style.Style());
+    edited_buffer.set_str(0, 0, "a", TUI_style.Style());
+    edited_buffer.set_str(2, 0, "c", TUI_style.Style());
+    check(tally, "a short gap is walked", TUI_diff.show(TUI_diff.diff(plain_buffer, edited_buffer, depth)), "\\e[1;1Ha#c");
+    edited_buffer.set_str(11, 0, "z", TUI_style.Style());
+    check(tally, "a long gap is jumped", TUI_diff.show(TUI_diff.diff(plain_buffer, edited_buffer, depth)), "\\e[1;1Ha#c\\e[8Cz");
     // Style changes are written as differences.
-    TUI_buffer.Buffer s1 = TUI_buffer.Buffer.sized(6, 1);
-    TUI_buffer.Buffer s2 = TUI_buffer.Buffer.sized(6, 1);
-    s2.set_str(0, 0, "ab", TUI_style.Style(attrs: TUI_style.BOLD | TUI_style.UNDERLINE));
-    s2.set_str(2, 0, "cd", TUI_style.Style(attrs: TUI_style.UNDERLINE));
-    check(t, "attributes on, then one off", TUI_diff.show(TUI_diff.diff(s1, s2, d)), "\\e[1;1H\\e[1;4mab\\e[22mcd\\e[0m");
-    TUI_buffer.Buffer k1 = TUI_buffer.Buffer.sized(4, 1);
-    TUI_buffer.Buffer k2 = TUI_buffer.Buffer.sized(4, 1);
-    k2.set_str(0, 0, "x", TUI_style.Style(fg: TUI_style.Colour.Rgb(200, 30, 40), bg: TUI_style.Colour.Indexed(19)));
-    check(t, "24-bit colour", TUI_diff.show(TUI_diff.diff(k1, k2, TUI_style.Depth.TrueColour)), "\\e[1;1H\\e[38;2;200;30;40;48;5;19mx\\e[0m");
-    check(t, "256 colour", TUI_diff.show(TUI_diff.diff(k1, k2, TUI_style.Depth.Ansi256)), "\\e[1;1H\\e[38;5;160;48;5;19mx\\e[0m");
-    check(t, "16 colour", TUI_diff.show(TUI_diff.diff(k1, k2, TUI_style.Depth.Ansi16)), "\\e[1;1H\\e[91;44mx\\e[0m");
+    TUI_buffer.Buffer unstyled_buffer = TUI_buffer.Buffer.sized(6, 1);
+    TUI_buffer.Buffer styled_buffer = TUI_buffer.Buffer.sized(6, 1);
+    styled_buffer.set_str(0, 0, "ab", TUI_style.Style(attrs: TUI_style.BOLD | TUI_style.UNDERLINE));
+    styled_buffer.set_str(2, 0, "cd", TUI_style.Style(attrs: TUI_style.UNDERLINE));
+    check(tally, "attributes on, then one off", TUI_diff.show(TUI_diff.diff(unstyled_buffer, styled_buffer, depth)), "\\e[1;1H\\e[1;4mab\\e[22mcd\\e[0m");
+    TUI_buffer.Buffer blank_buffer = TUI_buffer.Buffer.sized(4, 1);
+    TUI_buffer.Buffer coloured_buffer = TUI_buffer.Buffer.sized(4, 1);
+    coloured_buffer.set_str(0, 0, "x", TUI_style.Style(foreground: TUI_style.Colour.Rgb(200, 30, 40), background: TUI_style.Colour.Indexed(19)));
+    check(tally, "24-bit colour", TUI_diff.show(TUI_diff.diff(blank_buffer, coloured_buffer, TUI_style.Depth.TrueColour)), "\\e[1;1H\\e[38;2;200;30;40;48;5;19mx\\e[0m");
+    check(tally, "256 colour", TUI_diff.show(TUI_diff.diff(blank_buffer, coloured_buffer, TUI_style.Depth.Ansi256)), "\\e[1;1H\\e[38;5;160;48;5;19mx\\e[0m");
+    check(tally, "16 colour", TUI_diff.show(TUI_diff.diff(blank_buffer, coloured_buffer, TUI_style.Depth.Ansi16)), "\\e[1;1H\\e[91;44mx\\e[0m");
     // A whole frame, and the erase-to-end-of-line shortcut.
-    TUI_buffer.Buffer f = TUI_buffer.Buffer.sized(16, 3);
-    f.set_str(0, 0, "hello", TUI_style.Style());
-    f.set_str(0, 2, "bye", TUI_style.Style(attrs: TUI_style.BOLD));
-    check(t, "a full frame", TUI_diff.show(TUI_diff.full(f, d)), "\\e[0m\\e[1;1Hhello\\e[K\\e[2;1H\\e[K\\e[3;1H\\e[1mbye\\e[22m\\e[K");
+    TUI_buffer.Buffer frame_buffer = TUI_buffer.Buffer.sized(16, 3);
+    frame_buffer.set_str(0, 0, "hello", TUI_style.Style());
+    frame_buffer.set_str(0, 2, "bye", TUI_style.Style(attrs: TUI_style.BOLD));
+    check(tally, "a full frame", TUI_diff.show(TUI_diff.full(frame_buffer, depth)), "\\e[0m\\e[1;1Hhello\\e[K\\e[2;1H\\e[K\\e[3;1H\\e[1mbye\\e[22m\\e[K");
     // A resize is not a diff.
-    ok(t, "buffers of one size diff", TUI_diff.diff(a, b, d).size() >= 0);
+    ok(tally, "buffers of one size diff", TUI_diff.diff(previous, current, depth).size() >= 0);
     print("");
     print("the bytes of a small frame, readably:");
-    print("  " + TUI_diff.show(TUI_diff.full(f, TUI_style.Depth.TrueColour)));
+    print("  " + TUI_diff.show(TUI_diff.full(frame_buffer, TUI_style.Depth.TrueColour)));
 }
 
 // --- 6. widgets -------------------------------------------------------------
 
-void block_tests(Tally t) {
+void block_tests(Tally tally) {
     head("block");
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(44, 5);
-    TUI_widget.Block(title: "single").render(b, TUI_geometry.Rect(0, 0, 11, 5));
-    TUI_widget.Block(title: "double", borders: TUI_widget.Borders.Double).render(b, TUI_geometry.Rect(11, 0, 11, 5));
-    TUI_widget.Block(title: "round", borders: TUI_widget.Borders.Rounded, title_align: TUI_text.Align.Center).render(b, TUI_geometry.Rect(22, 0, 11, 5));
-    TUI_widget.Block(title: "thick", borders: TUI_widget.Borders.Thick, title_align: TUI_text.Align.Right).render(b, TUI_geometry.Rect(33, 0, 11, 5));
-    print(b.frame());
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(44, 5);
+    TUI_widget.Block(title: "single").render(buffer, TUI_geometry.Rect(0, 0, 11, 5));
+    TUI_widget.Block(title: "double", borders: TUI_widget.Borders.Double).render(buffer, TUI_geometry.Rect(11, 0, 11, 5));
+    TUI_widget.Block(title: "round", borders: TUI_widget.Borders.Rounded, title_align: TUI_text.Align.Center).render(buffer, TUI_geometry.Rect(22, 0, 11, 5));
+    TUI_widget.Block(title: "thick", borders: TUI_widget.Borders.Thick, title_align: TUI_text.Align.Right).render(buffer, TUI_geometry.Rect(33, 0, 11, 5));
+    print(buffer.frame());
     TUI_widget.Block plain = TUI_widget.Block();
-    check(t, "inner takes the border", plain.inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "1,1 8x2");
-    check(t, "inner takes the padding too", TUI_widget.Block(pad_x: 2, pad_y: 1).inner(TUI_geometry.Rect(0, 0, 10, 6)).to_str(), "3,2 4x2");
-    check(t, "a title with no border still takes a row", TUI_widget.Block(borders: TUI_widget.Borders.None, title: "t").inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "0,1 10x3");
-    check(t, "no border and no title takes nothing", TUI_widget.Block(borders: TUI_widget.Borders.None).inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "0,0 10x4");
-    check(t, "inner never goes negative", plain.inner(TUI_geometry.Rect(0, 0, 1, 1)).to_str(), "1,1 0x0");
-    check(t, "only some sides", TUI_widget.Block(sides: TUI_widget.LEFT | TUI_widget.BOTTOM).inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "1,0 9x3");
+    check(tally, "inner takes the border", plain.inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "1,1 8x2");
+    check(tally, "inner takes the padding too", TUI_widget.Block(pad_x: 2, pad_y: 1).inner(TUI_geometry.Rect(0, 0, 10, 6)).to_str(), "3,2 4x2");
+    check(tally, "a title with no border still takes a row", TUI_widget.Block(borders: TUI_widget.Borders.None, title: "t").inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "0,1 10x3");
+    check(tally, "no border and no title takes nothing", TUI_widget.Block(borders: TUI_widget.Borders.None).inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "0,0 10x4");
+    check(tally, "inner never goes negative", plain.inner(TUI_geometry.Rect(0, 0, 1, 1)).to_str(), "1,1 0x0");
+    check(tally, "only some sides", TUI_widget.Block(sides: TUI_widget.LEFT | TUI_widget.BOTTOM).inner(TUI_geometry.Rect(0, 0, 10, 4)).to_str(), "1,0 9x3");
     print("");
     print("rectangles smaller than their border:");
-    TUI_buffer.Buffer s = TUI_buffer.Buffer.sized(22, 4);
-    TUI_widget.Block(title: "abc").render(s, TUI_geometry.Rect(0, 0, 4, 1));
-    TUI_widget.Block(title: "abc").render(s, TUI_geometry.Rect(5, 0, 1, 3));
-    TUI_widget.Block(title: "abc").render(s, TUI_geometry.Rect(7, 0, 2, 2));
-    TUI_widget.Block(title: "abc").render(s, TUI_geometry.Rect(10, 0, 0, 4));
-    TUI_widget.Block(sides: TUI_widget.LEFT | TUI_widget.BOTTOM, title: "").render(s, TUI_geometry.Rect(12, 0, 6, 4));
-    print(s.frame());
+    TUI_buffer.Buffer small_buffer = TUI_buffer.Buffer.sized(22, 4);
+    TUI_widget.Block(title: "abc").render(small_buffer, TUI_geometry.Rect(0, 0, 4, 1));
+    TUI_widget.Block(title: "abc").render(small_buffer, TUI_geometry.Rect(5, 0, 1, 3));
+    TUI_widget.Block(title: "abc").render(small_buffer, TUI_geometry.Rect(7, 0, 2, 2));
+    TUI_widget.Block(title: "abc").render(small_buffer, TUI_geometry.Rect(10, 0, 0, 4));
+    TUI_widget.Block(sides: TUI_widget.LEFT | TUI_widget.BOTTOM, title: "").render(small_buffer, TUI_geometry.Rect(12, 0, 6, 4));
+    print(small_buffer.frame());
 }
 
-void paragraph_tests(Tally t) {
+void paragraph_tests(Tally tally) {
     head("paragraph");
     str body = "The quick brown fox jumps over the lazy dog, and keeps on going for quite a while after that.";
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(40, 6);
-    TUI_widget.Paragraph(body).render(b, TUI_geometry.Rect(0, 0, 20, 6));
-    TUI_widget.Paragraph(body, align: TUI_text.Align.Right, scroll: 2).render(b, TUI_geometry.Rect(20, 0, 20, 6));
-    print(b.frame());
-    TUI_widget.Paragraph p = TUI_widget.Paragraph(body);
-    check_int(t, "line count at 20 columns", p.lines(20).size(), 5);
-    check_int(t, "line count at 10 columns", p.lines(10).size(), 11);
-    TUI_buffer.Buffer c = TUI_buffer.Buffer.sized(14, 3);
-    TUI_widget.Paragraph("a long single line that will not be wrapped", wrap: false).render(c, TUI_geometry.Rect(0, 0, 14, 3));
-    check(t, "unwrapped text is truncated", c.row_text(0), "a long single\u{2026}");
-    TUI_buffer.Buffer e = TUI_buffer.Buffer.sized(8, 2);
-    TUI_widget.Paragraph("x").render(e, TUI_geometry.Rect(0, 0, 0, 0));
-    check(t, "an empty rectangle draws nothing", e.row_text(0), "        ");
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(40, 6);
+    TUI_widget.Paragraph(body).render(buffer, TUI_geometry.Rect(0, 0, 20, 6));
+    TUI_widget.Paragraph(body, align: TUI_text.Align.Right, scroll: 2).render(buffer, TUI_geometry.Rect(20, 0, 20, 6));
+    print(buffer.frame());
+    TUI_widget.Paragraph paragraph = TUI_widget.Paragraph(body);
+    check_int(tally, "line count at 20 columns", paragraph.lines(20).size(), 5);
+    check_int(tally, "line count at 10 columns", paragraph.lines(10).size(), 11);
+    TUI_buffer.Buffer unwrapped_buffer = TUI_buffer.Buffer.sized(14, 3);
+    TUI_widget.Paragraph("a long single line that will not be wrapped", wrap: false).render(unwrapped_buffer, TUI_geometry.Rect(0, 0, 14, 3));
+    check(tally, "unwrapped text is truncated", unwrapped_buffer.row_text(0), "a long single\u{2026}");
+    TUI_buffer.Buffer empty_buffer = TUI_buffer.Buffer.sized(8, 2);
+    TUI_widget.Paragraph("x").render(empty_buffer, TUI_geometry.Rect(0, 0, 0, 0));
+    check(tally, "an empty rectangle draws nothing", empty_buffer.row_text(0), "        ");
 }
 
-void list_tests(Tally t) {
+void list_tests(Tally tally) {
     head("list");
     List<str> items = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"];
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(36, 4);
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(36, 4);
     TUI_list_table.ListView top = TUI_list_table.ListView(items, selected: 1, highlight_symbol: "> ");
-    top.render(b, TUI_geometry.Rect(0, 0, 12, 4));
-    check_int(t, "no scroll needed", top.offset, 0);
+    top.render(buffer, TUI_geometry.Rect(0, 0, 12, 4));
+    check_int(tally, "no scroll needed", top.offset, 0);
     TUI_list_table.ListView low = TUI_list_table.ListView(items, selected: 6, highlight_symbol: "> ");
-    low.render(b, TUI_geometry.Rect(12, 0, 12, 4));
-    check_int(t, "the view follows the selection", low.offset, 3);
+    low.render(buffer, TUI_geometry.Rect(12, 0, 12, 4));
+    check_int(tally, "the view follows the selection", low.offset, 3);
     TUI_list_table.ListView none = TUI_list_table.ListView(items, offset: 2);
-    none.render(b, TUI_geometry.Rect(24, 0, 12, 4));
-    check_int(t, "an offset with no selection stays", none.offset, 2);
-    print(b.frame());
-    TUI_list_table.ListView s = TUI_list_table.ListView(items);
-    s.step(1);
-    check_int(t, "step from nothing selects the first", s.selected, 0);
-    s.step(-5);
-    check_int(t, "step stops at the top", s.selected, 0);
-    s.step(99);
-    check_int(t, "step stops at the bottom", s.selected, 6);
+    none.render(buffer, TUI_geometry.Rect(24, 0, 12, 4));
+    check_int(tally, "an offset with no selection stays", none.offset, 2);
+    print(buffer.frame());
+    TUI_list_table.ListView stepped = TUI_list_table.ListView(items);
+    stepped.step(1);
+    check_int(tally, "step from nothing selects the first", stepped.selected, 0);
+    stepped.step(-5);
+    check_int(tally, "step stops at the top", stepped.selected, 0);
+    stepped.step(99);
+    check_int(tally, "step stops at the bottom", stepped.selected, 6);
     TUI_list_table.ListView empty = TUI_list_table.ListView([]);
-    TUI_buffer.Buffer q = TUI_buffer.Buffer.sized(6, 2);
-    empty.render(q, TUI_geometry.Rect(0, 0, 6, 2));
-    check(t, "an empty list draws blanks", q.row_text(0), "      ");
+    TUI_buffer.Buffer empty_buffer = TUI_buffer.Buffer.sized(6, 2);
+    empty.render(empty_buffer, TUI_geometry.Rect(0, 0, 6, 2));
+    check(tally, "an empty list draws blanks", empty_buffer.row_text(0), "      ");
 }
 
-void table_tests(Tally t) {
+void table_tests(Tally tally) {
     head("table");
     List<List<str>> rows = [["readme.md", "1.2 kB", "today"], ["a-rather-long-file-name.txt", "44 B", "yesterday"], ["src", "-", "last week"], ["Cargo.toml", "310 B", "today"], ["notes/\u{6F22}\u{5B57}.md", "8 kB", "today"]];
     List<str> header = ["name", "size", "changed"];
     List<TUI_geometry.Constraint> widths = [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(6), TUI_geometry.Constraint.Length(9)];
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(40, 5);
+    TUI_buffer.Buffer wide_buffer = TUI_buffer.Buffer.sized(40, 5);
     TUI_list_table.Table wide = TUI_list_table.Table(header, rows, widths, selected: 1, highlight_symbol: "\u{25B8} ", aligns: [TUI_text.Align.Left, TUI_text.Align.Right, TUI_text.Align.Left]);
-    wide.render(b, TUI_geometry.Rect(0, 0, 40, 5));
-    print(b.frame());
+    wide.render(wide_buffer, TUI_geometry.Rect(0, 0, 40, 5));
+    print(wide_buffer.frame());
     print("");
     print("the same table in 18 columns -- the constraints do not fit:");
-    TUI_buffer.Buffer n = TUI_buffer.Buffer.sized(18, 6);
+    TUI_buffer.Buffer tight_buffer = TUI_buffer.Buffer.sized(18, 6);
     TUI_list_table.Table tight = TUI_list_table.Table(header, rows, widths, selected: 4);
-    tight.render(n, TUI_geometry.Rect(0, 0, 18, 6));
-    print(n.frame());
-    check_int(t, "column count from the widths", wide.columns(), 3);
-    check_int(t, "column count from the rows", TUI_list_table.Table([], rows, []).columns(), 3);
+    tight.render(tight_buffer, TUI_geometry.Rect(0, 0, 18, 6));
+    print(tight_buffer.frame());
+    check_int(tally, "column count from the widths", wide.columns(), 3);
+    check_int(tally, "column count from the rows", TUI_list_table.Table([], rows, []).columns(), 3);
     TUI_list_table.Table scrolled = TUI_list_table.Table(header, rows, widths, selected: 4);
-    TUI_buffer.Buffer s = TUI_buffer.Buffer.sized(30, 3);
-    scrolled.render(s, TUI_geometry.Rect(0, 0, 30, 3));
-    check_int(t, "the table scrolls to the selection", scrolled.offset, 3);
+    TUI_buffer.Buffer scrolled_buffer = TUI_buffer.Buffer.sized(30, 3);
+    scrolled.render(scrolled_buffer, TUI_geometry.Rect(0, 0, 30, 3));
+    check_int(tally, "the table scrolls to the selection", scrolled.offset, 3);
     print("");
     print("no header, equal columns, no constraints:");
-    TUI_buffer.Buffer p = TUI_buffer.Buffer.sized(30, 3);
-    TUI_list_table.Table([], rows, []).render(p, TUI_geometry.Rect(0, 0, 30, 3));
-    print(p.frame());
+    TUI_buffer.Buffer plain_buffer = TUI_buffer.Buffer.sized(30, 3);
+    TUI_list_table.Table([], rows, []).render(plain_buffer, TUI_geometry.Rect(0, 0, 30, 3));
+    print(plain_buffer.frame());
 }
 
 // --- stage 2/3: the styling layer, and the primitives apps/git/design.md ----
 // names -- outline, jump list, which-key/transient, an addressable diff
 // view, the footer region and the application loop.
 
-void theme_and_span_tests(Tally t) {
+void theme_and_span_tests(Tally tally) {
     head("theme, spans and a styled line");
-    TUI_style.Theme th = TUI_style.Theme();
-    ok(t, "normal has no attributes", th.normal.attrs == 0);
-    ok(t, "dim carries the dim attribute", th.dim.attrs & TUI_style.DIM != 0);
-    ok(t, "selected combines reverse and bold", th.selected.attrs == TUI_style.REVERSE | TUI_style.BOLD);
-    TUI_widget.Span s = TUI_widget.Span("hi", style: th.accent);
-    check_int(t, "a span's width", s.width(), 2);
-    TUI_widget.Line line = TUI_widget.Line([TUI_widget.Span("["), TUI_widget.Span("staged", style: th.accent), TUI_widget.Span("]")]);
-    check_int(t, "a line's width is the sum of its spans", line.width(), 8);
-    check(t, "a line reads as its spans concatenated", line.plain(), "[staged]");
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(12, 1);
-    line.render(b, TUI_geometry.Rect(0, 0, 12, 1));
-    check(t, "left-aligned, at the start", b.row_text(0), "[staged]    ");
-    TUI_buffer.Buffer c = TUI_buffer.Buffer.sized(12, 1);
-    TUI_widget.Line(line.spans, align: TUI_text.Align.Right).render(c, TUI_geometry.Rect(0, 0, 12, 1));
-    check(t, "right-aligned, at the end", c.row_text(0), "    [staged]");
-    TUI_buffer.Buffer d = TUI_buffer.Buffer.sized(4, 1);
-    line.render(d, TUI_geometry.Rect(0, 0, 4, 1));
-    check(t, "clipped to the rectangle", d.row_text(0), "[sta");
+    TUI_style.Theme theme = TUI_style.Theme();
+    ok(tally, "normal has no attributes", theme.normal.attrs == 0);
+    ok(tally, "dim carries the dim attribute", theme.dim.attrs & TUI_style.DIM != 0);
+    ok(tally, "selected combines reverse and bold", theme.selected.attrs == TUI_style.REVERSE | TUI_style.BOLD);
+    TUI_widget.Span span = TUI_widget.Span("hi", style: theme.accent);
+    check_int(tally, "a span's width", span.width(), 2);
+    TUI_widget.Line line = TUI_widget.Line([TUI_widget.Span("["), TUI_widget.Span("staged", style: theme.accent), TUI_widget.Span("]")]);
+    check_int(tally, "a line's width is the sum of its spans", line.width(), 8);
+    check(tally, "a line reads as its spans concatenated", line.plain(), "[staged]");
+    TUI_buffer.Buffer left_buffer = TUI_buffer.Buffer.sized(12, 1);
+    line.render(left_buffer, TUI_geometry.Rect(0, 0, 12, 1));
+    check(tally, "left-aligned, at the start", left_buffer.row_text(0), "[staged]    ");
+    TUI_buffer.Buffer right_buffer = TUI_buffer.Buffer.sized(12, 1);
+    TUI_widget.Line(line.spans, align: TUI_text.Align.Right).render(right_buffer, TUI_geometry.Rect(0, 0, 12, 1));
+    check(tally, "right-aligned, at the end", right_buffer.row_text(0), "    [staged]");
+    TUI_buffer.Buffer narrow_buffer = TUI_buffer.Buffer.sized(4, 1);
+    line.render(narrow_buffer, TUI_geometry.Rect(0, 0, 4, 1));
+    check(tally, "clipped to the rectangle", narrow_buffer.row_text(0), "[sta");
 }
 
-void scroll_tests(Tally t) {
+void scroll_tests(Tally tally) {
     head("viewport and scrollbar");
-    TUI_scroll.Viewport v = TUI_scroll.Viewport();
-    v.reveal(0, 20, 5);
-    check_int(t, "revealing the top needs no scroll", v.offset, 0);
-    v.reveal(12, 20, 5);
-    check_int(t, "revealing a row below the window scrolls down to it", v.offset, 8);
-    v.reveal(2, 20, 5);
-    check_int(t, "revealing a row above the window scrolls up to it", v.offset, 2);
-    v.scroll(100, 20, 5);
-    check_int(t, "scrolling past the end clamps to the last page", v.offset, 15);
-    v.scroll(-100, 20, 5);
-    check_int(t, "scrolling past the start clamps to zero", v.offset, 0);
-    check_int(t, "clamped never exceeds the content", TUI_scroll.Viewport(offset: 999).clamped(10, 4), 6);
-    TUI_buffer.Buffer buf = TUI_buffer.Buffer.sized(1, 10);
-    TUI_scroll.Scrollbar(thumb_symbol: "#", track_symbol: ".").render(buf, TUI_geometry.Rect(0, 0, 1, 10), 100, 10, 0);
-    check(t, "a thumb at the top", buf.row_text(0), "#");
-    check(t, "the track below it", buf.row_text(9), ".");
-    TUI_buffer.Buffer buf2 = TUI_buffer.Buffer.sized(1, 10);
-    TUI_scroll.Scrollbar(thumb_symbol: "#", track_symbol: ".").render(buf2, TUI_geometry.Rect(0, 0, 1, 10), 100, 10, 90);
-    check(t, "a thumb at the bottom", buf2.row_text(9), "#");
-    TUI_buffer.Buffer buf3 = TUI_buffer.Buffer.sized(1, 5);
-    TUI_scroll.Scrollbar().render(buf3, TUI_geometry.Rect(0, 0, 1, 5), 5, 5, 0);
-    check(t, "content that all fits gets a full-length thumb", buf3.to_str(), "\u{2588}\n\u{2588}\n\u{2588}\n\u{2588}\n\u{2588}");
+    TUI_scroll.Viewport viewport = TUI_scroll.Viewport();
+    viewport.reveal(0, 20, 5);
+    check_int(tally, "revealing the top needs no scroll", viewport.offset, 0);
+    viewport.reveal(12, 20, 5);
+    check_int(tally, "revealing a row below the window scrolls down to it", viewport.offset, 8);
+    viewport.reveal(2, 20, 5);
+    check_int(tally, "revealing a row above the window scrolls up to it", viewport.offset, 2);
+    viewport.scroll(100, 20, 5);
+    check_int(tally, "scrolling past the end clamps to the last page", viewport.offset, 15);
+    viewport.scroll(-100, 20, 5);
+    check_int(tally, "scrolling past the start clamps to zero", viewport.offset, 0);
+    check_int(tally, "clamped never exceeds the content", TUI_scroll.Viewport(offset: 999).clamped(10, 4), 6);
+    TUI_buffer.Buffer top_buffer = TUI_buffer.Buffer.sized(1, 10);
+    TUI_scroll.Scrollbar(thumb_symbol: "#", track_symbol: ".").render(top_buffer, TUI_geometry.Rect(0, 0, 1, 10), 100, 10, 0);
+    check(tally, "a thumb at the top", top_buffer.row_text(0), "#");
+    check(tally, "the track below it", top_buffer.row_text(9), ".");
+    TUI_buffer.Buffer bottom_buffer = TUI_buffer.Buffer.sized(1, 10);
+    TUI_scroll.Scrollbar(thumb_symbol: "#", track_symbol: ".").render(bottom_buffer, TUI_geometry.Rect(0, 0, 1, 10), 100, 10, 90);
+    check(tally, "a thumb at the bottom", bottom_buffer.row_text(9), "#");
+    TUI_buffer.Buffer full_buffer = TUI_buffer.Buffer.sized(1, 5);
+    TUI_scroll.Scrollbar().render(full_buffer, TUI_geometry.Rect(0, 0, 1, 5), 5, 5, 0);
+    check(tally, "content that all fits gets a full-length thumb", full_buffer.to_str(), "\u{2588}\n\u{2588}\n\u{2588}\n\u{2588}\n\u{2588}");
 }
 
 TUI_outline.Outline sample_outline() {
     return TUI_outline.Outline([TUI_outline.Node.section("wip", "Unstaged changes", [TUI_outline.Node.leaf("a.txt", "modified: a.txt"), TUI_outline.Node.leaf("b.txt", "modified: b.txt")]), TUI_outline.Node.section("staged", "Staged changes", [TUI_outline.Node.leaf("c.txt", "new file: c.txt")], expanded: false), TUI_outline.Node.leaf("stash", "stash@{0}: on main: wip")]);
 }
 
-void outline_tests(Tally t) {
+void outline_tests(Tally tally) {
     head("outline");
-    TUI_outline.Outline o = sample_outline();
-    check_int(t, "flattened rows, one section collapsed", o.rows().size(), 5);
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(30, 5);
-    o.render(b, TUI_geometry.Rect(0, 0, 30, 5));
-    print(b.frame());
-    check_int(t, "cursor starts at the top", o.cursor, 0);
-    o.move(1);
-    match (o.current()) {
-        case Some(TUI_outline.Row r): {
-            check(t, "move steps through the flattened rows", r.node.id, "a.txt");
+    TUI_outline.Outline outline = sample_outline();
+    check_int(tally, "flattened rows, one section collapsed", outline.rows().size(), 5);
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(30, 5);
+    outline.render(buffer, TUI_geometry.Rect(0, 0, 30, 5));
+    print(buffer.frame());
+    check_int(tally, "cursor starts at the top", outline.cursor, 0);
+    outline.move(1);
+    match (outline.current()) {
+        case Some(TUI_outline.Row row): {
+            check(tally, "move steps through the flattened rows", row.node.id, "a.txt");
         }
         case None: {
-            check(t, "move steps through the flattened rows", "none", "a.txt");
+            check(tally, "move steps through the flattened rows", "none", "a.txt");
         }
     }
-    o.move(-1);
-    o.toggle();
-    check_int(t, "collapsing a section removes its children", o.rows().size(), 3);
-    o.toggle();
-    check_int(t, "expanding it again restores them", o.rows().size(), 5);
-    ok(t, "a row hidden by a fold cannot be selected", !o.select_id("c.txt"));
-    o.cursor = 3;
-    o.toggle();
-    check_int(t, "expanding the other section adds its child", o.rows().size(), 6);
-    ok(t, "select_id finds a row once it is visible", o.select_id("c.txt"));
-    match (o.current()) {
-        case Some(TUI_outline.Row r): {
-            check(t, "select_id moved the cursor to it", r.node.id, "c.txt");
+    outline.move(-1);
+    outline.toggle();
+    check_int(tally, "collapsing a section removes its children", outline.rows().size(), 3);
+    outline.toggle();
+    check_int(tally, "expanding it again restores them", outline.rows().size(), 5);
+    ok(tally, "a row hidden by a fold cannot be selected", !outline.select_id("c.txt"));
+    outline.cursor = 3;
+    outline.toggle();
+    check_int(tally, "expanding the other section adds its child", outline.rows().size(), 6);
+    ok(tally, "select_id finds a row once it is visible", outline.select_id("c.txt"));
+    match (outline.current()) {
+        case Some(TUI_outline.Row row): {
+            check(tally, "select_id moved the cursor to it", row.node.id, "c.txt");
         }
         case None: {
-            check(t, "select_id moved the cursor to it", "none", "c.txt");
+            check(tally, "select_id moved the cursor to it", "none", "c.txt");
         }
     }
     // scroll_h: a row wider than the buffer is clipped either way, so the
@@ -554,94 +554,94 @@ void outline_tests(Tally t) {
     // right must change what is drawn, and scrolling back by the same
     // amount must restore it exactly, the same round-trip `cut`/
     // `drop_columns` themselves are tested against in `text_tests`.
-    TUI_outline.Outline so = sample_outline();
-    TUI_buffer.Buffer sb = TUI_buffer.Buffer.sized(10, 5);
-    so.render(sb, TUI_geometry.Rect(0, 0, 10, 5));
-    str unscrolled = sb.frame();
-    check_int(t, "scroll_h: a fresh outline starts unscrolled", so.hscroll, 0);
-    so.scroll_h(4);
-    check_int(t, "scroll_h: moves the offset by delta", so.hscroll, 4);
-    TUI_buffer.Buffer sb2 = TUI_buffer.Buffer.sized(10, 5);
-    so.render(sb2, TUI_geometry.Rect(0, 0, 10, 5));
-    ok(t, "scroll_h(4): the rendered rows actually change", sb2.frame() != unscrolled);
-    so.scroll_h(-4);
-    check_int(t, "scroll_h: back to zero", so.hscroll, 0);
-    TUI_buffer.Buffer sb3 = TUI_buffer.Buffer.sized(10, 5);
-    so.render(sb3, TUI_geometry.Rect(0, 0, 10, 5));
-    check(t, "scroll_h: scrolling back restores the original view exactly", sb3.frame(), unscrolled);
-    so.scroll_h(-1000);
-    check_int(t, "scroll_h: never goes negative, there is nothing left of the start", so.hscroll, 0);
+    TUI_outline.Outline scrolled_outline = sample_outline();
+    TUI_buffer.Buffer start_buffer = TUI_buffer.Buffer.sized(10, 5);
+    scrolled_outline.render(start_buffer, TUI_geometry.Rect(0, 0, 10, 5));
+    str unscrolled = start_buffer.frame();
+    check_int(tally, "scroll_h: a fresh outline starts unscrolled", scrolled_outline.hscroll, 0);
+    scrolled_outline.scroll_h(4);
+    check_int(tally, "scroll_h: moves the offset by delta", scrolled_outline.hscroll, 4);
+    TUI_buffer.Buffer shifted_buffer = TUI_buffer.Buffer.sized(10, 5);
+    scrolled_outline.render(shifted_buffer, TUI_geometry.Rect(0, 0, 10, 5));
+    ok(tally, "scroll_h(4): the rendered rows actually change", shifted_buffer.frame() != unscrolled);
+    scrolled_outline.scroll_h(-4);
+    check_int(tally, "scroll_h: back to zero", scrolled_outline.hscroll, 0);
+    TUI_buffer.Buffer restored_buffer = TUI_buffer.Buffer.sized(10, 5);
+    scrolled_outline.render(restored_buffer, TUI_geometry.Rect(0, 0, 10, 5));
+    check(tally, "scroll_h: scrolling back restores the original view exactly", restored_buffer.frame(), unscrolled);
+    scrolled_outline.scroll_h(-1000);
+    check_int(tally, "scroll_h: never goes negative, there is nothing left of the start", scrolled_outline.hscroll, 0);
 }
 
-void jump_tests(Tally t) {
+void jump_tests(Tally tally) {
     head("jump list, synced to an outline");
-    TUI_outline.Outline o = sample_outline();
-    o.cursor = 3;
-    o.toggle();
-    TUI_jump_list.JumpList j = TUI_jump_list.JumpList.empty;
-    j.sync_from(o);
-    check_int(t, "one entry per visible outline row", j.entries.size(), 6);
-    o.cursor = 2;
-    j.follow(o);
-    match (o.current()) {
-        case Some(TUI_outline.Row r): {
-            check(t, "following the outline highlights the matching entry", j.entries[j.selected].id, r.node.id);
+    TUI_outline.Outline outline = sample_outline();
+    outline.cursor = 3;
+    outline.toggle();
+    TUI_jump_list.JumpList jump_list = TUI_jump_list.JumpList.empty;
+    jump_list.sync_from(outline);
+    check_int(tally, "one entry per visible outline row", jump_list.entries.size(), 6);
+    outline.cursor = 2;
+    jump_list.follow(outline);
+    match (outline.current()) {
+        case Some(TUI_outline.Row row): {
+            check(tally, "following the outline highlights the matching entry", jump_list.entries[jump_list.selected].id, row.node.id);
         }
         case None: {
         }
     }
-    j.step(-1);
-    ok(t, "activate moves the outline's cursor to the selection", j.activate(o));
-    match (o.current()) {
-        case Some(TUI_outline.Row r): {
-            check(t, "and it is the row the jump list had selected", r.node.id, j.entries[j.selected].id);
+    jump_list.step(-1);
+    ok(tally, "activate moves the outline's cursor to the selection", jump_list.activate(outline));
+    match (outline.current()) {
+        case Some(TUI_outline.Row row): {
+            check(tally, "and it is the row the jump list had selected", row.node.id, jump_list.entries[jump_list.selected].id);
         }
         case None: {
         }
     }
-    o.cursor = 0;
-    o.toggle();
-    j.sync_from(o);
-    check_int(t, "collapsing a section shrinks the jump list too", j.entries.size(), 4);
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(20, 4);
-    j.render(b, TUI_geometry.Rect(0, 0, 20, 4));
-    print(b.frame());
+    outline.cursor = 0;
+    outline.toggle();
+    jump_list.sync_from(outline);
+    check_int(tally, "collapsing a section shrinks the jump list too", jump_list.entries.size(), 4);
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(20, 4);
+    jump_list.render(buffer, TUI_geometry.Rect(0, 0, 20, 4));
+    print(buffer.frame());
 }
 
-void menu_tests(Tally t) {
+void menu_tests(Tally tally) {
     head("which-key and transient menus, built on one base");
-    TUI_menu.WhichKey wk = TUI_menu.WhichKey("commit", [TUI_menu.Item("c", "commit"), TUI_menu.Item("a", "amend"), TUI_menu.Item("f", "fixup")]);
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(30, 10);
-    wk.render(b, b.area());
-    print(b.frame());
-    TUI_menu.Transient tr = TUI_menu.Transient("commit", "commit", [TUI_menu.Switch("a", "amend", "--amend"), TUI_menu.Switch("n", "no verify", "--no-verify", on: true)]);
-    check(t, "the preview starts with the switches already on", tr.preview(), "commit --no-verify");
-    tr.toggle("a");
-    check(t, "toggling a switch adds its flag", tr.preview(), "commit --amend --no-verify");
-    tr.toggle("a");
-    check(t, "toggling it again removes it", tr.preview(), "commit --no-verify");
-    ok(t, "is_on reads a switch's state", tr.is_on("n"));
-    ok(t, "a key with no switch reports off", !tr.is_on("z"));
-    TUI_buffer.Buffer c = TUI_buffer.Buffer.sized(30, 10);
-    tr.render(c, c.area());
-    print(c.frame());
+    TUI_menu.WhichKey which_key = TUI_menu.WhichKey("commit", [TUI_menu.Item("c", "commit"), TUI_menu.Item("a", "amend"), TUI_menu.Item("f", "fixup")]);
+    TUI_buffer.Buffer which_key_buffer = TUI_buffer.Buffer.sized(30, 10);
+    which_key.render(which_key_buffer, which_key_buffer.area());
+    print(which_key_buffer.frame());
+    TUI_menu.Transient transient = TUI_menu.Transient("commit", "commit", [TUI_menu.Switch("a", "amend", "--amend"), TUI_menu.Switch("n", "no verify", "--no-verify", is_on: true)]);
+    check(tally, "the preview starts with the switches already on", transient.preview(), "commit --no-verify");
+    transient.toggle("a");
+    check(tally, "toggling a switch adds its flag", transient.preview(), "commit --amend --no-verify");
+    transient.toggle("a");
+    check(tally, "toggling it again removes it", transient.preview(), "commit --no-verify");
+    ok(tally, "is_on reads a switch's state", transient.is_on("n"));
+    ok(tally, "a key with no switch reports off", !transient.is_on("z"));
+    TUI_buffer.Buffer transient_buffer = TUI_buffer.Buffer.sized(30, 10);
+    transient.render(transient_buffer, transient_buffer.area());
+    print(transient_buffer.frame());
 }
 
-str row_desc(TUI_diff_view.Row r) {
-    match (r.kind) {
+str row_desc(TUI_diff_view.Row row) {
+    match (row.kind) {
         case Header: {
-            return "header " + str(r.hunk);
+            return "header " + str(row.hunk);
         }
         case Body: {
-            return "body " + str(r.hunk) + "/" + str(r.line);
+            return "body " + str(row.hunk) + "/" + str(row.line);
         }
     }
 }
 
-str at_desc(TUI_diff_view.DiffView v) {
-    match (v.at()) {
-        case Some(TUI_diff_view.Row r): {
-            return row_desc(r);
+str at_desc(TUI_diff_view.DiffView diff_view) {
+    match (diff_view.at()) {
+        case Some(TUI_diff_view.Row row): {
+            return row_desc(row);
         }
         case None: {
             return "none";
@@ -649,32 +649,32 @@ str at_desc(TUI_diff_view.DiffView v) {
     }
 }
 
-void diffview_tests(Tally t) {
+void diffview_tests(Tally tally) {
     head("diff view, cursor addressable to the hunk and the line");
-    TUI_diff_view.Hunk h1 = TUI_diff_view.Hunk("@@ -1,2 +1,3 @@", [TUI_diff_view.Line.context("one"), TUI_diff_view.Line.removed("two"), TUI_diff_view.Line.added("two changed"), TUI_diff_view.Line.added("three")]);
-    TUI_diff_view.Hunk h2 = TUI_diff_view.Hunk("@@ -10,1 +11,1 @@", [TUI_diff_view.Line.context("ten")]);
-    TUI_diff_view.DiffView v = TUI_diff_view.DiffView([h1, h2]);
-    check_int(t, "flattened rows: headers and lines together", v.rows().size(), 7);
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(24, 7);
-    v.render(b, TUI_geometry.Rect(0, 0, 24, 7));
-    print(b.frame());
-    check(t, "the cursor starts on the first hunk's header", at_desc(v), "header 0");
-    v.move(2);
-    check(t, "moved onto a body line", at_desc(v), "body 0/1");
-    v.move(3);
-    check(t, "moved onto the second hunk's header", at_desc(v), "header 1");
+    TUI_diff_view.Hunk first_hunk = TUI_diff_view.Hunk("@@ -1,2 +1,3 @@", [TUI_diff_view.Line.context("one"), TUI_diff_view.Line.removed("two"), TUI_diff_view.Line.added("two changed"), TUI_diff_view.Line.added("three")]);
+    TUI_diff_view.Hunk second_hunk = TUI_diff_view.Hunk("@@ -10,1 +11,1 @@", [TUI_diff_view.Line.context("ten")]);
+    TUI_diff_view.DiffView diff_view = TUI_diff_view.DiffView([first_hunk, second_hunk]);
+    check_int(tally, "flattened rows: headers and lines together", diff_view.rows().size(), 7);
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(24, 7);
+    diff_view.render(buffer, TUI_geometry.Rect(0, 0, 24, 7));
+    print(buffer.frame());
+    check(tally, "the cursor starts on the first hunk's header", at_desc(diff_view), "header 0");
+    diff_view.move(2);
+    check(tally, "moved onto a body line", at_desc(diff_view), "body 0/1");
+    diff_view.move(3);
+    check(tally, "moved onto the second hunk's header", at_desc(diff_view), "header 1");
 }
 
-void footer_tests(Tally t) {
+void footer_tests(Tally tally) {
     head("the persistent footer region");
     TUI_geometry.Rect area = TUI_geometry.Rect(0, 0, 40, 10);
     List<TUI_geometry.Rect> cut = TUI_footer.split(area, 1);
-    check(t, "the main band", cut[0].to_str(), "0,0 40x9");
-    check(t, "the footer's own reserved row", cut[1].to_str(), "0,9 40x1");
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(40, 10);
-    TUI_footer.Footer.of("q quit   j/k move   ? help", style: TUI_style.Style(attrs: TUI_style.REVERSE)).render(b, cut[1]);
-    check(t, "the footer's text landed in its own band", b.row_text(9).substr(0, 6), "q quit");
-    check(t, "the main band above it is untouched", b.row_text(0), " ".repeat(40));
+    check(tally, "the main band", cut[0].to_str(), "0,0 40x9");
+    check(tally, "the footer's own reserved row", cut[1].to_str(), "0,9 40x1");
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(40, 10);
+    TUI_footer.Footer.of("q quit   j/k move   ? help", style: TUI_style.Style(attrs: TUI_style.REVERSE)).render(buffer, cut[1]);
+    check(tally, "the footer's text landed in its own band", buffer.row_text(9).substr(0, 6), "q quit");
+    check(tally, "the main band above it is untouched", buffer.row_text(0), " ".repeat(40));
 }
 
 // A `Handler` written outside the library, the same proof `Widget` gets in
@@ -684,13 +684,13 @@ type CountKeys {
     int seen = 0;
 }
 
-TUI_app.Action CountKeys.handle(term.Event ev) {
+TUI_app.Action CountKeys.handle(term.Event event) {
     seen = seen + 1;
-    match (ev) {
-        case Key(term.Key k): {
-            match (k.code) {
-                case Char(int c): {
-                    if (c == 'q') {
+    match (event) {
+        case Key(term.Key key): {
+            match (key.code) {
+                case Char(int character): {
+                    if (character == 'q') {
                         return TUI_app.Action.Quit;
                     }
                     return TUI_app.Action.Redraw;
@@ -740,25 +740,25 @@ TUI_app.Action CountKeys.handle(term.Event ev) {
                 case Delete: {
                     return TUI_app.Action.Continue;
                 }
-                case F(int n): {
+                case F(int number): {
                     return TUI_app.Action.Continue;
                 }
             }
         }
-        case Mouse(term.Mouse m): {
+        case Mouse(term.Mouse mouse): {
             return TUI_app.Action.Continue;
         }
-        case Paste(str p): {
+        case Paste(str pasted): {
             return TUI_app.Action.Continue;
         }
-        case Unknown(bytes u): {
+        case Unknown(bytes raw_bytes): {
             return TUI_app.Action.Continue;
         }
     }
 }
 
-str action_desc(TUI_app.Action a) {
-    match (a) {
+str action_desc(TUI_app.Action action) {
+    match (action) {
         case Continue: {
             return "Continue";
         }
@@ -771,16 +771,16 @@ str action_desc(TUI_app.Action a) {
     }
 }
 
-void app_tests(Tally t) {
+void app_tests(Tally tally) {
     head("the application loop's own pieces (no terminal touched here)");
-    ok(t, "the same size twice is not a resize", !TUI_app.resized(term.Size(24, 80), term.Size(24, 80)));
-    ok(t, "a different width is a resize", TUI_app.resized(term.Size(24, 80), term.Size(24, 100)));
-    ok(t, "a different height is a resize", TUI_app.resized(term.Size(24, 80), term.Size(30, 80)));
-    CountKeys h = CountKeys();
-    check(t, "a plain key redraws", action_desc(h.handle(term.Event.Key(term.Key(term.Code.Char('x'), 0)))), "Redraw");
-    check(t, "q quits", action_desc(h.handle(term.Event.Key(term.Key(term.Code.Char('q'), 0)))), "Quit");
-    check(t, "escape also quits", action_desc(h.handle(term.Event.Key(term.Key(term.Code.Escape, 0)))), "Quit");
-    check_int(t, "every event reached the handler", h.seen, 3);
+    ok(tally, "the same size twice is not a resize", !TUI_app.resized(term.Size(24, 80), term.Size(24, 80)));
+    ok(tally, "a different width is a resize", TUI_app.resized(term.Size(24, 80), term.Size(24, 100)));
+    ok(tally, "a different height is a resize", TUI_app.resized(term.Size(24, 80), term.Size(30, 80)));
+    CountKeys handler = CountKeys();
+    check(tally, "a plain key redraws", action_desc(handler.handle(term.Event.Key(term.Key(term.Code.Char('x'), 0)))), "Redraw");
+    check(tally, "q quits", action_desc(handler.handle(term.Event.Key(term.Key(term.Code.Char('q'), 0)))), "Quit");
+    check(tally, "escape also quits", action_desc(handler.handle(term.Event.Key(term.Key(term.Code.Escape, 0)))), "Quit");
+    check_int(tally, "every event reached the handler", handler.seen, 3);
 }
 
 // --- 7. a widget written by a user of the library ---------------------------
@@ -793,77 +793,77 @@ void app_tests(Tally t) {
 type Bar {
     int done;
     int total;
-    TUI_style.Style filled = TUI_style.Style(bg: TUI_style.Colour.Indexed(4));
-    TUI_style.Style rest = TUI_style.Style(bg: TUI_style.Colour.Indexed(8));
+    TUI_style.Style filled = TUI_style.Style(background: TUI_style.Colour.Indexed(4));
+    TUI_style.Style rest = TUI_style.Style(background: TUI_style.Colour.Indexed(8));
 }
 
-void Bar.render(TUI_buffer.Buffer b, TUI_geometry.Rect area) {
+void Bar.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty() || total <= 0) {
         return;
     }
-    int on = area.w * done / total;
-    b.fill(TUI_geometry.Rect(area.x, area.y, on, area.h), " ", filled);
-    b.fill(TUI_geometry.Rect(area.x + on, area.y, area.w - on, area.h), " ", rest);
+    int filled_width = area.width * done / total;
+    buffer.fill(TUI_geometry.Rect(area.x, area.y, filled_width, area.height), " ", filled);
+    buffer.fill(TUI_geometry.Rect(area.x + filled_width, area.y, area.width - filled_width, area.height), " ", rest);
     str label = str(100 * done / total) + "%";
-    b.set_str(area.x + (area.w - label.size()) / 2, area.y + area.h / 2, label, TUI_style.Style());
+    buffer.set_str(area.x + (area.width - label.size()) / 2, area.y + area.height / 2, label, TUI_style.Style());
 }
 
 /// A widget that is a plain function: no state at all.
-void ruler(TUI_buffer.Buffer b, TUI_geometry.Rect area) {
-    int i = 0;
-    while (i < area.w) {
+void ruler(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    int column = 0;
+    while (column < area.width) {
         str mark = "\u{00B7}";
-        if (i % 10 == 0) {
-            mark = str(i / 10 % 10);
+        if (column % 10 == 0) {
+            mark = str(column / 10 % 10);
         }
-        b.set_str(area.x + i, area.y, mark, TUI_style.Style());
-        i = i + 1;
+        buffer.set_str(area.x + column, area.y, mark, TUI_style.Style());
+        column = column + 1;
     }
 }
 
 /// Anything can be drawn through the interface, which is the point.
-void draw(TUI_widget.Widget w, TUI_buffer.Buffer b, TUI_geometry.Rect area) {
-    w.render(b, area);
+void draw(TUI_widget.Widget widget, TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    widget.render(buffer, area);
 }
 
-void user_widget_tests(Tally t) {
+void user_widget_tests(Tally tally) {
     head("a widget written outside the library");
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(24, 4);
-    draw(Bar(7, 10), b, TUI_geometry.Rect(0, 0, 24, 1));
-    draw(ruler, b, TUI_geometry.Rect(0, 1, 24, 1));
-    draw((TUI_buffer.Buffer buf, TUI_geometry.Rect area) => buf.set_str(area.x, area.y, "a lambda is a widget", TUI_style.Style()), b, TUI_geometry.Rect(2, 2, 22, 1));
-    TUI_list_table.ListView(["and so is every widget here"]).render(b, TUI_geometry.Rect(0, 3, 24, 1));
-    print(b.frame());
-    check(t, "the struct widget drew", b.row_text(0), "          70%           ");
-    check(t, "the function widget drew", b.row_text(1), "0\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}1\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}2\u{00B7}\u{00B7}\u{00B7}");
-    check(t, "the lambda widget drew", b.row_text(2), "  a lambda is a widget  ");
+    TUI_buffer.Buffer widget_buffer = TUI_buffer.Buffer.sized(24, 4);
+    draw(Bar(7, 10), widget_buffer, TUI_geometry.Rect(0, 0, 24, 1));
+    draw(ruler, widget_buffer, TUI_geometry.Rect(0, 1, 24, 1));
+    draw((TUI_buffer.Buffer buffer, TUI_geometry.Rect area) => buffer.set_str(area.x, area.y, "a lambda is a widget", TUI_style.Style()), widget_buffer, TUI_geometry.Rect(2, 2, 22, 1));
+    TUI_list_table.ListView(["and so is every widget here"]).render(widget_buffer, TUI_geometry.Rect(0, 3, 24, 1));
+    print(widget_buffer.frame());
+    check(tally, "the struct widget drew", widget_buffer.row_text(0), "          70%           ");
+    check(tally, "the function widget drew", widget_buffer.row_text(1), "0\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}1\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}\u{00B7}2\u{00B7}\u{00B7}\u{00B7}");
+    check(tally, "the lambda widget drew", widget_buffer.row_text(2), "  a lambda is a widget  ");
 }
 
 // --- 8. a whole screen ------------------------------------------------------
 
-void screen_test(Tally t) {
+void screen_test(Tally tally) {
     head("a whole screen, laid out");
-    TUI_buffer.Buffer b = TUI_buffer.Buffer.sized(50, 14);
-    List<TUI_geometry.Rect> band = TUI_geometry.rows(b.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(50, 14);
+    List<TUI_geometry.Rect> band = TUI_geometry.rows(buffer.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
     TUI_widget.Block header = TUI_widget.Block(title: " a terminal user interface ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center);
-    header.render(b, band[0]);
-    TUI_widget.Paragraph("built on a buffer of grapheme clusters", align: TUI_text.Align.Center).render(b, header.inner(band[0]));
+    header.render(buffer, band[0]);
+    TUI_widget.Paragraph("built on a buffer of grapheme clusters", align: TUI_text.Align.Center).render(buffer, header.inner(band[0]));
     List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
     TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
-    left.render(b, mid[0]);
-    TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "Cargo.toml", "gates.sh"], selected: 3, highlight_symbol: "\u{25B8} ").render(b, left.inner(mid[0]));
+    left.render(buffer, mid[0]);
+    TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "Cargo.toml", "gates.sh"], selected: 3, highlight_symbol: "\u{25B8} ").render(buffer, left.inner(mid[0]));
     TUI_widget.Block right = TUI_widget.Block(title: "detail", borders: TUI_widget.Borders.Single, pad_x: 1);
-    right.render(b, mid[1]);
-    TUI_widget.Paragraph("README.md is 1.2 kB and was changed today. The paragraph wraps to the panel, and the panel came from a percentage constraint.").render(b, right.inner(mid[1]));
-    TUI_buffer.Buffer bar = b;
-    bar.fill(band[2], " ", TUI_style.Style(fg: TUI_style.Colour.Indexed(0), bg: TUI_style.Colour.Indexed(7)));
-    bar.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", TUI_style.Style(fg: TUI_style.Colour.Indexed(0), bg: TUI_style.Colour.Indexed(7)));
-    print(b.frame());
-    bytes frame = TUI_diff.full(b, TUI_style.Depth.Ansi256);
+    right.render(buffer, mid[1]);
+    TUI_widget.Paragraph("README.md is 1.2 kB and was changed today. The paragraph wraps to the panel, and the panel came from a percentage constraint.").render(buffer, right.inner(mid[1]));
+    TUI_buffer.Buffer bar = buffer;
+    bar.fill(band[2], " ", TUI_style.Style(foreground: TUI_style.Colour.Indexed(0), background: TUI_style.Colour.Indexed(7)));
+    bar.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", TUI_style.Style(foreground: TUI_style.Colour.Indexed(0), background: TUI_style.Colour.Indexed(7)));
+    print(buffer.frame());
+    bytes frame = TUI_diff.full(buffer, TUI_style.Depth.Ansi256);
     print("full redraw: " + str(frame.size()) + " bytes");
     TUI_buffer.Buffer after = TUI_buffer.Buffer.sized(50, 14);
-    ok(t, "a full frame is not empty", frame.size() > 500);
-    ok(t, "a diff against a blank frame is smaller than a full redraw", TUI_diff.diff(after, b, TUI_style.Depth.Ansi256).size() < frame.size() + 200);
+    ok(tally, "a full frame is not empty", frame.size() > 500);
+    ok(tally, "a diff against a blank frame is smaller than a full redraw", TUI_diff.diff(after, buffer, TUI_style.Depth.Ansi256).size() < frame.size() + 200);
 }
 
 Tally score = Tally();
