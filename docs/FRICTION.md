@@ -643,7 +643,7 @@ ratatui needs a builder — `Block::default().borders(Borders::ALL).title("x")`
 and a rule about which order you may call them in. Here there is no builder,
 no order, and you cannot pass the arguments in the wrong slots because the
 optional ones are named and the mandatory ones are not. `Style()` is the
-default style and `Style(fg: red)` is the one you meant. It made the whole
+default style and `Style(foreground: red)` is the one you meant. It made the whole
 API smaller than its Rust equivalent by a large factor.
 
 **Structural one-method interfaces.** The widget protocol is
