@@ -40,14 +40,14 @@ pub int Viewport.clamped(int total, int visible) {
     if (most < 0) {
         most = 0;
     }
-    int o = offset;
-    if (o > most) {
-        o = most;
+    int clamped_offset = offset;
+    if (clamped_offset > most) {
+        clamped_offset = most;
     }
-    if (o < 0) {
-        o = 0;
+    if (clamped_offset < 0) {
+        clamped_offset = 0;
     }
-    return o;
+    return clamped_offset;
 }
 
 /// Move by `delta` rows (negative scrolls back), clamped to the content.
@@ -56,19 +56,19 @@ pub void Viewport.scroll(int delta, int total, int visible) {
     offset = clamped(total, visible);
 }
 
-/// Scroll the least amount that brings row `at` into a window `visible` rows
+/// Scroll the least amount that brings row `index` into a window `visible` rows
 /// tall: nothing, if it already is. This is `TUI_list_table.ListView.scrolled`'s
 /// own rule, generalised to anything that can name a row by its index into
 /// `total`.
-pub void Viewport.reveal(int at, int total, int visible) {
+pub void Viewport.reveal(int index, int total, int visible) {
     if (visible <= 0) {
         return;
     }
-    if (at < offset) {
-        offset = at;
+    if (index < offset) {
+        offset = index;
     }
-    if (at >= offset + visible) {
-        offset = at - visible + 1;
+    if (index >= offset + visible) {
+        offset = index - visible + 1;
     }
     offset = clamped(total, visible);
 }
@@ -95,18 +95,18 @@ pub type Scrollbar {
 }
 
 int Scrollbar.length(TUI_geometry.Rect area) {
-    int l = area.h;
+    int extent = area.height;
     match (orient) {
         case Vertical: {
         }
         case Horizontal: {
-            l = area.w;
+            extent = area.width;
         }
     }
-    return l;
+    return extent;
 }
 
-pub void Scrollbar.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area, int total, int visible, int offset) {
+pub void Scrollbar.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int total, int visible, int offset) {
     if (area.is_empty() || total <= 0) {
         return;
     }
@@ -130,32 +130,32 @@ pub void Scrollbar.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area, int tot
         span = 0;
     }
     int track = length - thumb;
-    int pos = 0;
+    int position = 0;
     if (span > 0) {
-        pos = track * offset / span;
+        position = track * offset / span;
     }
-    if (pos < 0) {
-        pos = 0;
+    if (position < 0) {
+        position = 0;
     }
-    if (pos > track) {
-        pos = track;
+    if (position > track) {
+        position = track;
     }
-    int i = 0;
-    while (i < length) {
-        TUI_style.Style st = track_style;
+    int cell_index = 0;
+    while (cell_index < length) {
+        TUI_style.Style cell_style = track_style;
         str sym = track_symbol;
-        if (i >= pos && i < pos + thumb) {
-            st = thumb_style;
+        if (cell_index >= position && cell_index < position + thumb) {
+            cell_style = thumb_style;
             sym = thumb_symbol;
         }
         match (orient) {
             case Vertical: {
-                buf.set_str(area.x, area.y + i, sym, st);
+                buffer.set_str(area.x, area.y + cell_index, sym, cell_style);
             }
             case Horizontal: {
-                buf.set_str(area.x + i, area.y, sym, st);
+                buffer.set_str(area.x + cell_index, area.y, sym, cell_style);
             }
         }
-        i = i + 1;
+        cell_index = cell_index + 1;
     }
 }
