@@ -2,17 +2,17 @@
 //
 // API
 // ---
-//   TUI_buffer.Buffer.sized(w, h)          a blank buffer at the origin
-//   TUI_buffer.Buffer.empty(rect)          a blank buffer covering `rect`
-//   b.area()                           the rectangle it covers
-//   b.get(x, y) -> Cell                what is there
-//   b.set(x, y, cell)                  put one cell
-//   b.set_str(x, y, s, style, max:)    write text, width-aware, clipped
-//   b.fill(rect, sym, style)           every cell of a rectangle
-//   b.restyle(rect, style)             the style, leaving the glyphs
-//   b.clear()                          blanks, in the plain style
-//   b.to_str()                         the rows as plain text -- `print(b)`
-//   b.frame()                          the same inside a ruled box, for tests
+//   TUI_buffer.Buffer.sized(width, height)  a blank buffer at the origin
+//   TUI_buffer.Buffer.empty(rect)           a blank buffer covering `rect`
+//   b.area()                                the rectangle it covers
+//   b.get(x, y) -> Cell                     what is there
+//   b.set(x, y, cell)                       put one cell
+//   b.set_str(x, y, text, style, max:)      write text, width-aware, clipped
+//   b.fill(rect, symbol, style)             every cell of a rectangle
+//   b.restyle(rect, style)                  the style, leaving the glyphs
+//   b.clear()                               blanks, in the plain style
+//   b.to_str()                              the rows as plain text -- `print(b)`
+//   b.frame()                               the same inside a ruled box, for tests
 //
 // --- a cell is a grapheme cluster -------------------------------------------
 //
@@ -74,8 +74,8 @@ pub static Cell Cell.blank() {
     return Cell(" ");
 }
 
-pub bool Cell.eq(Cell o) {
-    return width == o.width && sym == o.sym && style.eq(o.style);
+pub bool Cell.eq(Cell other) {
+    return width == other.width && sym == other.sym && style.eq(other.style);
 }
 
 pub str Cell.to_str() {
@@ -94,28 +94,28 @@ pub type Buffer {
     List<int> wid;
 }
 
-/// A blank `w` by `h` buffer with its corner at the origin.
-pub static Buffer Buffer.sized(int w, int h) {
-    return Buffer.empty(TUI_geometry.Rect(0, 0, w, h));
+/// A blank `width` by `height` buffer with its corner at the origin.
+pub static Buffer Buffer.sized(int width, int height) {
+    return Buffer.empty(TUI_geometry.Rect(0, 0, width, height));
 }
 
 /// A blank buffer covering `area`. A negative width or height is taken as
 /// zero.
 pub static Buffer Buffer.empty(TUI_geometry.Rect area) {
-    int w = area.w;
-    int h = area.h;
-    if (w < 0) {
-        w = 0;
+    int width = area.width;
+    int height = area.height;
+    if (width < 0) {
+        width = 0;
     }
-    if (h < 0) {
-        h = 0;
+    if (height < 0) {
+        height = 0;
     }
-    TUI_geometry.Rect box = TUI_geometry.Rect(area.x, area.y, w, h);
-    int n = w * h;
+    TUI_geometry.Rect box = TUI_geometry.Rect(area.x, area.y, width, height);
+    int cell_count = width * height;
     List<str> sym = [];
     List<int> sty = [];
     List<int> wid = [];
-    for (int i in 0 .. n) {
+    for (int i in 0 .. cell_count) {
         sym.push(" ");
         sty.push(0);
         wid.push(1);
@@ -134,7 +134,7 @@ pub bool Buffer.inside(int x, int y) {
 }
 
 int Buffer.at(int x, int y) {
-    return (y - box.y) * box.w + (x - box.x);
+    return (y - box.y) * box.width + (x - box.x);
 }
 
 /// The cell at `x`, `y`. **Traps** outside the buffer, like any index.
@@ -142,8 +142,8 @@ pub Cell Buffer.get(int x, int y) {
     if (!box.contains(x, y)) {
         trap("TUI_buffer.Buffer.get: " + str(x) + "," + str(y) + " is outside " + box.to_str());
     }
-    int i = at(x, y);
-    return Cell(sym[i], style: TUI_style.Style.unpack(sty[i]), width: wid[i]);
+    int index = at(x, y);
+    return Cell(sym[index], style: TUI_style.Style.unpack(sty[index]), width: wid[index]);
 }
 
 /// The packed style at `x`, `y` -- what the renderer compares. **Traps**
@@ -176,8 +176,8 @@ pub bool Buffer.same_cell(Buffer other, int x, int y) {
     if (!box.eq(other.box)) {
         trap("TUI_buffer.Buffer.same_cell: the buffers cover different rectangles");
     }
-    int i = at(x, y);
-    return wid[i] == other.wid[i] && sty[i] == other.sty[i] && sym[i] == other.sym[i];
+    int index = at(x, y);
+    return wid[index] == other.wid[index] && sty[index] == other.sty[index] && sym[index] == other.sym[index];
 }
 
 /// Is row `y` the same in both buffers, cell for cell? The renderer asks
@@ -193,13 +193,13 @@ pub bool Buffer.same_row(Buffer other, int y) {
     if (y < box.y || y >= box.bottom()) {
         trap("TUI_buffer.Buffer.same_row: outside the buffer");
     }
-    int i = (y - box.y) * box.w;
-    int end = i + box.w;
-    while (i < end) {
-        if (wid[i] != other.wid[i] || sty[i] != other.sty[i] || sym[i] != other.sym[i]) {
+    int index = (y - box.y) * box.width;
+    int end = index + box.width;
+    while (index < end) {
+        if (wid[index] != other.wid[index] || sty[index] != other.sty[index] || sym[index] != other.sym[index]) {
             return false;
         }
-        i = i + 1;
+        index = index + 1;
     }
     return true;
 }
@@ -214,14 +214,14 @@ pub int Buffer.tail_start(int y) {
     if (y < box.y || y >= box.bottom()) {
         trap("TUI_buffer.Buffer.tail_start: outside the buffer");
     }
-    int base = (y - box.y) * box.w;
-    int cx = box.w;
-    while (cx > 0) {
-        int i = base + cx - 1;
-        if (sty[i] != TUI_style.RESET_STYLE || sym[i] != " ") {
-            return box.x + cx;
+    int base = (y - box.y) * box.width;
+    int column = box.width;
+    while (column > 0) {
+        int index = base + column - 1;
+        if (sty[index] != TUI_style.RESET_STYLE || sym[index] != " ") {
+            return box.x + column;
         }
-        cx = cx - 1;
+        column = column - 1;
     }
     return box.x;
 }
@@ -235,10 +235,10 @@ pub void Buffer.append_sym(bytes out, int x, int y) {
     if (!box.contains(x, y)) {
         trap("TUI_buffer.Buffer.append_sym: outside the buffer");
     }
-    str s = sym[at(x, y)];
-    int n = s.size();
-    for (int i in 0 .. n) {
-        out.push(s.byte_at(i));
+    str text = sym[at(x, y)];
+    int byte_count = text.size();
+    for (int i in 0 .. byte_count) {
+        out.push(text.byte_at(i));
     }
 }
 
@@ -258,62 +258,62 @@ pub int Buffer.width_at(int x, int y) {
 /// A cell of width 2 also writes its continuation, if there is a column for
 /// it; with no room the wide character is not written at all and a blank
 /// takes its place, because half of a wide glyph is not a character.
-pub void Buffer.set(int x, int y, Cell c) {
+pub void Buffer.set(int x, int y, Cell cell) {
     if (!box.contains(x, y)) {
         return;
     }
-    int p = c.style.pack();
-    if (c.width >= 2) {
+    int packed_style = cell.style.pack();
+    if (cell.width >= 2) {
         if (x + 1 >= box.right()) {
-            put(x, y, " ", p, 1);
+            put(x, y, " ", packed_style, 1);
             return;
         }
-        put(x, y, c.sym, p, 2);
-        put(x + 1, y, "", p, 0);
+        put(x, y, cell.sym, packed_style, 2);
+        put(x + 1, y, "", packed_style, 0);
         return;
     }
-    if (c.width <= 0) {
+    if (cell.width <= 0) {
         // A lone continuation is not a cell a caller can place: it only
         // means anything beside its head. Written on its own it is a blank.
-        put(x, y, " ", p, 1);
+        put(x, y, " ", packed_style, 1);
         return;
     }
-    put(x, y, c.sym, p, 1);
+    put(x, y, cell.sym, packed_style, 1);
 }
 
 /// Restyle one cell, leaving its symbol alone. Outside the buffer it does
 /// nothing.
-pub void Buffer.set_style(int x, int y, TUI_style.Style st) {
+pub void Buffer.set_style(int x, int y, TUI_style.Style style) {
     if (!box.contains(x, y)) {
         return;
     }
-    sty[at(x, y)] = st.pack();
+    sty[at(x, y)] = style.pack();
 }
 
 /// The write every other write goes through: one cell, with the orphan
 /// repair the header promises.
-void Buffer.put(int x, int y, str s, int p, int w) {
-    int i = at(x, y);
+void Buffer.put(int x, int y, str text, int packed_style, int width) {
+    int index = at(x, y);
     // Writing over the right half of a wide pair leaves its left half
     // showing a glyph it has no room for: make that a space.
-    if (wid[i] == 0 && x > box.x) {
-        int l = i - 1;
-        sym[l] = " ";
-        wid[l] = 1;
+    if (wid[index] == 0 && x > box.x) {
+        int left_index = index - 1;
+        sym[left_index] = " ";
+        wid[left_index] = 1;
     }
     // Writing over the left half leaves the right half an orphan.
-    if (wid[i] == 2 && x + 1 < box.right()) {
-        int r = i + 1;
-        sym[r] = " ";
-        wid[r] = 1;
+    if (wid[index] == 2 && x + 1 < box.right()) {
+        int right_index = index + 1;
+        sym[right_index] = " ";
+        wid[right_index] = 1;
     }
-    sym[i] = s;
-    sty[i] = p;
-    wid[i] = w;
+    sym[index] = text;
+    sty[index] = packed_style;
+    wid[index] = width;
 }
 
-/// Write `s` at `x`, `y`, one grapheme cluster per cell, and answer how many
-/// columns were taken.
+/// Write `text` at `x`, `y`, one grapheme cluster per cell, and answer how
+/// many columns were taken.
 ///
 ///   - Text is clipped to the buffer's right edge, and to `max` columns when
 ///     that is given and smaller.
@@ -322,8 +322,8 @@ void Buffer.put(int x, int y, str s, int p, int w) {
 ///   - A zero-width cluster -- a combining mark, a zero-width joiner -- is
 ///     appended to the cell before it rather than taking a cell of its own.
 ///     With no cell before it, it is dropped.
-///   - A newline in `s` is a cell like any other; split the text first.
-pub int Buffer.set_str(int x, int y, str s, TUI_style.Style st, int max = -1) {
+///   - A newline in `text` is a cell like any other; split the text first.
+pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = -1) {
     if (y < box.y || y >= box.bottom()) {
         return 0;
     }
@@ -334,117 +334,118 @@ pub int Buffer.set_str(int x, int y, str s, TUI_style.Style st, int max = -1) {
     if (limit <= 0) {
         return 0;
     }
-    int p = st.pack();
-    if (x >= box.x && ascii_run(s, limit + 1)) {
-        return fast_ascii(x, y, s, p, limit);
+    int packed_style = style.pack();
+    if (x >= box.x && ascii_run(text, limit + 1)) {
+        return fast_ascii(x, y, text, packed_style, limit);
     }
-    int cx = x;
+    int column = x;
     int used = 0;
     int last = -1;
-    for (str g in unicode.graphemes(s)) {
-        int gw = unicode.width(g);
-        if (gw == 0) {
+    for (str grapheme in unicode.graphemes(text)) {
+        int grapheme_width = unicode.width(grapheme);
+        if (grapheme_width == 0) {
             if (last >= 0) {
-                sym[last] = sym[last] + g;
+                sym[last] = sym[last] + grapheme;
             }
             continue;
         }
-        if (used + gw > limit) {
-            if (limit - used == 1 && cx >= box.x) {
-                put(cx, y, " ", p, 1);
+        if (used + grapheme_width > limit) {
+            if (limit - used == 1 && column >= box.x) {
+                put(column, y, " ", packed_style, 1);
                 used = used + 1;
             }
             break;
         }
-        if (cx + gw <= box.x) {
-            cx = cx + gw;
-            used = used + gw;
+        if (column + grapheme_width <= box.x) {
+            column = column + grapheme_width;
+            used = used + grapheme_width;
             continue;
         }
-        if (cx < box.x) {
+        if (column < box.x) {
             // A wide cluster straddling the left edge: half of it is off the
             // buffer, so neither half is drawn.
-            put(box.x, y, " ", p, 1);
+            put(box.x, y, " ", packed_style, 1);
             last = at(box.x, y);
-            cx = cx + gw;
-            used = used + gw;
+            column = column + grapheme_width;
+            used = used + grapheme_width;
             continue;
         }
-        if (gw >= 2) {
-            put(cx, y, g, p, 2);
-            last = at(cx, y);
-            put(cx + 1, y, "", p, 0);
+        if (grapheme_width >= 2) {
+            put(column, y, grapheme, packed_style, 2);
+            last = at(column, y);
+            put(column + 1, y, "", packed_style, 0);
         } else {
-            put(cx, y, g, p, 1);
-            last = at(cx, y);
+            put(column, y, grapheme, packed_style, 1);
+            last = at(column, y);
         }
-        cx = cx + gw;
-        used = used + gw;
+        column = column + grapheme_width;
+        used = used + grapheme_width;
     }
     return used;
 }
 
-int Buffer.fast_ascii(int x, int y, str s, int p, int limit) {
-    int n = s.size();
-    if (n > limit) {
-        n = limit;
+int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
+    int byte_count = text.size();
+    if (byte_count > limit) {
+        byte_count = limit;
     }
-    for (int i in 0 .. n) {
-        put(x + i, y, ASCII[s.byte_at(i) - 32], p, 1);
+    for (int i in 0 .. byte_count) {
+        put(x + i, y, ASCII[text.byte_at(i) - 32], packed_style, 1);
     }
-    return n;
+    return byte_count;
 }
 
-/// Fill `r` with `sym`, in `st`. Only the part inside the buffer is written.
+/// Fill `rect` with `symbol`, in `style`. Only the part inside the buffer is
+/// written.
 /// **Traps** on a symbol of no width, which would never finish the row.
-pub void Buffer.fill(TUI_geometry.Rect r, str s, TUI_style.Style st) {
-    int gw = unicode.width(s);
-    if (gw <= 0) {
+pub void Buffer.fill(TUI_geometry.Rect rect, str symbol, TUI_style.Style style) {
+    int symbol_width = unicode.width(symbol);
+    if (symbol_width <= 0) {
         trap("TUI_buffer.Buffer.fill: the fill symbol has no width");
     }
-    TUI_geometry.Rect r2 = r.intersect(box);
-    int p = st.pack();
-    for (int y in r2.y .. r2.bottom()) {
-        int cx = r2.x;
+    TUI_geometry.Rect clipped = rect.intersect(box);
+    int packed_style = style.pack();
+    for (int y in clipped.y .. clipped.bottom()) {
+        int column = clipped.x;
         // A one-column symbol -- a space, a border character -- is the case
         // that runs on every cell of every frame, so it writes cells
         // directly instead of going round through `set_str`.
-        if (gw == 1) {
-            while (cx < r2.right()) {
-                put(cx, y, s, p, 1);
-                cx = cx + 1;
+        if (symbol_width == 1) {
+            while (column < clipped.right()) {
+                put(column, y, symbol, packed_style, 1);
+                column = column + 1;
             }
             continue;
         }
-        while (cx + gw <= r2.right()) {
-            set_str(cx, y, s, st);
-            cx = cx + gw;
+        while (column + symbol_width <= clipped.right()) {
+            set_str(column, y, symbol, style);
+            column = column + symbol_width;
         }
-        while (cx < r2.right()) {
-            put(cx, y, " ", p, 1);
-            cx = cx + 1;
+        while (column < clipped.right()) {
+            put(column, y, " ", packed_style, 1);
+            column = column + 1;
         }
     }
 }
 
-/// Restyle every cell of `r`, leaving the glyphs. This is how a list marks
+/// Restyle every cell of `rect`, leaving the glyphs. This is how a list marks
 /// its selected row.
-pub void Buffer.restyle(TUI_geometry.Rect r, TUI_style.Style st) {
-    TUI_geometry.Rect r2 = r.intersect(box);
-    int p = st.pack();
-    for (int y in r2.y .. r2.bottom()) {
-        int cx = r2.x;
-        while (cx < r2.right()) {
-            sty[at(cx, y)] = p;
-            cx = cx + 1;
+pub void Buffer.restyle(TUI_geometry.Rect rect, TUI_style.Style style) {
+    TUI_geometry.Rect clipped = rect.intersect(box);
+    int packed_style = style.pack();
+    for (int y in clipped.y .. clipped.bottom()) {
+        int column = clipped.x;
+        while (column < clipped.right()) {
+            sty[at(column, y)] = packed_style;
+            column = column + 1;
         }
     }
 }
 
 /// Blank the whole buffer, in the plain style.
 pub void Buffer.clear() {
-    int n = sym.size();
-    for (int i in 0 .. n) {
+    int cell_count = sym.size();
+    for (int i in 0 .. cell_count) {
         sym[i] = " ";
         sty[i] = 0;
         wid[i] = 1;
@@ -458,10 +459,10 @@ pub str Buffer.row_text(int y) {
         return "";
     }
     List<str> parts = [];
-    for (int cx in box.x .. box.right()) {
-        int i = at(cx, y);
-        if (wid[i] != 0) {
-            parts.push(sym[i]);
+    for (int column in box.x .. box.right()) {
+        int index = at(column, y);
+        if (wid[index] != 0) {
+            parts.push(sym[index]);
         }
     }
     return parts.join("");
@@ -479,7 +480,7 @@ pub str Buffer.to_str() {
 /// The buffer inside a ruled box, so that trailing spaces are visible and an
 /// expectation in the test corpus can be read at a glance.
 pub str Buffer.frame() {
-    str bar = "+" + "-".repeat(box.w) + "+";
+    str bar = "+" + "-".repeat(box.width) + "+";
     List<str> out = [];
     out.push(bar);
     for (int y in box.y .. box.bottom()) {
@@ -489,7 +490,7 @@ pub str Buffer.frame() {
     return out.join("\n");
 }
 
-/// Is every byte of `s`'s first `upto` bytes printable ASCII? Then every
+/// Is every byte of `text`'s first `upto` bytes printable ASCII? Then every
 /// cluster among them is one byte and one column, and `set_str` can skip
 /// the Unicode work entirely. Only `limit + 1` bytes matter when the write
 /// is clipped to `limit` columns: the byte just past the clip decides
@@ -497,18 +498,18 @@ pub str Buffer.frame() {
 /// the last cell written, and an ASCII byte there is a one-column cluster
 /// the slow path stops at too -- so the two agree exactly, and a long line
 /// clipped to a narrow column is no longer scanned to its end.
-bool ascii_run(str s, int upto) {
-    int i = 0;
-    int n = s.size();
-    if (upto < n) {
-        n = upto;
+bool ascii_run(str text, int upto) {
+    int index = 0;
+    int byte_count = text.size();
+    if (upto < byte_count) {
+        byte_count = upto;
     }
-    while (i < n) {
-        int b = s.byte_at(i);
-        if (b < ' ' || b > '~') {
+    while (index < byte_count) {
+        int byte_value = text.byte_at(index);
+        if (byte_value < ' ' || byte_value > '~') {
             return false;
         }
-        i = i + 1;
+        index = index + 1;
     }
     return true;
 }
