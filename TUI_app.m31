@@ -71,7 +71,7 @@ pub enum Action {
 /// program's own state. Called once per event, never per byte -- the
 /// decoding already happened in `term.Reader`.
 pub interface Handler {
-    Action handle(term.Event ev);
+    Action handle(term.Event event);
 }
 
 /// The loop's own knobs. Every field has a default, so `Loop()` is a
@@ -93,7 +93,7 @@ pub type Loop {
 
 /// Raw mode, then read-dispatch-render until `on_event` answers `Quit`, the
 /// input ends, or reading fails. Whichever ends it, the terminal is restored
-/// before this returns: `s.on_exit(leave)` runs from the `Session`'s own
+/// before this returns: `session.on_exit(leave)` runs from the `Session`'s own
 /// destructor, the one exit path this function cannot fail to take.
 ///
 /// `Err(term.Error.NotATerminal)` when standard input is not a terminal, and
@@ -106,33 +106,33 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
         return Result<int, term.Error>.Err(term.Error.NotATerminal);
     }
     match (term.raw()) {
-        case Err(term.Error e): {
-            return Result<int, term.Error>.Err(e);
+        case Err(term.Error error): {
+            return Result<int, term.Error>.Err(error);
         }
-        case Ok(term.Session s): {
-            s.on_exit(leave);
-            term.Writer w = term.writer(io.stdout());
-            w.put(enter);
-            term.Reader r = term.reader();
-            term.Size sz = screen_size();
+        case Ok(term.Session session): {
+            session.on_exit(leave);
+            term.Writer writer = term.writer(io.stdout());
+            writer.put(enter);
+            term.Reader reader = term.reader();
+            term.Size window_size = screen_size();
             // Two buffers for the whole run, swapped each frame: the one
             // just shown and the one being drawn. A fresh buffer per frame
             // is three lists grown a cell at a time -- twice the cost of
             // clearing one that already exists -- and nothing about a
             // frame needs the last one's memory gone.
-            TUI_buffer.Buffer prev = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
-            TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
-            view.render(prev, prev.area());
-            w.put_bytes(TUI_diff.full(prev, depth));
-            flush(w);
+            TUI_buffer.Buffer previous = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
+            TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
+            view.render(previous, previous.area());
+            writer.put_bytes(TUI_diff.full(previous, depth));
+            flush(writer);
             bool running = true;
             while (running) {
                 bool redraw = false;
-                match (r.read(tick_ms)) {
+                match (reader.read(tick_ms)) {
                     case Ok(term.Input inp): {
                         match (inp) {
-                            case Got(term.Event ev): {
-                                match (on_event.handle(ev)) {
+                            case Got(term.Event event): {
+                                match (on_event.handle(event)) {
                                     case Continue: {
                                     }
                                     case Redraw: {
@@ -150,32 +150,32 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
                             }
                         }
                     }
-                    case Err(term.Error e): {
+                    case Err(term.Error error): {
                         running = false;
                     }
                 }
                 if (running) {
                     term.Size now = screen_size();
-                    bool grew = resized(sz, now);
-                    sz = now;
+                    bool grew = resized(window_size, now);
+                    window_size = now;
                     if (redraw || grew) {
                         if (grew) {
                             // A resize is the one time the buffers are
                             // replaced: the old pair is the wrong shape.
-                            next = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
-                            prev = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
+                            next = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
+                            previous = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
                         } else {
                             next.clear();
                         }
                         view.render(next, next.area());
                         if (grew) {
-                            w.put_bytes(TUI_diff.full(next, depth));
+                            writer.put_bytes(TUI_diff.full(next, depth));
                         } else {
-                            w.put_bytes(TUI_diff.diff(prev, next, depth));
+                            writer.put_bytes(TUI_diff.diff(previous, next, depth));
                         }
-                        flush(w);
-                        TUI_buffer.Buffer shown = prev;
-                        prev = next;
+                        flush(writer);
+                        TUI_buffer.Buffer shown = previous;
+                        previous = next;
                         next = shown;
                     }
                 }
@@ -191,12 +191,12 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
 /// from SOME size.
 pub term.Size screen_size() {
     match (term.size()) {
-        case Ok(term.Size sz): {
-            if (sz.rows > 0 && sz.cols > 0) {
-                return sz;
+        case Ok(term.Size window_size): {
+            if (window_size.rows > 0 && window_size.cols > 0) {
+                return window_size;
             }
         }
-        case Err(term.Error e): {
+        case Err(term.Error error): {
         }
     }
     return term.Size(24, 80);
@@ -204,19 +204,19 @@ pub term.Size screen_size() {
 
 /// Whether two readings of the window's size differ -- the loop's own resize
 /// test, pulled out so it can be checked without a terminal at all.
-pub bool resized(term.Size a, term.Size b) {
-    return a.rows != b.rows || a.cols != b.cols;
+pub bool resized(term.Size previous, term.Size current) {
+    return previous.rows != current.rows || previous.cols != current.cols;
 }
 
-void flush(term.Writer w) {
+void flush(term.Writer writer) {
     // A `Writer`'s error is `io.Error`, not `term.Error`, and turning one
     // into the other would invent a mapping nobody asked for. Same answer
     // `Loop.run`'s own header gives for a failed read: there is nothing left
     // to do with a terminal that has stopped taking writes but stop.
-    match (w.flush()) {
-        case Ok(int n): {
+    match (writer.flush()) {
+        case Ok(int count): {
         }
-        case Err(io.Error e): {
+        case Err(io.Error error): {
         }
     }
 }

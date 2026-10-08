@@ -3,7 +3,7 @@
 // API
 // ---
 //   TUI_diff.full(next, depth)          every cell, from a reset terminal
-//   TUI_diff.diff(prev, next, depth)    only what changed
+//   TUI_diff.diff(previous, next, depth)    only what changed
 //   TUI_diff.show(bytes)                the bytes made readable, for tests
 //   TUI_diff.move_to(out, x, y)         and the other small control helpers
 //
@@ -59,27 +59,27 @@ const int ERASE_WORTH = 8;
 pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     bytes out = [];
     TUI_style.push_reset(out);
-    TUI_geometry.Rect a = next.area();
+    TUI_geometry.Rect area = next.area();
     int pen = TUI_style.RESET_STYLE;
-    for (int y in a.y .. a.bottom()) {
-        move_to(out, a.x, y);
+    for (int y in area.y .. area.bottom()) {
+        move_to(out, area.x, y);
         int tail = tail_start(next, y);
-        int x = a.x;
-        while (x < a.right()) {
-            int w = next.width_at(x, y);
-            if (w == 0) {
+        int x = area.x;
+        while (x < area.right()) {
+            int cell_width = next.width_at(x, y);
+            if (cell_width == 0) {
                 x = x + 1;
                 continue;
             }
-            if (x >= tail && a.right() - x >= ERASE_WORTH) {
+            if (x >= tail && area.right() - x >= ERASE_WORTH) {
                 pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
                 erase_line(out);
-                x = a.right();
+                x = area.right();
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
             next.append_sym(out, x, y);
-            x = x + w;
+            x = x + cell_width;
         }
     }
     if (pen != TUI_style.RESET_STYLE) {
@@ -88,39 +88,39 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     return out;
 }
 
-/// What has to be written to turn a terminal showing `prev` into one showing
+/// What has to be written to turn a terminal showing `previous` into one showing
 /// `next`. **Traps** when the two buffers do not cover the same rectangle --
 /// a resize is a `full` redraw, not a diff.
 ///
 /// The pen is assumed to be plain at the start of the frame, which is what
 /// `full` leaves behind and what `\x1b[0m` guarantees; `diff` restores it at
 /// the end for the same reason.
-pub bytes diff(TUI_buffer.Buffer prev, TUI_buffer.Buffer next, TUI_style.Depth depth) {
-    TUI_geometry.Rect a = next.area();
-    if (!prev.area().eq(a)) {
+pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Depth depth) {
+    TUI_geometry.Rect area = next.area();
+    if (!previous.area().eq(area)) {
         trap("TUI_diff.diff: the two frames cover different rectangles -- use TUI_diff.full after a resize");
     }
     bytes out = [];
     int pen = TUI_style.RESET_STYLE;
     int cur_x = -1;
     int cur_y = -1;
-    for (int y in a.y .. a.bottom()) {
+    for (int y in area.y .. area.bottom()) {
         // Most rows of most frames are untouched -- a cursor moved, two
         // rows changed -- and an untouched row writes nothing, so it is not
         // worth a per-cell look, let alone the trailing-blank scan.
-        if (prev.same_row(next, y)) {
+        if (previous.same_row(next, y)) {
             continue;
         }
         int tail = tail_start(next, y);
-        int x = a.x;
-        while (x < a.right()) {
-            int w = next.width_at(x, y);
-            if (w == 0) {
+        int x = area.x;
+        while (x < area.right()) {
+            int cell_width = next.width_at(x, y);
+            if (cell_width == 0) {
                 x = x + 1;
                 continue;
             }
-            if (!changed(prev, next, x, y)) {
-                x = x + w;
+            if (!changed(previous, next, x, y)) {
+                x = x + cell_width;
                 continue;
             }
             // Put the cursor on this cell, by whichever route is shorter.
@@ -130,17 +130,17 @@ pub bytes diff(TUI_buffer.Buffer prev, TUI_buffer.Buffer next, TUI_style.Depth d
                 cross(out, next, cur_x, x, y, pen);
             }
             cur_y = y;
-            if (x >= tail && a.right() - x >= ERASE_WORTH) {
+            if (x >= tail && area.right() - x >= ERASE_WORTH) {
                 pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
                 erase_line(out);
                 cur_x = x;
-                x = a.right();
+                x = area.right();
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
             next.append_sym(out, x, y);
-            cur_x = x + w;
-            x = x + w;
+            cur_x = x + cell_width;
+            x = x + cell_width;
         }
     }
     if (out.size() > 0 && pen != TUI_style.RESET_STYLE) {
@@ -150,14 +150,14 @@ pub bytes diff(TUI_buffer.Buffer prev, TUI_buffer.Buffer next, TUI_style.Depth d
 }
 
 /// Does the cell at `x`, `y` have to be written again?
-bool changed(TUI_buffer.Buffer prev, TUI_buffer.Buffer next, int x, int y) {
-    return !prev.same_cell(next, x, y);
+bool changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int y) {
+    return !previous.same_cell(next, x, y);
 }
 
-/// Get from column `from` to column `to` in row `y`: either by walking over
+/// Get from column `from` to column `target` in row `y`: either by walking over
 /// the unchanged cells between them, or by jumping.
-void cross(bytes out, TUI_buffer.Buffer next, int from, int to, int y, int pen) {
-    int gap = to - from;
+void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int pen) {
+    int gap = target - from;
     int jump = 3;
     if (gap > 1) {
         jump = 3 + digits(gap);
@@ -165,36 +165,36 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int to, int y, int pen) 
     int walk = 0;
     bool same_style = true;
     int x = from;
-    while (x < to) {
-        int w = next.width_at(x, y);
-        if (w == 0) {
+    while (x < target) {
+        int cell_width = next.width_at(x, y);
+        if (cell_width == 0) {
             x = x + 1;
             continue;
         }
         if (next.style_at(x, y) != pen) {
             same_style = false;
-            x = to;
+            x = target;
             continue;
         }
         walk = walk + next.sym_at(x, y).size();
         if (walk > jump) {
             // Already dearer than the escape; the rest of the run cannot
             // make it cheaper, and measuring it costs a reference each.
-            x = to;
+            x = target;
             continue;
         }
-        x = x + w;
+        x = x + cell_width;
     }
     if (same_style && walk <= jump) {
         x = from;
-        while (x < to) {
-            int w = next.width_at(x, y);
-            if (w == 0) {
+        while (x < target) {
+            int cell_width = next.width_at(x, y);
+            if (cell_width == 0) {
                 x = x + 1;
                 continue;
             }
             next.append_sym(out, x, y);
-            x = x + w;
+            x = x + cell_width;
         }
         return;
     }
@@ -210,8 +210,8 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int to, int y, int pen) 
 /// question per cell would make a full redraw quadratic in the width. The
 /// buffer answers it in one pass over its own lists (`Buffer.tail_start`),
 /// which is cheaper than this module reading the row back a cell at a time.
-int tail_start(TUI_buffer.Buffer b, int y) {
-    return b.tail_start(y);
+int tail_start(TUI_buffer.Buffer buffer, int y) {
+    return buffer.tail_start(y);
 }
 
 int write_style(bytes out, int pen, int want, TUI_style.Depth depth) {
@@ -219,14 +219,14 @@ int write_style(bytes out, int pen, int want, TUI_style.Depth depth) {
     return want;
 }
 
-int digits(int v) {
-    int n = 1;
-    int r = v;
-    while (r >= 10) {
-        r = r / 10;
-        n = n + 1;
+int digits(int value) {
+    int digit_count = 1;
+    int rest = value;
+    while (rest >= 10) {
+        rest = rest / 10;
+        digit_count = digit_count + 1;
     }
-    return n;
+    return digit_count;
 }
 
 // --- the small control sequences --------------------------------------------
@@ -278,31 +278,31 @@ pub void show_cursor(bytes out) {
 /// The bytes a terminal would obey, written so a person can read them:
 /// `\x1b` becomes `\e`, another control byte becomes `\xNN`, and the rest
 /// stands for itself. This is what a test asserts on.
-pub str show(bytes b) {
+pub str show(bytes data) {
     bytes out = [];
-    for (int i in 0 .. b.size()) {
-        int v = b[i];
-        if (v == 27) {
+    for (int i in 0 .. data.size()) {
+        int code = data[i];
+        if (code == 27) {
             out.push('\\');
             out.push('e');
-        } else if (v == '\n') {
+        } else if (code == '\n') {
             out.push('\\');
             out.push('n');
-        } else if (v == '\r') {
+        } else if (code == '\r') {
             out.push('\\');
             out.push('r');
-        } else if (v < ' ' || v == 127) {
+        } else if (code < ' ' || code == 127) {
             out.push('\\');
             out.push('x');
-            out.push(hex_digit(v / 16));
-            out.push(hex_digit(v % 16));
+            out.push(hex_digit(code / 16));
+            out.push(hex_digit(code % 16));
         } else {
-            out.push(v);
+            out.push(code);
         }
     }
     match (out.utf8()) {
-        case Some(str s): {
-            return s;
+        case Some(str text): {
+            return text;
         }
         case None: {
             return out.hex();
@@ -310,9 +310,9 @@ pub str show(bytes b) {
     }
 }
 
-int hex_digit(int v) {
-    if (v < 10) {
-        return '0' + v;
+int hex_digit(int digit) {
+    if (digit < 10) {
+        return '0' + digit;
     }
-    return 'a' - 10 + v;
+    return 'a' - 10 + digit;
 }

@@ -88,8 +88,8 @@ pub type DiffView {
     pub int cursor = 0;
     pub TUI_scroll.Viewport view = TUI_scroll.Viewport();
     pub TUI_style.Style header_style = TUI_style.Style(attrs: TUI_style.BOLD);
-    pub TUI_style.Style add_style = TUI_style.Style(fg: TUI_style.Colour.Indexed(2));
-    pub TUI_style.Style remove_style = TUI_style.Style(fg: TUI_style.Colour.Indexed(1));
+    pub TUI_style.Style add_style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(2));
+    pub TUI_style.Style remove_style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(1));
     pub TUI_style.Style context_style = TUI_style.Style();
     pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
 }
@@ -97,15 +97,15 @@ pub type DiffView {
 /// The flattened rows: every hunk's header, followed by its lines, in order.
 pub List<Row> DiffView.rows() {
     List<Row> out = [];
-    int h = 0;
-    while (h < hunks.size()) {
-        out.push(Row(RowKind.Header, h, -1));
-        int l = 0;
-        while (l < hunks[h].lines.size()) {
-            out.push(Row(RowKind.Body, h, l));
-            l = l + 1;
+    int hunk_index = 0;
+    while (hunk_index < hunks.size()) {
+        out.push(Row(RowKind.Header, hunk_index, -1));
+        int line_index = 0;
+        while (line_index < hunks[hunk_index].lines.size()) {
+            out.push(Row(RowKind.Body, hunk_index, line_index));
+            line_index = line_index + 1;
         }
-        h = h + 1;
+        hunk_index = hunk_index + 1;
     }
     return out;
 }
@@ -117,32 +117,32 @@ pub List<Row> DiffView.rows() {
 /// three operations below walk the hunks (a few dozen) rather than the
 /// rows (a few thousand), the same way `TUI_outline` does.
 pub int DiffView.count() {
-    int n = 0;
-    for (Hunk h in hunks) {
-        n = n + 1 + h.lines.size();
+    int row_count = 0;
+    for (Hunk hunk in hunks) {
+        row_count = row_count + 1 + hunk.lines.size();
     }
-    return n;
+    return row_count;
 }
 
-/// The row at index `i` of the flattened view, or `None` -- by walking the
+/// The row at index `index` of the flattened view, or `None` -- by walking the
 /// hunks' sizes, not by building the rows.
-Option<Row> DiffView.row_at(int i) {
-    if (i < 0) {
+Option<Row> DiffView.row_at(int index) {
+    if (index < 0) {
         return Option<Row>.None;
     }
-    int left = i;
-    int h = 0;
-    while (h < hunks.size()) {
+    int left = index;
+    int hunk_index = 0;
+    while (hunk_index < hunks.size()) {
         if (left == 0) {
-            return Option<Row>.Some(Row(RowKind.Header, h, -1));
+            return Option<Row>.Some(Row(RowKind.Header, hunk_index, -1));
         }
         left = left - 1;
-        int n = hunks[h].lines.size();
-        if (left < n) {
-            return Option<Row>.Some(Row(RowKind.Body, h, left));
+        int line_count = hunks[hunk_index].lines.size();
+        if (left < line_count) {
+            return Option<Row>.Some(Row(RowKind.Body, hunk_index, left));
         }
-        left = left - n;
-        h = h + 1;
+        left = left - line_count;
+        hunk_index = hunk_index + 1;
     }
     return Option<Row>.None;
 }
@@ -156,23 +156,23 @@ pub Option<Row> DiffView.at() {
 /// Move the cursor by `delta` rows of the flattened view, stopping at the
 /// ends.
 pub void DiffView.move(int delta) {
-    int n = count();
-    if (n == 0) {
+    int row_count = count();
+    if (row_count == 0) {
         cursor = 0;
         return;
     }
-    int at = cursor + delta;
-    if (at < 0) {
-        at = 0;
+    int target = cursor + delta;
+    if (target < 0) {
+        target = 0;
     }
-    if (at >= n) {
-        at = n - 1;
+    if (target >= row_count) {
+        target = row_count - 1;
     }
-    cursor = at;
+    cursor = target;
 }
 
-TUI_style.Style DiffView.line_style(Line l) {
-    match (l.kind) {
+TUI_style.Style DiffView.line_style(Line line) {
+    match (line.kind) {
         case Context: {
             return context_style;
         }
@@ -185,8 +185,8 @@ TUI_style.Style DiffView.line_style(Line l) {
     }
 }
 
-str DiffView.marker(Line l) {
-    match (l.kind) {
+str DiffView.marker(Line line) {
+    match (line.kind) {
         case Context: {
             return " ";
         }
@@ -199,11 +199,11 @@ str DiffView.marker(Line l) {
     }
 }
 
-pub void DiffView.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", context_style);
+    buffer.fill(area, " ", context_style);
     int total = count();
     if (cursor >= total) {
         cursor = total - 1;
@@ -211,50 +211,51 @@ pub void DiffView.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     if (cursor < 0) {
         cursor = 0;
     }
-    view.reveal(cursor, total, area.h);
-    view.offset = view.clamped(total, area.h);
+    view.reveal(cursor, total, area.height);
+    view.offset = view.clamped(total, area.height);
     int off = view.offset;
     // Find the first row on screen once, then step through the hunks in
-    // order: `h`/`l` are the row's hunk and line, `l` of -1 being its header.
-    int h = 0;
-    int l = -1;
+    // order: `hunk_index`/`line_index` are the row's hunk and line,
+    // `line_index` of -1 being its header.
+    int hunk_index = 0;
+    int line_index = -1;
     match (row_at(off)) {
         case Some(Row first): {
-            h = first.hunk;
-            l = first.line;
+            hunk_index = first.hunk;
+            line_index = first.line;
         }
         case None: {
             return;
         }
     }
-    int i = 0;
-    while (i < area.h) {
-        int k = off + i;
-        if (k >= total) {
+    int screen_row = 0;
+    while (screen_row < area.height) {
+        int row_index = off + screen_row;
+        if (row_index >= total) {
             return;
         }
-        int y = area.y + i;
+        int y = area.y + screen_row;
         str text = "";
-        TUI_style.Style st = context_style;
-        if (l < 0) {
-            text = hunks[h].header;
-            st = header_style;
+        TUI_style.Style row_style = context_style;
+        if (line_index < 0) {
+            text = hunks[hunk_index].header;
+            row_style = header_style;
         } else {
-            Line ln = hunks[h].lines[l];
-            text = marker(ln) + ln.text;
-            st = line_style(ln);
+            Line line = hunks[hunk_index].lines[line_index];
+            text = marker(line) + line.text;
+            row_style = line_style(line);
         }
-        if (k == cursor) {
-            st = st.merged(highlight_style);
-            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
+        if (row_index == cursor) {
+            row_style = row_style.merged(highlight_style);
+            buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
         }
-        buf.set_str(area.x, y, TUI_text.truncate(text, area.w), st, max: area.w);
-        if (l + 1 < hunks[h].lines.size()) {
-            l = l + 1;
+        buffer.set_str(area.x, y, TUI_text.truncate(text, area.width), row_style, max: area.width);
+        if (line_index + 1 < hunks[hunk_index].lines.size()) {
+            line_index = line_index + 1;
         } else {
-            h = h + 1;
-            l = -1;
+            hunk_index = hunk_index + 1;
+            line_index = -1;
         }
-        i = i + 1;
+        screen_row = screen_row + 1;
     }
 }
