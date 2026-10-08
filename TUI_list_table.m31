@@ -39,49 +39,49 @@ pub type ListView {
     pub TUI_text.Align align = TUI_text.Align.Left;
 }
 
-/// Select item `i`, or nothing with -1. The offset follows at the next
+/// Select item `index`, or nothing with -1. The offset follows at the next
 /// `render`, which is the only place the height is known.
-pub void ListView.select(int i) {
-    selected = i;
+pub void ListView.select(int index) {
+    selected = index;
 }
 
 /// Move the selection by `delta`, stopping at the ends.
 pub void ListView.step(int delta) {
-    int n = items.size();
-    if (n == 0) {
+    int item_count = items.size();
+    if (item_count == 0) {
         selected = -1;
         return;
     }
-    int at = selected + delta;
+    int target = selected + delta;
     if (selected < 0 && delta > 0) {
-        at = 0;
+        target = 0;
     }
-    if (at < 0) {
-        at = 0;
+    if (target < 0) {
+        target = 0;
     }
-    if (at >= n) {
-        at = n - 1;
+    if (target >= item_count) {
+        target = item_count - 1;
     }
-    selected = at;
+    selected = target;
 }
 
-/// The offset that shows `selected` in a window `h` rows tall, clamped to
+/// The offset that shows `selected` in a window `height` rows tall, clamped to
 /// the list. `render` assigns this to `offset`.
-pub int ListView.scrolled(int h) {
-    int n = items.size();
+pub int ListView.scrolled(int height) {
+    int item_count = items.size();
     int top = offset;
-    if (h <= 0 || n == 0) {
+    if (height <= 0 || item_count == 0) {
         return 0;
     }
     if (selected >= 0) {
         if (selected < top) {
             top = selected;
         }
-        if (selected >= top + h) {
-            top = selected - h + 1;
+        if (selected >= top + height) {
+            top = selected - height + 1;
         }
     }
-    int most = n - h;
+    int most = item_count - height;
     if (most < 0) {
         most = 0;
     }
@@ -94,35 +94,35 @@ pub int ListView.scrolled(int h) {
     return top;
 }
 
-pub void ListView.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void ListView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", style);
-    offset = scrolled(area.h);
+    buffer.fill(area, " ", style);
+    offset = scrolled(area.height);
     int pre = TUI_text.width(highlight_symbol);
-    if (pre > area.w) {
-        pre = area.w;
+    if (pre > area.width) {
+        pre = area.width;
     }
-    int i = 0;
-    while (i < area.h) {
-        int k = offset + i;
-        if (k >= items.size()) {
+    int screen_row = 0;
+    while (screen_row < area.height) {
+        int item_index = offset + screen_row;
+        if (item_index >= items.size()) {
             return;
         }
-        int y = area.y + i;
-        TUI_style.Style st = style;
-        if (k == selected) {
-            st = style.merged(highlight_style);
-            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
-            buf.set_str(area.x, y, TUI_text.cut(highlight_symbol, pre), st);
+        int y = area.y + screen_row;
+        TUI_style.Style row_style = style;
+        if (item_index == selected) {
+            row_style = style.merged(highlight_style);
+            buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
+            buffer.set_str(area.x, y, TUI_text.cut(highlight_symbol, pre), row_style);
         }
-        int room = area.w - pre;
+        int room = area.width - pre;
         if (room > 0) {
-            str cell = TUI_text.fit(items[k], room, align);
-            buf.set_str(area.x + pre, y, cell, st, max: room);
+            str cell = TUI_text.fit(items[item_index], room, align);
+            buffer.set_str(area.x + pre, y, cell, row_style, max: room);
         }
-        i = i + 1;
+        screen_row = screen_row + 1;
     }
 }
 
@@ -164,50 +164,50 @@ pub int Table.columns() {
     if (widths.size() > 0) {
         return widths.size();
     }
-    int n = header.size();
-    for (List<str> r in rows) {
-        if (r.size() > n) {
-            n = r.size();
+    int widest = header.size();
+    for (List<str> row in rows) {
+        if (row.size() > widest) {
+            widest = row.size();
         }
     }
-    return n;
+    return widest;
 }
 
 /// Move the selection by `delta`, stopping at the ends.
 pub void Table.step(int delta) {
-    int n = rows.size();
-    if (n == 0) {
+    int row_count = rows.size();
+    if (row_count == 0) {
         selected = -1;
         return;
     }
-    int at = selected + delta;
+    int target = selected + delta;
     if (selected < 0 && delta > 0) {
-        at = 0;
+        target = 0;
     }
-    if (at < 0) {
-        at = 0;
+    if (target < 0) {
+        target = 0;
     }
-    if (at >= n) {
-        at = n - 1;
+    if (target >= row_count) {
+        target = row_count - 1;
     }
-    selected = at;
+    selected = target;
 }
 
-int Table.scrolled(int h) {
-    int n = rows.size();
+int Table.scrolled(int height) {
+    int row_count = rows.size();
     int top = offset;
-    if (h <= 0 || n == 0) {
+    if (height <= 0 || row_count == 0) {
         return 0;
     }
     if (selected >= 0) {
         if (selected < top) {
             top = selected;
         }
-        if (selected >= top + h) {
-            top = selected - h + 1;
+        if (selected >= top + height) {
+            top = selected - height + 1;
         }
     }
-    int most = n - h;
+    int most = row_count - height;
     if (most < 0) {
         most = 0;
     }
@@ -220,68 +220,68 @@ int Table.scrolled(int h) {
     return top;
 }
 
-TUI_text.Align Table.align_of(int c) {
-    if (c < aligns.size()) {
-        return aligns[c];
+TUI_text.Align Table.align_of(int column) {
+    if (column < aligns.size()) {
+        return aligns[column];
     }
     return TUI_text.Align.Left;
 }
 
-pub void Table.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void Table.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", style);
+    buffer.fill(area, " ", style);
     int ncol = columns();
     if (ncol == 0) {
         return;
     }
     int pre = TUI_text.width(highlight_symbol);
-    if (pre > area.w) {
-        pre = area.w;
+    if (pre > area.width) {
+        pre = area.width;
     }
-    TUI_geometry.Rect grid = TUI_geometry.Rect(area.x + pre, area.y, area.w - pre, area.h);
-    List<TUI_geometry.Constraint> cs = widths;
-    if (cs.size() == 0) {
-        cs = [];
-        for (int c in 0 .. ncol) {
-            cs.push(TUI_geometry.Constraint.Fill(1));
+    TUI_geometry.Rect grid = TUI_geometry.Rect(area.x + pre, area.y, area.width - pre, area.height);
+    List<TUI_geometry.Constraint> constraints = widths;
+    if (constraints.size() == 0) {
+        constraints = [];
+        for (int column in 0 .. ncol) {
+            constraints.push(TUI_geometry.Constraint.Fill(1));
         }
     }
-    List<TUI_geometry.Rect> cells = TUI_geometry.Layout(TUI_geometry.Direction.Horizontal, cs, spacing: col_spacing).split(TUI_geometry.Rect(grid.x, grid.y, grid.w, 1));
+    List<TUI_geometry.Rect> cells = TUI_geometry.Layout(TUI_geometry.Direction.Horizontal, constraints, spacing: col_spacing).split(TUI_geometry.Rect(grid.x, grid.y, grid.width, 1));
     int y = area.y;
     if (header.size() > 0) {
-        draw_row(buf, cells, header, y, style.merged(header_style));
+        draw_row(buffer, cells, header, y, style.merged(header_style));
         y = y + 1;
     }
-    int h = area.bottom() - y;
-    if (h <= 0) {
+    int body_height = area.bottom() - y;
+    if (body_height <= 0) {
         return;
     }
-    offset = scrolled(h);
-    for (int i in 0 .. h) {
-        int k = offset + i;
-        if (k >= rows.size()) {
+    offset = scrolled(body_height);
+    for (int i in 0 .. body_height) {
+        int row_index = offset + i;
+        if (row_index >= rows.size()) {
             return;
         }
-        TUI_style.Style st = style;
-        if (k == selected) {
-            st = style.merged(highlight_style);
-            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
-            buf.set_str(area.x, y, TUI_text.cut(highlight_symbol, pre), st);
+        TUI_style.Style row_style = style;
+        if (row_index == selected) {
+            row_style = style.merged(highlight_style);
+            buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
+            buffer.set_str(area.x, y, TUI_text.cut(highlight_symbol, pre), row_style);
         }
-        draw_row(buf, cells, rows[k], y, st);
+        draw_row(buffer, cells, rows[row_index], y, row_style);
         y = y + 1;
     }
 }
 
-void Table.draw_row(TUI_buffer.Buffer buf, List<TUI_geometry.Rect> cells, List<str> row, int y, TUI_style.Style st) {
-    int c = 0;
-    while (c < cells.size() && c < row.size()) {
-        TUI_geometry.Rect box = cells[c];
-        if (box.w > 0) {
-            buf.set_str(box.x, y, TUI_text.fit(row[c], box.w, align_of(c)), st, max: box.w);
+void Table.draw_row(TUI_buffer.Buffer buffer, List<TUI_geometry.Rect> cells, List<str> row, int y, TUI_style.Style row_style) {
+    int column = 0;
+    while (column < cells.size() && column < row.size()) {
+        TUI_geometry.Rect box = cells[column];
+        if (box.width > 0) {
+            buffer.set_str(box.x, y, TUI_text.fit(row[column], box.width, align_of(column)), row_style, max: box.width);
         }
-        c = c + 1;
+        column = column + 1;
     }
 }

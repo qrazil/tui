@@ -2,8 +2,8 @@
 //
 // API
 // ---
-//   interface TUI_widget.Widget { void render(Buffer b, Rect area); }
-//   TUI_widget.Block(...)      borders, a title and padding; `block.inner(r)`
+//   interface TUI_widget.Widget { void render(Buffer buffer, Rect area); }
+//   TUI_widget.Block(...)      borders, a title and padding; `block.inner(area)`
 //   TUI_widget.Paragraph(text) wrapped, aligned, scrollable text
 //   TUI_widget.Span(text, style)   a run of text in one style
 //   TUI_widget.Line(spans)     spans drawn left to right on one row -- a Widget
@@ -12,7 +12,7 @@
 //
 // ```
 // interface Widget {
-//     void render(TUI_buffer.Buffer b, TUI_geometry.Rect area);
+//     void render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area);
 // }
 // ```
 //
@@ -35,8 +35,8 @@
 //
 // ```
 // TUI_widget.Block block = TUI_widget.Block(title: "Logs");
-// block.render(buf, area);
-// para.render(buf, block.inner(area));
+// block.render(buffer, area);
+// para.render(buffer, block.inner(area));
 // ```
 //
 // Two lines instead of one, and in exchange every widget stays independent
@@ -50,7 +50,7 @@ import TUI_text;
 
 /// Anything that can draw itself into a rectangle of a buffer.
 pub interface Widget {
-    void render(TUI_buffer.Buffer b, TUI_geometry.Rect area);
+    void render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area);
 }
 
 /// The top edge.
@@ -137,91 +137,91 @@ bool Block.drawn(int side) {
 /// The rectangle left for content: `area` less the edges that are drawn,
 /// less the padding. A title with no top border still takes its row.
 pub TUI_geometry.Rect Block.inner(TUI_geometry.Rect area) {
-    int l = 0;
-    int r = 0;
-    int t = 0;
-    int b = 0;
+    int left = 0;
+    int right = 0;
+    int top = 0;
+    int bottom = 0;
     if (drawn(LEFT)) {
-        l = 1;
+        left = 1;
     }
     if (drawn(RIGHT)) {
-        r = 1;
+        right = 1;
     }
     if (drawn(TOP)) {
-        t = 1;
+        top = 1;
     }
     if (drawn(BOTTOM)) {
-        b = 1;
+        bottom = 1;
     }
-    if (t == 0 && title != "") {
-        t = 1;
+    if (top == 0 && title != "") {
+        top = 1;
     }
-    int nx = area.x + l;
-    int ny = area.y + t;
-    int nw = area.w - l - r;
-    int nh = area.h - t - b;
-    if (nw < 0) {
-        nw = 0;
+    int inner_x = area.x + left;
+    int inner_y = area.y + top;
+    int inner_width = area.width - left - right;
+    int inner_height = area.height - top - bottom;
+    if (inner_width < 0) {
+        inner_width = 0;
     }
-    if (nh < 0) {
-        nh = 0;
+    if (inner_height < 0) {
+        inner_height = 0;
     }
-    return TUI_geometry.Rect(nx, ny, nw, nh).inset_xy(pad_x, pad_y);
+    return TUI_geometry.Rect(inner_x, inner_y, inner_width, inner_height).inset_xy(pad_x, pad_y);
 }
 
-pub void Block.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void Block.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", style);
+    buffer.fill(area, " ", style);
     int row = borders.row();
     if (row >= 0) {
         int base = row * 6;
-        str h = BORDER[base];
-        str v = BORDER[base + 1];
+        str horizontal = BORDER[base];
+        str vertical = BORDER[base + 1];
         if (drawn(TOP)) {
-            buf.fill(TUI_geometry.Rect(area.x, area.y, area.w, 1), h, style);
+            buffer.fill(TUI_geometry.Rect(area.x, area.y, area.width, 1), horizontal, style);
         }
-        if (drawn(BOTTOM) && area.h >= 2) {
-            buf.fill(TUI_geometry.Rect(area.x, area.bottom() - 1, area.w, 1), h, style);
+        if (drawn(BOTTOM) && area.height >= 2) {
+            buffer.fill(TUI_geometry.Rect(area.x, area.bottom() - 1, area.width, 1), horizontal, style);
         }
         if (drawn(LEFT)) {
-            buf.fill(TUI_geometry.Rect(area.x, area.y, 1, area.h), v, style);
+            buffer.fill(TUI_geometry.Rect(area.x, area.y, 1, area.height), vertical, style);
         }
-        if (drawn(RIGHT) && area.w >= 2) {
-            buf.fill(TUI_geometry.Rect(area.right() - 1, area.y, 1, area.h), v, style);
+        if (drawn(RIGHT) && area.width >= 2) {
+            buffer.fill(TUI_geometry.Rect(area.right() - 1, area.y, 1, area.height), vertical, style);
         }
         if (drawn(TOP) && drawn(LEFT)) {
-            buf.set_str(area.x, area.y, BORDER[base + 2], style);
+            buffer.set_str(area.x, area.y, BORDER[base + 2], style);
         }
-        if (drawn(TOP) && drawn(RIGHT) && area.w >= 2) {
-            buf.set_str(area.right() - 1, area.y, BORDER[base + 3], style);
+        if (drawn(TOP) && drawn(RIGHT) && area.width >= 2) {
+            buffer.set_str(area.right() - 1, area.y, BORDER[base + 3], style);
         }
-        if (drawn(BOTTOM) && drawn(LEFT) && area.h >= 2) {
-            buf.set_str(area.x, area.bottom() - 1, BORDER[base + 4], style);
+        if (drawn(BOTTOM) && drawn(LEFT) && area.height >= 2) {
+            buffer.set_str(area.x, area.bottom() - 1, BORDER[base + 4], style);
         }
-        if (drawn(BOTTOM) && drawn(RIGHT) && area.w >= 2 && area.h >= 2) {
-            buf.set_str(area.right() - 1, area.bottom() - 1, BORDER[base + 5], style);
+        if (drawn(BOTTOM) && drawn(RIGHT) && area.width >= 2 && area.height >= 2) {
+            buffer.set_str(area.right() - 1, area.bottom() - 1, BORDER[base + 5], style);
         }
     }
     if (title == "") {
         return;
     }
-    int l = 0;
-    int r = 0;
+    int left = 0;
+    int right = 0;
     if (drawn(LEFT)) {
-        l = 1;
+        left = 1;
     }
     if (drawn(RIGHT)) {
-        r = 1;
+        right = 1;
     }
-    int room = area.w - l - r;
+    int room = area.width - left - right;
     if (room <= 0) {
         return;
     }
-    str t = TUI_text.truncate(title, room);
-    int tx = area.x + l + TUI_text.offset(t, room, title_align);
-    buf.set_str(tx, area.y, t, title_style, max: room);
+    str title_text = TUI_text.truncate(title, room);
+    int title_x = area.x + left + TUI_text.offset(title_text, room, title_align);
+    buffer.set_str(title_x, area.y, title_text, title_style, max: room);
 }
 
 /// Text in a rectangle: wrapped or not, aligned, and scrolled vertically.
@@ -252,36 +252,36 @@ pub List<str> Paragraph.lines(int room) {
         return TUI_text.wrap(text, room);
     }
     List<str> out = [];
-    for (str l in text.split("\n")) {
-        if (l.ends_with("\r")) {
-            out.push(l.substr(0, l.size() - 1));
+    for (str line in text.split("\n")) {
+        if (line.ends_with("\r")) {
+            out.push(line.substr(0, line.size() - 1));
         } else {
-            out.push(l);
+            out.push(line);
         }
     }
     return out;
 }
 
-pub void Paragraph.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void Paragraph.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", style);
-    List<str> ls = lines(area.w);
+    buffer.fill(area, " ", style);
+    List<str> wrapped = lines(area.width);
     int from = scroll;
     if (from < 0) {
         from = 0;
     }
-    int i = 0;
-    while (i < area.h) {
-        int k = from + i;
-        if (k >= ls.size()) {
+    int screen_row = 0;
+    while (screen_row < area.height) {
+        int line_index = from + screen_row;
+        if (line_index >= wrapped.size()) {
             return;
         }
-        str line = TUI_text.truncate(ls[k], area.w, ell: ellipsis);
-        int x = area.x + TUI_text.offset(line, area.w, align);
-        buf.set_str(x, area.y + i, line, style, max: area.w - (x - area.x));
-        i = i + 1;
+        str line = TUI_text.truncate(wrapped[line_index], area.width, ellipsis: ellipsis);
+        int x = area.x + TUI_text.offset(line, area.width, align);
+        buffer.set_str(x, area.y + screen_row, line, style, max: area.width - (x - area.x));
+        screen_row = screen_row + 1;
     }
 }
 
@@ -340,49 +340,49 @@ pub static Line Line.of(str text, TUI_style.Style style = TUI_style.Style()) {
 
 /// The line's total width: the sum of its spans', by `TUI_text.width`.
 pub int Line.width() {
-    int w = 0;
-    for (Span s in spans) {
-        w = w + s.width();
+    int total = 0;
+    for (Span span in spans) {
+        total = total + span.width();
     }
-    return w;
+    return total;
 }
 
 /// The spans' text, concatenated with no separator -- what the line reads as
 /// with every style stripped off.
 pub str Line.plain() {
     List<str> out = [];
-    for (Span s in spans) {
-        out.push(s.text);
+    for (Span span in spans) {
+        out.push(span.text);
     }
     return out.join("");
 }
 
-pub void Line.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+pub void Line.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    buf.fill(area, " ", style);
+    buffer.fill(area, " ", style);
     int total = width();
     int start = area.x;
-    if (total < area.w) {
+    if (total < area.width) {
         match (align) {
             case Left: {
             }
             case Right: {
-                start = area.x + area.w - total;
+                start = area.x + area.width - total;
             }
             case Center: {
-                start = area.x + (area.w - total) / 2;
+                start = area.x + (area.width - total) / 2;
             }
         }
     }
     int x = start;
     int budget = area.right() - start;
-    for (Span s in spans) {
+    for (Span span in spans) {
         if (budget <= 0) {
             return;
         }
-        int used = buf.set_str(x, area.y, s.text, s.style, max: budget);
+        int used = buffer.set_str(x, area.y, span.text, span.style, max: budget);
         x = x + used;
         budget = budget - used;
     }
