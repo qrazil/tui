@@ -2,15 +2,15 @@
 //
 // API
 // ---
-//   tuistyle.Colour           Default | Indexed(n) | Rgb(r, g, b)
-//   tuistyle.Style            fg, bg, attrs -- constructed with named arguments
-//   tuistyle.Depth            Ansi16 | Ansi256 | TrueColour
-//   tuistyle.BOLD .. STRIKE   the attribute bits
+//   TUI_style.Colour           Default | Indexed(n) | Rgb(r, g, b)
+//   TUI_style.Style            fg, bg, attrs -- constructed with named arguments
+//   TUI_style.Depth            Ansi16 | Ansi256 | TrueColour
+//   TUI_style.BOLD .. STRIKE   the attribute bits
 //   style.pack()              a whole style as one `int`, which is what a
 //                             `Buffer` stores and what the diff compares
-//   tuistyle.sgr(out, from, to, depth)   the escape that turns one packed
+//   TUI_style.sgr(out, from, to, depth)   the escape that turns one packed
 //                             style into another, appended to `out`
-//   tuistyle.Theme            a named palette of `Style`s, by role
+//   TUI_style.Theme            a named palette of `Style`s, by role
 //
 // **A style is one `int`.** A buffer of 200x50 holds ten thousand cells, and
 // a `Style` object per cell would be thirty thousand refcounted allocations
@@ -75,13 +75,13 @@ pub int Colour.code() {
         }
         case Indexed(int n): {
             if (n < 0 || n > 255) {
-                trap("tuistyle.Colour.Indexed: a palette index is 0..255");
+                trap("TUI_style.Colour.Indexed: a palette index is 0..255");
             }
             return 1 + n;
         }
         case Rgb(int r, int g, int b): {
             if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) {
-                trap("tuistyle.Colour.Rgb: each component is 0..255");
+                trap("TUI_style.Colour.Rgb: each component is 0..255");
             }
             return COL_RGB | r * 65536 | g * 256 | b;
         }
@@ -124,7 +124,7 @@ pub str Colour.to_str() {
 /// `Style()` is the terminal's own idea of plain text:
 ///
 /// ```
-/// tuistyle.Style(fg: tuistyle.Colour.Indexed(3), attrs: tuistyle.BOLD)
+/// TUI_style.Style(fg: TUI_style.Colour.Indexed(3), attrs: TUI_style.BOLD)
 /// ```
 pub type Style {
     pub Colour fg = Colour.Default;
@@ -407,7 +407,7 @@ const Array<int> CUBE = [0, 95, 135, 175, 215, 255];
 /// The 24-bit colour palette entry `n` stands for.
 pub int palette_rgb(int n) {
     if (n < 0 || n > 255) {
-        trap("tuistyle.palette_rgb: a palette index is 0..255");
+        trap("TUI_style.palette_rgb: a palette index is 0..255");
     }
     if (n < 16) {
         return ANSI16[n];

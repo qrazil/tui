@@ -13,7 +13,7 @@ Ordered by how much it cost, not by how annoying it was.
 > been changed to use them, so the diff against this log is the evidence.
 > The range `for` of §4 (§21.3), so `Buffer.fill` — the loop this report hung
 > in — no longer has an increment for a `continue` to lose; a `case` arm that
-> may omit its bindings (§6, §21.5), which takes `tuigeom.Constraint`'s four
+> may omit its bindings (§6, §21.5), which takes `TUI_geometry.Constraint`'s four
 > methods down by a third; and a formatter that keeps the author's
 > parentheses, so §18's `(off & BOLD) != 0` stays as written. A character
 > literal is in as well. §1, §2 and the standard library asks of §21.4 are
@@ -39,13 +39,13 @@ the whole public API:
 
 | what the file should be called | what it is called | why |
 |---|---|---|
-| `style.m31` | `tuistyle.m31` | might collide with a user's own |
-| `geom.m31` / `layout.m31` | `tuigeom.m31` | same |
-| `buffer.m31` | `tuibuf.m31` | same |
-| `text.m31` | `tuitext.m31` | **`text` is a standard library module** |
-| `diff.m31` / `render.m31` | `tuidiff.m31` | might collide |
-| `widget.m31` | `tuiwidget.m31` | same |
-| `list.m31` | `tuilists.m31` | same |
+| `style.m31` | `TUI_style.m31` | might collide with a user's own |
+| `geom.m31` / `layout.m31` | `TUI_geometry.m31` | same |
+| `buffer.m31` | `TUI_buffer.m31` | same |
+| `text.m31` | `TUI_text.m31` | **`text` is a standard library module** |
+| `diff.m31` / `render.m31` | `TUI_diff.m31` | might collide |
+| `widget.m31` | `TUI_widget.m31` | same |
+| `list.m31` | `TUI_list_table.m31` | same |
 
 Sixteen names are already taken by `lib/` (`args base64 csv date fs html
 http io json math net os random sort text unicode`), and every one of them
@@ -53,8 +53,8 @@ is a word a UI library wants. So every call site in every program that uses
 this reads
 
 ```c
-tuigeom.Layout(tuigeom.Direction.Vertical, [tuigeom.Constraint.Length(3),
-    tuigeom.Constraint.Fill(1)], margin_y: 1)
+TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Length(3),
+    TUI_geometry.Constraint.Fill(1)], margin_y: 1)
 ```
 
 where it should read
@@ -75,13 +75,13 @@ a module cannot re-export another module's names, there are no type aliases
 So a program must write all seven imports:
 
 ```c
-import tuibuf;
-import tuidiff;
-import tuigeom;
-import tuilists;
-import tuistyle;
-import tuitext;
-import tuiwidget;
+import TUI_buffer;
+import TUI_diff;
+import TUI_geometry;
+import TUI_list_table;
+import TUI_style;
+import TUI_text;
+import TUI_widget;
 ```
 
 and know which of the seven each name lives in.
@@ -93,7 +93,7 @@ and know which of the seven each name lives in.
    the short name is taken). Roots: the entry file's directory, then
    anything named on the command line or in a one-line manifest. This makes
    the name *hierarchical*, which is the actual fix — `tui/text` and the
-   standard `text` stop being the same name, and the `tuistyle` prefix
+   standard `text` stop being the same name, and the `tui` prefix
    evaporates. OCaml pays the flat-namespace cost this language currently
    pays and it is widely regretted there.
 2. **A namespace per dependency.** If a manifest names dependencies, then
@@ -117,13 +117,13 @@ property for `lib/` and only extend it outwards.
 
 **Fixed.** A module's name is now in scope only in the file that imported it
 (reference §2.1), so `Paragraph.text` is the field again and the workaround
-below is gone from `tuiwidget.m31`. A file that imports `text` *and* declares
+below is gone from `TUI_widget.m31`. A file that imports `text` *and* declares
 a field called `text` is refused at the field, naming both (§4.3).
 
 This is a bug, and it is the only thing here that produced a diagnostic I
 could not act on.
 
-`tuiwidget.m31` declares
+`TUI_widget.m31` declares
 
 ```c
 pub type Paragraph {
@@ -149,7 +149,7 @@ apps/tui/tuiwidget.m31:253:23: `text` has no function `split`
     |                       ^
 ```
 
-`tuiwidget.m31` does not import `text`. It never did. A module pulled in
+`TUI_widget.m31` does not import `text`. It never did. A module pulled in
 *transitively by another file of the same program* took the name away from
 my field. Reference §4.1 says nothing shadows "a module the file imports" —
 this is a module the file does not import, and the rule as implemented is
@@ -183,7 +183,7 @@ receiver — bind it to a local, or rename the field."
 ## 3. `List` is a predeclared name, so the list widget is `ListView`
 
 Every TUI library has a widget called `List`. This one cannot: nothing may
-shadow a predeclared type name (§4.1). `tuilists.ListView` it is. Small, but
+shadow a predeclared type name (§4.1). `TUI_list_table.ListView` it is. Small, but
 it is the first name a user looks for and it is not there.
 
 ---
@@ -277,7 +277,7 @@ int Constraint.weight() {
 }
 ```
 
-`tuigeom.m31` has four such methods — `kind`, `weight`, `preferred`,
+`TUI_geometry.m31` has four such methods — `kind`, `weight`, `preferred`,
 `to_str` — 28 `case` arms between them, and about 110 of the file's 605
 lines. The formatted source is three
 lines per arm, so it is worse than it looks above.
@@ -356,7 +356,7 @@ What I wanted:
 out.extend_str(s);                 // or out.push_str(s)
 ```
 
-What I had to write, inside `tuibuf` where the `str` is in hand without a
+What I had to write, inside `TUI_buffer` where the `str` is in hand without a
 retain:
 
 ```c
@@ -424,7 +424,7 @@ code point, a binary search per cluster. Correct, and not cheap. A terminal
 UI asks the question thousands of times a frame, almost always of text that
 is entirely printable ASCII, where the answer is `s.size()`.
 
-I could not change `lib/`, so `tuitext` has its own:
+I could not change `lib/`, so `TUI_text` has its own:
 
 ```c
 bool plain(str s) {                     // every byte printable ASCII?
@@ -575,7 +575,7 @@ compiler decided without telling you there was a decision.
 
 One more: the shadowing rule catches a **parameter** that collides with a
 **module-level function in the same file**. I had `pub int cols(str s)` and
-`Paragraph.lines(int cols)` in `tuiwidget.m31`; the parameter is refused.
+`Paragraph.lines(int cols)` in `TUI_widget.m31`; the parameter is refused.
 The message was clear, and the rule is right, but it is a rule that reaches
 further than people expect — a library author has to keep every parameter
 name clear of every function name in the module.
@@ -633,9 +633,9 @@ is the best thing in the language for library design and it is not close.
 Every widget here is one construction:
 
 ```c
-tuiwidget.Block(title: "Files", borders: tuiwidget.Borders.Rounded, pad_x: 1)
-tuiwidget.Paragraph(body, align: tuitext.Align.Center, scroll: 4)
-tuilists.ListView(names, selected: 3, highlight_symbol: "> ")
+TUI_widget.Block(title: "Files", borders: TUI_widget.Borders.Rounded, pad_x: 1)
+TUI_widget.Paragraph(body, align: TUI_text.Align.Center, scroll: 4)
+TUI_list_table.ListView(names, selected: 3, highlight_symbol: "> ")
 ```
 
 ratatui needs a builder — `Block::default().borders(Borders::ALL).title("x")`
@@ -649,7 +649,7 @@ API smaller than its Rust equivalent by a large factor.
 **Structural one-method interfaces.** The widget protocol is
 
 ```c
-interface Widget { void render(tuibuf.Buffer b, tuigeom.Rect area); }
+interface Widget { void render(TUI_buffer.Buffer b, TUI_geometry.Rect area); }
 ```
 
 and a struct with fields, the bare name of a function, and a lambda written
@@ -658,7 +658,7 @@ at the call site all satisfy it, with nothing declared anywhere:
 ```c
 draw(Bar(7, 10), b, area);                                  // a struct
 draw(ruler, b, area);                                       // a function
-draw((tuibuf.Buffer buf, tuigeom.Rect a) =>
+draw((TUI_buffer.Buffer buf, TUI_geometry.Rect a) =>
      buf.set_str(a.x, a.y, "a lambda is a widget", st), b, area);
 ```
 

@@ -2,10 +2,10 @@
 //
 // API
 // ---
-//   tuidiff.full(next, depth)          every cell, from a reset terminal
-//   tuidiff.diff(prev, next, depth)    only what changed
-//   tuidiff.show(bytes)                the bytes made readable, for tests
-//   tuidiff.move_to(out, x, y)         and the other small control helpers
+//   TUI_diff.full(next, depth)          every cell, from a reset terminal
+//   TUI_diff.diff(prev, next, depth)    only what changed
+//   TUI_diff.show(bytes)                the bytes made readable, for tests
+//   TUI_diff.move_to(out, x, y)         and the other small control helpers
 //
 // **One `bytes` per frame.** Nothing here touches a terminal; the caller
 // hands the result to one write. That is what makes this testable without a
@@ -43,9 +43,9 @@
 // pen can be put back to plain first, which is exactly when the remaining
 // cells are plain spaces.
 
-import tuibuf;
-import tuigeom;
-import tuistyle;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_style;
 
 /// How many plain trailing blanks make `\x1b[K` worth its bytes: the escape
 /// is three bytes and putting the pen back may cost four more.
@@ -56,11 +56,11 @@ const int ERASE_WORTH = 8;
 ///
 /// This is what the first frame of a program emits, and what a resize or a
 /// redraw-everything key emits after it.
-pub bytes full(tuibuf.Buffer next, tuistyle.Depth depth) {
+pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     bytes out = [];
-    tuistyle.push_reset(out);
-    tuigeom.Rect a = next.area();
-    int pen = tuistyle.RESET_STYLE;
+    TUI_style.push_reset(out);
+    TUI_geometry.Rect a = next.area();
+    int pen = TUI_style.RESET_STYLE;
     for (int y in a.y .. a.bottom()) {
         move_to(out, a.x, y);
         int tail = tail_start(next, y);
@@ -72,7 +72,7 @@ pub bytes full(tuibuf.Buffer next, tuistyle.Depth depth) {
                 continue;
             }
             if (x >= tail && a.right() - x >= ERASE_WORTH) {
-                pen = write_style(out, pen, tuistyle.RESET_STYLE, depth);
+                pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
                 erase_line(out);
                 x = a.right();
                 continue;
@@ -82,8 +82,8 @@ pub bytes full(tuibuf.Buffer next, tuistyle.Depth depth) {
             x = x + w;
         }
     }
-    if (pen != tuistyle.RESET_STYLE) {
-        tuistyle.push_reset(out);
+    if (pen != TUI_style.RESET_STYLE) {
+        TUI_style.push_reset(out);
     }
     return out;
 }
@@ -95,13 +95,13 @@ pub bytes full(tuibuf.Buffer next, tuistyle.Depth depth) {
 /// The pen is assumed to be plain at the start of the frame, which is what
 /// `full` leaves behind and what `\x1b[0m` guarantees; `diff` restores it at
 /// the end for the same reason.
-pub bytes diff(tuibuf.Buffer prev, tuibuf.Buffer next, tuistyle.Depth depth) {
-    tuigeom.Rect a = next.area();
+pub bytes diff(TUI_buffer.Buffer prev, TUI_buffer.Buffer next, TUI_style.Depth depth) {
+    TUI_geometry.Rect a = next.area();
     if (!prev.area().eq(a)) {
-        trap("tuidiff.diff: the two frames cover different rectangles -- use tuidiff.full after a resize");
+        trap("TUI_diff.diff: the two frames cover different rectangles -- use TUI_diff.full after a resize");
     }
     bytes out = [];
-    int pen = tuistyle.RESET_STYLE;
+    int pen = TUI_style.RESET_STYLE;
     int cur_x = -1;
     int cur_y = -1;
     for (int y in a.y .. a.bottom()) {
@@ -131,7 +131,7 @@ pub bytes diff(tuibuf.Buffer prev, tuibuf.Buffer next, tuistyle.Depth depth) {
             }
             cur_y = y;
             if (x >= tail && a.right() - x >= ERASE_WORTH) {
-                pen = write_style(out, pen, tuistyle.RESET_STYLE, depth);
+                pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
                 erase_line(out);
                 cur_x = x;
                 x = a.right();
@@ -143,20 +143,20 @@ pub bytes diff(tuibuf.Buffer prev, tuibuf.Buffer next, tuistyle.Depth depth) {
             x = x + w;
         }
     }
-    if (out.size() > 0 && pen != tuistyle.RESET_STYLE) {
-        tuistyle.push_reset(out);
+    if (out.size() > 0 && pen != TUI_style.RESET_STYLE) {
+        TUI_style.push_reset(out);
     }
     return out;
 }
 
 /// Does the cell at `x`, `y` have to be written again?
-bool changed(tuibuf.Buffer prev, tuibuf.Buffer next, int x, int y) {
+bool changed(TUI_buffer.Buffer prev, TUI_buffer.Buffer next, int x, int y) {
     return !prev.same_cell(next, x, y);
 }
 
 /// Get from column `from` to column `to` in row `y`: either by walking over
 /// the unchanged cells between them, or by jumping.
-void cross(bytes out, tuibuf.Buffer next, int from, int to, int y, int pen) {
+void cross(bytes out, TUI_buffer.Buffer next, int from, int to, int y, int pen) {
     int gap = to - from;
     int jump = 3;
     if (gap > 1) {
@@ -198,9 +198,9 @@ void cross(bytes out, tuibuf.Buffer next, int from, int to, int y, int pen) {
         }
         return;
     }
-    tuistyle.push_csi(out);
+    TUI_style.push_csi(out);
     if (gap > 1) {
-        tuistyle.push_int(out, gap);
+        TUI_style.push_int(out, gap);
     }
     out.push('C');
 }
@@ -210,12 +210,12 @@ void cross(bytes out, tuibuf.Buffer next, int from, int to, int y, int pen) {
 /// question per cell would make a full redraw quadratic in the width. The
 /// buffer answers it in one pass over its own lists (`Buffer.tail_start`),
 /// which is cheaper than this module reading the row back a cell at a time.
-int tail_start(tuibuf.Buffer b, int y) {
+int tail_start(TUI_buffer.Buffer b, int y) {
     return b.tail_start(y);
 }
 
-int write_style(bytes out, int pen, int want, tuistyle.Depth depth) {
-    tuistyle.sgr(out, pen, want, depth);
+int write_style(bytes out, int pen, int want, TUI_style.Depth depth) {
+    TUI_style.sgr(out, pen, want, depth);
     return want;
 }
 
@@ -237,29 +237,29 @@ int digits(int v) {
 
 /// `\x1b[y;xH`, in the terminal's 1-based coordinates.
 pub void move_to(bytes out, int x, int y) {
-    tuistyle.push_csi(out);
-    tuistyle.push_int(out, y + 1);
+    TUI_style.push_csi(out);
+    TUI_style.push_int(out, y + 1);
     out.push(';');
-    tuistyle.push_int(out, x + 1);
+    TUI_style.push_int(out, x + 1);
     out.push('H');
 }
 
 /// `\x1b[K`: blank the rest of the row, in the terminal's own background.
 pub void erase_line(bytes out) {
-    tuistyle.push_csi(out);
+    TUI_style.push_csi(out);
     out.push('K');
 }
 
 /// `\x1b[2J`: blank the whole screen.
 pub void clear_screen(bytes out) {
-    tuistyle.push_csi(out);
+    TUI_style.push_csi(out);
     out.push('2');
     out.push('J');
 }
 
 /// `\x1b[?25l`.
 pub void hide_cursor(bytes out) {
-    tuistyle.push_csi(out);
+    TUI_style.push_csi(out);
     out.push('?');
     out.push('2');
     out.push('5');
@@ -268,7 +268,7 @@ pub void hide_cursor(bytes out) {
 
 /// `\x1b[?25h`.
 pub void show_cursor(bytes out) {
-    tuistyle.push_csi(out);
+    TUI_style.push_csi(out);
     out.push('?');
     out.push('2');
     out.push('5');

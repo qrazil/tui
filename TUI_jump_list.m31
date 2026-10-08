@@ -4,12 +4,12 @@
 // the two-way part is the point: selecting a row here scrolls the outline to
 // it, and moving the outline's own cursor highlights the row here. Neither
 // direction alone would be this primitive; a static index that only jumps
-// one way is a `tuilists.ListView` of labels, which already exists.
+// one way is a `TUI_list_table.ListView` of labels, which already exists.
 //
 // API
 // ---
-//   tuijump.Entry(id, label, depth)   one row, matched to an outline node
-//   tuijump.JumpList(entries)         the widget: selection, scroll, render
+//   TUI_jump_list.Entry(id, label, depth)   one row, matched to an outline node
+//   TUI_jump_list.JumpList(entries)         the widget: selection, scroll, render
 //   jump.sync_from(outline)           rebuild `entries` from the outline's
 //                                     CURRENT flattened, visible rows
 //   jump.follow(outline)              outline moved -> highlight the match here
@@ -25,12 +25,12 @@
 // is what keeps the two lists in step with each other regardless of what is
 // currently folded.
 
-import tuibuf;
-import tuigeom;
-import tuioutline;
-import tuiscroll;
-import tuistyle;
-import tuitext;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_outline;
+import TUI_scroll;
+import TUI_style;
+import TUI_text;
 
 /// One row of the jump list: an outline node's `id` and `label`, and how deep
 /// it was nested, copied out of an `Outline` by `sync_from`.
@@ -46,9 +46,9 @@ pub type Entry {
 pub type JumpList {
     pub List<Entry> entries;
     pub int selected = -1;
-    pub tuiscroll.Viewport view = tuiscroll.Viewport();
-    pub tuistyle.Style style = tuistyle.Style();
-    pub tuistyle.Style highlight_style = tuistyle.Style(attrs: tuistyle.REVERSE);
+    pub TUI_scroll.Viewport view = TUI_scroll.Viewport();
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
     pub int indent = 1;
 }
 
@@ -60,9 +60,9 @@ pub static JumpList JumpList.empty() {
 /// Rebuild `entries` from `o`'s current, flattened, visible rows. A folded
 /// section contributes only itself -- the jump list shrinks when the
 /// document folds, which is what "synced" means.
-pub void JumpList.sync_from(tuioutline.Outline o) {
+pub void JumpList.sync_from(TUI_outline.Outline o) {
     List<Entry> out = [];
-    for (tuioutline.Row r in o.rows()) {
+    for (TUI_outline.Row r in o.rows()) {
         out.push(Entry(r.node.id, r.node.label, depth: r.depth));
     }
     entries = out;
@@ -71,9 +71,9 @@ pub void JumpList.sync_from(tuioutline.Outline o) {
 /// The outline half of the sync: move the highlight to whatever row the
 /// outline's cursor is on now. Call this after any move, toggle or reload of
 /// the outline.
-pub void JumpList.follow(tuioutline.Outline o) {
+pub void JumpList.follow(TUI_outline.Outline o) {
     match (o.current()) {
-        case Some(tuioutline.Row r): {
+        case Some(TUI_outline.Row r): {
             select_id(r.node.id);
         }
         case None: {
@@ -84,7 +84,7 @@ pub void JumpList.follow(tuioutline.Outline o) {
 /// The jump-list half of the sync: move the outline's cursor (and its own
 /// scroll, through `Outline.render`) to the entry selected here. Answers
 /// whether the selection named a row the outline currently shows.
-pub bool JumpList.activate(tuioutline.Outline o) {
+pub bool JumpList.activate(TUI_outline.Outline o) {
     if (selected < 0 || selected >= entries.size()) {
         return false;
     }
@@ -106,7 +106,7 @@ pub bool JumpList.select_id(str id) {
 }
 
 /// Move the selection by `delta`, stopping at the ends --
-/// `tuilists.ListView.step`'s own rule.
+/// `TUI_list_table.ListView.step`'s own rule.
 pub void JumpList.step(int delta) {
     int n = entries.size();
     if (n == 0) {
@@ -126,7 +126,7 @@ pub void JumpList.step(int delta) {
     selected = at;
 }
 
-pub void JumpList.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void JumpList.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
@@ -147,15 +147,15 @@ pub void JumpList.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         }
         Entry e = entries[k];
         int y = area.y + i;
-        tuistyle.Style st = style;
+        TUI_style.Style st = style;
         if (k == selected) {
             st = st.merged(highlight_style);
-            buf.fill(tuigeom.Rect(area.x, y, area.w, 1), " ", st);
+            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
         }
         int x = area.x + e.depth * indent;
         int room = area.right() - x;
         if (room > 0) {
-            buf.set_str(x, y, tuitext.truncate(e.label, room), st, max: room);
+            buf.set_str(x, y, TUI_text.truncate(e.label, room), st, max: room);
         }
         i = i + 1;
     }

@@ -10,51 +10,51 @@
 // cursor back. There is no input loop and no raw mode here on purpose --
 // this is the static half of the proof, and it draws one frame and returns
 // to the shell. `apps/tui/browse.m31` is the other half: the same library,
-// run interactively through `tuiapp.Loop`.
+// run interactively through `TUI_app.Loop`.
 
 import io;
-import tuibuf;
-import tuidiff;
-import tuigeom;
-import tuilists;
-import tuistyle;
-import tuitext;
-import tuiwidget;
+import TUI_buffer;
+import TUI_diff;
+import TUI_geometry;
+import TUI_list_table;
+import TUI_style;
+import TUI_text;
+import TUI_widget;
 
 const int WIDTH = 78;
 const int HEIGHT = 22;
 
-tuistyle.Colour grey = tuistyle.Colour.Indexed(244);
-tuistyle.Colour blue = tuistyle.Colour.Indexed(33);
-tuistyle.Colour cream = tuistyle.Colour.Rgb(240, 236, 225);
-tuistyle.Colour ink = tuistyle.Colour.Rgb(30, 34, 40);
-tuibuf.Buffer screen = tuibuf.Buffer.sized(WIDTH, HEIGHT);
-List<tuigeom.Rect> band = tuigeom.rows(screen.area(), [tuigeom.Constraint.Length(3), tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(1)]);
+TUI_style.Colour grey = TUI_style.Colour.Indexed(244);
+TUI_style.Colour blue = TUI_style.Colour.Indexed(33);
+TUI_style.Colour cream = TUI_style.Colour.Rgb(240, 236, 225);
+TUI_style.Colour ink = TUI_style.Colour.Rgb(30, 34, 40);
+TUI_buffer.Buffer screen = TUI_buffer.Buffer.sized(WIDTH, HEIGHT);
+List<TUI_geometry.Rect> band = TUI_geometry.rows(screen.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
 // The banner.
-tuiwidget.Block banner = tuiwidget.Block(title: " a terminal user interface ", borders: tuiwidget.Borders.Double, title_align: tuitext.Align.Center, style: tuistyle.Style(fg: blue));
+TUI_widget.Block banner = TUI_widget.Block(title: " a terminal user interface ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center, style: TUI_style.Style(fg: blue));
 banner.render(screen, band[0]);
-tuiwidget.Paragraph("cells are grapheme clusters \u{00B7} \u{6F22}\u{5B57} takes two columns \u{00B7} \u{1F44D}\u{1F3FD} is one cell", align: tuitext.Align.Center).render(screen, banner.inner(band[0]));
+TUI_widget.Paragraph("cells are grapheme clusters \u{00B7} \u{6F22}\u{5B57} takes two columns \u{00B7} \u{1F44D}\u{1F3FD} is one cell", align: TUI_text.Align.Center).render(screen, banner.inner(band[0]));
 // Three panels.
-List<tuigeom.Rect> mid = tuigeom.cols(band[1], [tuigeom.Constraint.Length(22), tuigeom.Constraint.Percentage(45), tuigeom.Constraint.Fill(1)]);
-tuiwidget.Block files = tuiwidget.Block(title: "files", borders: tuiwidget.Borders.Rounded, style: tuistyle.Style(fg: grey));
+List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Length(22), TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
+TUI_widget.Block files = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded, style: TUI_style.Style(fg: grey));
 files.render(screen, mid[0]);
-tuilists.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "gates.sh", "run.sh", "Cargo.toml", "\u{1F44D}\u{1F3FD}.png", "notes.md", "TODO"], selected: 4, highlight_symbol: "\u{25B8} ", highlight_style: tuistyle.Style(fg: ink, bg: cream)).render(screen, files.inner(mid[0]));
-tuiwidget.Block grid = tuiwidget.Block(title: "table", borders: tuiwidget.Borders.Single, style: tuistyle.Style(fg: grey), pad_x: 1);
+TUI_list_table.ListView(["src/", "lib/", "docs/", "README.md", "\u{6F22}\u{5B57}.txt", "gates.sh", "run.sh", "Cargo.toml", "\u{1F44D}\u{1F3FD}.png", "notes.md", "TODO"], selected: 4, highlight_symbol: "\u{25B8} ", highlight_style: TUI_style.Style(fg: ink, bg: cream)).render(screen, files.inner(mid[0]));
+TUI_widget.Block grid = TUI_widget.Block(title: "table", borders: TUI_widget.Borders.Single, style: TUI_style.Style(fg: grey), pad_x: 1);
 grid.render(screen, mid[1]);
-tuilists.Table(["name", "size", "when"], [["readme.md", "1.2 kB", "today"], ["a-rather-long-name.txt", "44 B", "yesterday"], ["src", "-", "last week"], ["\u{6F22}\u{5B57}.md", "8 kB", "today"], ["gates.sh", "7.7 kB", "March"], ["Cargo.toml", "310 B", "today"]], [tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(6), tuigeom.Constraint.Length(9)], selected: 3, aligns: [tuitext.Align.Left, tuitext.Align.Right, tuitext.Align.Left], header_style: tuistyle.Style(fg: blue, attrs: tuistyle.BOLD | tuistyle.UNDERLINE)).render(screen, grid.inner(mid[1]));
-tuiwidget.Block detail = tuiwidget.Block(title: "detail", borders: tuiwidget.Borders.Thick, style: tuistyle.Style(fg: grey), pad_x: 1);
+TUI_list_table.Table(["name", "size", "when"], [["readme.md", "1.2 kB", "today"], ["a-rather-long-name.txt", "44 B", "yesterday"], ["src", "-", "last week"], ["\u{6F22}\u{5B57}.md", "8 kB", "today"], ["gates.sh", "7.7 kB", "March"], ["Cargo.toml", "310 B", "today"]], [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(6), TUI_geometry.Constraint.Length(9)], selected: 3, aligns: [TUI_text.Align.Left, TUI_text.Align.Right, TUI_text.Align.Left], header_style: TUI_style.Style(fg: blue, attrs: TUI_style.BOLD | TUI_style.UNDERLINE)).render(screen, grid.inner(mid[1]));
+TUI_widget.Block detail = TUI_widget.Block(title: "detail", borders: TUI_widget.Borders.Thick, style: TUI_style.Style(fg: grey), pad_x: 1);
 detail.render(screen, mid[2]);
-tuiwidget.Paragraph("Every panel here came from one constraint layout, and the whole screen is one write. The wrapping counts terminal columns, not bytes.").render(screen, detail.inner(mid[2]));
+TUI_widget.Paragraph("Every panel here came from one constraint layout, and the whole screen is one write. The wrapping counts terminal columns, not bytes.").render(screen, detail.inner(mid[2]));
 // The status bar.
-tuistyle.Style bar = tuistyle.Style(fg: ink, bg: cream);
+TUI_style.Style bar = TUI_style.Style(fg: ink, bg: cream);
 screen.fill(band[2], " ", bar);
 screen.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", bar);
 screen.set_str(band[2].right() - 13, band[2].y, "static frame", bar);
 // One write: clear, the frame, the cursor out of the way.
 bytes out = [];
-tuidiff.clear_screen(out);
-out.extend(tuidiff.full(screen, tuistyle.Depth.TrueColour));
-tuidiff.move_to(out, 0, HEIGHT);
+TUI_diff.clear_screen(out);
+out.extend(TUI_diff.full(screen, TUI_style.Depth.TrueColour));
+TUI_diff.move_to(out, 0, HEIGHT);
 out.push('\n');
 match (io.stdout().write(out)) {
     case Ok: {

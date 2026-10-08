@@ -2,8 +2,8 @@
 //
 // API
 // ---
-//   tuilists.ListView(items)              a scrolling list with a selection
-//   tuilists.Table(header, rows, widths)  columns cut by `tuigeom.Constraint`
+//   TUI_list_table.ListView(items)              a scrolling list with a selection
+//   TUI_list_table.Table(header, rows, widths)  columns cut by `TUI_geometry.Constraint`
 //
 // Both keep their own `offset`, and both **move it when they draw**: a
 // selection outside the visible window scrolls the window to it, because the
@@ -14,15 +14,15 @@
 // The type is `ListView` rather than `List` because `List` is a predeclared
 // type name and nothing may shadow one (reference §4.1).
 
-import tuibuf;
-import tuigeom;
-import tuistyle;
-import tuitext;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_style;
+import TUI_text;
 
 /// A vertical list of single-line items, with one of them selected.
 ///
 /// ```
-/// tuilists.ListView(names, selected: 3, highlight_symbol: "> ")
+/// TUI_list_table.ListView(names, selected: 3, highlight_symbol: "> ")
 /// ```
 pub type ListView {
     pub List<str> items;
@@ -30,13 +30,13 @@ pub type ListView {
     pub int selected = -1;
     /// The first item shown. `render` moves it to keep the selection in view.
     pub int offset = 0;
-    pub tuistyle.Style style = tuistyle.Style();
+    pub TUI_style.Style style = TUI_style.Style();
     /// Laid over `style` on the selected row.
-    pub tuistyle.Style highlight_style = tuistyle.Style(attrs: tuistyle.REVERSE);
+    pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
     /// Written before the selected item; its width is left blank before
     /// every other item, so the text lines up.
     pub str highlight_symbol = "";
-    pub tuitext.Align align = tuitext.Align.Left;
+    pub TUI_text.Align align = TUI_text.Align.Left;
 }
 
 /// Select item `i`, or nothing with -1. The offset follows at the next
@@ -94,13 +94,13 @@ pub int ListView.scrolled(int h) {
     return top;
 }
 
-pub void ListView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void ListView.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
     buf.fill(area, " ", style);
     offset = scrolled(area.h);
-    int pre = tuitext.width(highlight_symbol);
+    int pre = TUI_text.width(highlight_symbol);
     if (pre > area.w) {
         pre = area.w;
     }
@@ -111,15 +111,15 @@ pub void ListView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
             return;
         }
         int y = area.y + i;
-        tuistyle.Style st = style;
+        TUI_style.Style st = style;
         if (k == selected) {
             st = style.merged(highlight_style);
-            buf.fill(tuigeom.Rect(area.x, y, area.w, 1), " ", st);
-            buf.set_str(area.x, y, tuitext.cut(highlight_symbol, pre), st);
+            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
+            buf.set_str(area.x, y, TUI_text.cut(highlight_symbol, pre), st);
         }
         int room = area.w - pre;
         if (room > 0) {
-            str cell = tuitext.fit(items[k], room, align);
+            str cell = TUI_text.fit(items[k], room, align);
             buf.set_str(area.x + pre, y, cell, st, max: room);
         }
         i = i + 1;
@@ -130,12 +130,12 @@ pub void ListView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
 /// constraints.
 ///
 /// ```
-/// tuilists.Table(["name", "size"], rows,
-///     [tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(8)])
+/// TUI_list_table.Table(["name", "size"], rows,
+///     [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8)])
 /// ```
 ///
-/// The columns are cut by `tuigeom.cols`, so every constraint and every rule
-/// in `tuigeom` applies: a table whose columns do not fit shrinks them by
+/// The columns are cut by `TUI_geometry.cols`, so every constraint and every rule
+/// in `TUI_geometry` applies: a table whose columns do not fit shrinks them by
 /// the documented order, and a cell too wide for its column is truncated
 /// with an ellipsis rather than spilling into the next one.
 ///
@@ -144,18 +144,18 @@ pub void ListView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
 pub type Table {
     pub List<str> header;
     pub List<List<str>> rows;
-    pub List<tuigeom.Constraint> widths;
+    pub List<TUI_geometry.Constraint> widths;
     /// Which row is selected, or -1 for none. The header is not a row.
     pub int selected = -1;
     pub int offset = 0;
     /// Blank columns between one column and the next.
     pub int col_spacing = 1;
-    pub tuistyle.Style style = tuistyle.Style();
-    pub tuistyle.Style header_style = tuistyle.Style(attrs: tuistyle.BOLD);
-    pub tuistyle.Style highlight_style = tuistyle.Style(attrs: tuistyle.REVERSE);
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style header_style = TUI_style.Style(attrs: TUI_style.BOLD);
+    pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
     pub str highlight_symbol = "";
     /// One entry per column, or empty for all-left.
-    pub List<tuitext.Align> aligns = [];
+    pub List<TUI_text.Align> aligns = [];
 }
 
 /// How many columns the table has: as many as its widths, or as many as its
@@ -220,14 +220,14 @@ int Table.scrolled(int h) {
     return top;
 }
 
-tuitext.Align Table.align_of(int c) {
+TUI_text.Align Table.align_of(int c) {
     if (c < aligns.size()) {
         return aligns[c];
     }
-    return tuitext.Align.Left;
+    return TUI_text.Align.Left;
 }
 
-pub void Table.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void Table.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
@@ -236,19 +236,19 @@ pub void Table.render(tuibuf.Buffer buf, tuigeom.Rect area) {
     if (ncol == 0) {
         return;
     }
-    int pre = tuitext.width(highlight_symbol);
+    int pre = TUI_text.width(highlight_symbol);
     if (pre > area.w) {
         pre = area.w;
     }
-    tuigeom.Rect grid = tuigeom.Rect(area.x + pre, area.y, area.w - pre, area.h);
-    List<tuigeom.Constraint> cs = widths;
+    TUI_geometry.Rect grid = TUI_geometry.Rect(area.x + pre, area.y, area.w - pre, area.h);
+    List<TUI_geometry.Constraint> cs = widths;
     if (cs.size() == 0) {
         cs = [];
         for (int c in 0 .. ncol) {
-            cs.push(tuigeom.Constraint.Fill(1));
+            cs.push(TUI_geometry.Constraint.Fill(1));
         }
     }
-    List<tuigeom.Rect> cells = tuigeom.Layout(tuigeom.Direction.Horizontal, cs, spacing: col_spacing).split(tuigeom.Rect(grid.x, grid.y, grid.w, 1));
+    List<TUI_geometry.Rect> cells = TUI_geometry.Layout(TUI_geometry.Direction.Horizontal, cs, spacing: col_spacing).split(TUI_geometry.Rect(grid.x, grid.y, grid.w, 1));
     int y = area.y;
     if (header.size() > 0) {
         draw_row(buf, cells, header, y, style.merged(header_style));
@@ -264,23 +264,23 @@ pub void Table.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         if (k >= rows.size()) {
             return;
         }
-        tuistyle.Style st = style;
+        TUI_style.Style st = style;
         if (k == selected) {
             st = style.merged(highlight_style);
-            buf.fill(tuigeom.Rect(area.x, y, area.w, 1), " ", st);
-            buf.set_str(area.x, y, tuitext.cut(highlight_symbol, pre), st);
+            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
+            buf.set_str(area.x, y, TUI_text.cut(highlight_symbol, pre), st);
         }
         draw_row(buf, cells, rows[k], y, st);
         y = y + 1;
     }
 }
 
-void Table.draw_row(tuibuf.Buffer buf, List<tuigeom.Rect> cells, List<str> row, int y, tuistyle.Style st) {
+void Table.draw_row(TUI_buffer.Buffer buf, List<TUI_geometry.Rect> cells, List<str> row, int y, TUI_style.Style st) {
     int c = 0;
     while (c < cells.size() && c < row.size()) {
-        tuigeom.Rect box = cells[c];
+        TUI_geometry.Rect box = cells[c];
         if (box.w > 0) {
-            buf.set_str(box.x, y, tuitext.fit(row[c], box.w, align_of(c)), st, max: box.w);
+            buf.set_str(box.x, y, TUI_text.fit(row[c], box.w, align_of(c)), st, max: box.w);
         }
         c = c + 1;
     }

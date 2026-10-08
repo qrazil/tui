@@ -2,11 +2,11 @@
 //
 // API
 // ---
-//   tuitext.Align                      Left | Center | Right
-//   tuitext.wrap(s, cols)              -> List<str>, greedy, width-aware
-//   tuitext.truncate(s, cols, ell:)    -> str, with an ellipsis
-//   tuitext.pad(s, cols, align)        -> str, to exactly `cols` if it is short
-//   tuitext.fit(s, cols, align)        -> str, truncated AND padded
+//   TUI_text.Align                      Left | Center | Right
+//   TUI_text.wrap(s, cols)              -> List<str>, greedy, width-aware
+//   TUI_text.truncate(s, cols, ell:)    -> str, with an ellipsis
+//   TUI_text.pad(s, cols, align)        -> str, to exactly `cols` if it is short
+//   TUI_text.fit(s, cols, align)        -> str, truncated AND padded
 //
 // Everything here counts **terminal columns**, by `unicode.width`: a CJK
 // ideograph is two, a combining mark is none, and an emoji sequence is one

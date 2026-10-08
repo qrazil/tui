@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           OUT="tui-${GITHUB_REF_NAME}"
           mkdir -p "$OUT"
-          cp tui*.m31 deps README.md "$OUT/"
+          cp TUI_*.m31 deps README.md "$OUT/"
           cp -R scripts docs "$OUT/"
           tar -czf "tui-source.tar.gz" "$OUT"
 

@@ -13,7 +13,7 @@ name: Test
 #
 # release.yml publishes a source tarball only: unlike httpserver/markdown, this
 # library has no single binary to ship. A program uses it as a dependency
-# (`tui <url> <ref>` in its deps file, `import tui.tuiapp;`; m31 v0.2.0+) --
+# (`tui <url> <ref>` in its deps file, `import tui.TUI_app;`; m31 v0.2.0+) --
 # see README.md's "This library is not part of the standard library".
 #
 # Bump M31_REF by hand when this library should pick up a newer m31 release

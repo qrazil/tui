@@ -1,7 +1,7 @@
-// A minimal interactive file browser: the smallest proof that `tuiapp.Loop`
+// A minimal interactive file browser: the smallest proof that `TUI_app.Loop`
 // actually works against a real terminal -- read a key, change state,
 // redraw, flush -- built ONLY from widgets that existed before this change
-// (`tuilists.ListView`, `tuiwidget.Block`/`Paragraph`). It does not use, and
+// (`TUI_list_table.ListView`, `TUI_widget.Block`/`Paragraph`). It does not use, and
 // does not wait on, the outline/jump-list/which-key/transient/diff-cursor
 // primitives this same change adds elsewhere in `apps/tui`: proving the loop
 // itself is a separate concern from those, and this is deliberately as
@@ -15,7 +15,7 @@
 //
 // This is NOT in the test corpus -- like `examples/keys.m31`, it needs a real
 // terminal and a person. What check.sh DOES check is that it compiles clean;
-// the loop it proves is `tuiapp.Loop`'s own, already tested against synthetic
+// the loop it proves is `TUI_app.Loop`'s own, already tested against synthetic
 // buffers and events where that is possible (`apps/tui/tests.m31`, "the
 // application loop's own pieces").
 
@@ -23,13 +23,13 @@ import fs;
 import io;
 import term;
 import text;
-import tuiapp;
-import tuibuf;
-import tuigeom;
-import tuilists;
-import tuistyle;
-import tuitext;
-import tuiwidget;
+import TUI_app;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_list_table;
+import TUI_style;
+import TUI_text;
+import TUI_widget;
 
 /// How many lines of a text file's preview to show. Past this the panel
 /// would scroll, which is more than this demo needs to prove the loop works.
@@ -46,7 +46,7 @@ type State {
     /// order as `list`'s items -- what `enter` and `show_preview` look up by
     /// the current selection.
     List<str> names = [];
-    tuilists.ListView list = tuilists.ListView([]);
+    TUI_list_table.ListView list = TUI_list_table.ListView([]);
     str preview = "";
     str message = "";
 }
@@ -72,12 +72,12 @@ void State.reload() {
                     items.push(n);
                 }
             }
-            list = tuilists.ListView(items, selected: 0, highlight_symbol: "\u{25B8} ");
+            list = TUI_list_table.ListView(items, selected: 0, highlight_symbol: "\u{25B8} ");
             message = "";
         }
         case Err(io.Error e): {
             names = [];
-            list = tuilists.ListView([]);
+            list = TUI_list_table.ListView([]);
             message = "cannot read " + path() + ": " + e.to_str();
         }
     }
@@ -164,24 +164,24 @@ void State.up() {
 /// The frame: a title bar naming the path, the listing on the left, a
 /// preview or a message on the right, a one-line key legend at the bottom --
 /// the same layout `apps/tui/demo.m31` builds once, run here through
-/// `tuiapp.Loop` instead.
-void State.draw(tuibuf.Buffer buf, tuigeom.Rect area) {
-    List<tuigeom.Rect> band = tuigeom.rows(area, [tuigeom.Constraint.Length(1), tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(1)]);
-    tuistyle.Style bold = tuistyle.Style(attrs: tuistyle.BOLD);
+/// `TUI_app.Loop` instead.
+void State.draw(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+    List<TUI_geometry.Rect> band = TUI_geometry.rows(area, [TUI_geometry.Constraint.Length(1), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
+    TUI_style.Style bold = TUI_style.Style(attrs: TUI_style.BOLD);
     buf.fill(band[0], " ", bold);
     buf.set_str(band[0].x, band[0].y, " " + path(), bold);
-    List<tuigeom.Rect> mid = tuigeom.cols(band[1], [tuigeom.Constraint.Percentage(45), tuigeom.Constraint.Fill(1)]);
-    tuiwidget.Block left = tuiwidget.Block(title: "files", borders: tuiwidget.Borders.Rounded);
+    List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Percentage(45), TUI_geometry.Constraint.Fill(1)]);
+    TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
     left.render(buf, mid[0]);
     list.render(buf, left.inner(mid[0]));
-    tuiwidget.Block right = tuiwidget.Block(title: "preview", borders: tuiwidget.Borders.Single, pad_x: 1);
+    TUI_widget.Block right = TUI_widget.Block(title: "preview", borders: TUI_widget.Borders.Single, pad_x: 1);
     right.render(buf, mid[1]);
     str body = preview;
     if (message != "") {
         body = message;
     }
-    tuiwidget.Paragraph(body).render(buf, right.inner(mid[1]));
-    tuistyle.Style rev = tuistyle.Style(attrs: tuistyle.REVERSE);
+    TUI_widget.Paragraph(body).render(buf, right.inner(mid[1]));
+    TUI_style.Style rev = TUI_style.Style(attrs: TUI_style.REVERSE);
     buf.fill(band[2], " ", rev);
     buf.set_str(band[2].x + 1, band[2].y, "j/k move   enter open   u up   q quit", rev);
 }
@@ -189,95 +189,95 @@ void State.draw(tuibuf.Buffer buf, tuigeom.Rect area) {
 /// What a key does to the browser's state: `Redraw` on anything that changed
 /// it, `Continue` on everything else, `Quit` on q or Escape -- the same
 /// shape `examples/keys.m31` hand-writes its own read loop around, here
-/// answered instead of looped, since `tuiapp.Loop` does the looping.
-tuiapp.Action State.handle(term.Event ev) {
+/// answered instead of looped, since `TUI_app.Loop` does the looping.
+TUI_app.Action State.handle(term.Event ev) {
     match (ev) {
         case Key(term.Key k): {
             match (k.code) {
                 case Char(int c): {
                     if (c == 'q') {
-                        return tuiapp.Action.Quit;
+                        return TUI_app.Action.Quit;
                     }
                     if (c == 'j') {
                         list.step(1);
                         show_preview();
-                        return tuiapp.Action.Redraw;
+                        return TUI_app.Action.Redraw;
                     }
                     if (c == 'k') {
                         list.step(-1);
                         show_preview();
-                        return tuiapp.Action.Redraw;
+                        return TUI_app.Action.Redraw;
                     }
                     if (c == 'u') {
                         up();
-                        return tuiapp.Action.Redraw;
+                        return TUI_app.Action.Redraw;
                     }
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case Enter: {
                     enter();
-                    return tuiapp.Action.Redraw;
+                    return TUI_app.Action.Redraw;
                 }
                 case Backspace: {
                     up();
-                    return tuiapp.Action.Redraw;
+                    return TUI_app.Action.Redraw;
                 }
                 case Escape: {
-                    return tuiapp.Action.Quit;
+                    return TUI_app.Action.Quit;
                 }
                 case Up: {
                     list.step(-1);
                     show_preview();
-                    return tuiapp.Action.Redraw;
+                    return TUI_app.Action.Redraw;
                 }
                 case Down: {
                     list.step(1);
                     show_preview();
-                    return tuiapp.Action.Redraw;
+                    return TUI_app.Action.Redraw;
                 }
                 case Tab: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case BackTab: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case Right: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case Left: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case Home: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case End: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case PageUp: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case PageDown: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case Insert: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case Delete: {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
                 case F(int n): {
-                    return tuiapp.Action.Continue;
+                    return TUI_app.Action.Continue;
                 }
             }
         }
         case Mouse(term.Mouse m): {
-            return tuiapp.Action.Continue;
+            return TUI_app.Action.Continue;
         }
         case Paste(str p): {
-            return tuiapp.Action.Continue;
+            return TUI_app.Action.Continue;
         }
         case Unknown(bytes u): {
-            return tuiapp.Action.Continue;
+            return TUI_app.Action.Continue;
         }
     }
 }
@@ -288,8 +288,8 @@ if (!term.is_terminal(0)) {
 }
 State state = State();
 state.reload();
-tuiapp.Loop loop = tuiapp.Loop();
-match (loop.run((tuibuf.Buffer buf, tuigeom.Rect area) => state.draw(buf, area), (term.Event ev) => state.handle(ev))) {
+TUI_app.Loop loop = TUI_app.Loop();
+match (loop.run((TUI_buffer.Buffer buf, TUI_geometry.Rect area) => state.draw(buf, area), (term.Event ev) => state.handle(ev))) {
     case Ok(int n): {
     }
     case Err(term.Error e): {

@@ -6,19 +6,19 @@
 //
 // API
 // ---
-//   tuiapp.Action                 Continue | Redraw | Quit -- what a Handler
+//   TUI_app.Action                 Continue | Redraw | Quit -- what a Handler
 //                                 answers after one event
-//   interface tuiapp.Handler { Action handle(term.Event ev); }
-//   tuiapp.Loop(...)              tick, colour depth, enter/leave sequences
+//   interface TUI_app.Handler { Action handle(term.Event ev); }
+//   TUI_app.Loop(...)              tick, colour depth, enter/leave sequences
 //   loop.run(view, on_event)      raw mode, then read-dispatch-render until
 //                                 `on_event` says stop
-//   tuiapp.resized(a, b)          whether two window sizes differ -- pulled
+//   TUI_app.resized(a, b)          whether two window sizes differ -- pulled
 //                                 out so it can be checked with no terminal
 //
 // --- why the view is a Widget, not a new interface ---------------------------
 //
 // `apps/tui`'s widget protocol is already exactly "draw yourself into a
-// rectangle of a buffer" (`tuiwidget.Widget`), which is the whole of what a
+// rectangle of a buffer" (`TUI_widget.Widget`), which is the whole of what a
 // frame needs from a program's state. Inventing a second drawing interface
 // here would just be that one, worse -- so `run` takes an ordinary `Widget`
 // for the view, and the ONE new interface this module adds is for input,
@@ -38,18 +38,18 @@
 // thing that calls it, once a tick.
 //
 // A `Handler` answers one `Action` per event; the loop itself decides WHEN a
-// resize also needs a redraw, and whether a redraw is a `tuidiff.full` (a
-// resize, or the very first frame) or a `tuidiff.diff` against the previous
+// resize also needs a redraw, and whether a redraw is a `TUI_diff.full` (a
+// resize, or the very first frame) or a `TUI_diff.diff` against the previous
 // one. None of this is specific to any one program: it is exactly the loop
 // `examples/keys.m31` hand-writes, pulled out here so nothing built on this
 // library has to write it twice.
 
 import io;
 import term;
-import tuibuf;
-import tuidiff;
-import tuistyle;
-import tuiwidget;
+import TUI_buffer;
+import TUI_diff;
+import TUI_style;
+import TUI_widget;
 
 /// What a `Handler` answers after one event: whether the loop keeps going,
 /// and whether the view needs to be drawn again before the next read. Not a
@@ -82,7 +82,7 @@ pub type Loop {
     /// 250ms matches `examples/keys.m31`: quick enough that a resize is
     /// noticed with no key pressed, slow enough to cost nothing while idle.
     pub int tick_ms = 250;
-    pub tuistyle.Depth depth = tuistyle.Depth.TrueColour;
+    pub TUI_style.Depth depth = TUI_style.Depth.TrueColour;
     /// Written once, entering raw mode, before the first frame.
     pub str enter = term.ALT_SCREEN_ON + term.HIDE_CURSOR;
     /// Handed to `Session.on_exit`, so it is written on every path out of
@@ -101,7 +101,7 @@ pub type Loop {
 /// read or write failure ends the loop rather than being reported past this
 /// call -- `examples/keys.m31`'s own choice, because a terminal that has
 /// stopped answering has nothing left to say beyond "stopped".
-pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
+pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
     if (!term.is_terminal(0)) {
         return Result<int, term.Error>.Err(term.Error.NotATerminal);
     }
@@ -120,10 +120,10 @@ pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
             // is three lists grown a cell at a time -- twice the cost of
             // clearing one that already exists -- and nothing about a
             // frame needs the last one's memory gone.
-            tuibuf.Buffer prev = tuibuf.Buffer.sized(sz.cols, sz.rows);
-            tuibuf.Buffer next = tuibuf.Buffer.sized(sz.cols, sz.rows);
+            TUI_buffer.Buffer prev = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
+            TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
             view.render(prev, prev.area());
-            w.put_bytes(tuidiff.full(prev, depth));
+            w.put_bytes(TUI_diff.full(prev, depth));
             flush(w);
             bool running = true;
             while (running) {
@@ -162,19 +162,19 @@ pub Result<int, term.Error> Loop.run(tuiwidget.Widget view, Handler on_event) {
                         if (grew) {
                             // A resize is the one time the buffers are
                             // replaced: the old pair is the wrong shape.
-                            next = tuibuf.Buffer.sized(sz.cols, sz.rows);
-                            prev = tuibuf.Buffer.sized(sz.cols, sz.rows);
+                            next = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
+                            prev = TUI_buffer.Buffer.sized(sz.cols, sz.rows);
                         } else {
                             next.clear();
                         }
                         view.render(next, next.area());
                         if (grew) {
-                            w.put_bytes(tuidiff.full(next, depth));
+                            w.put_bytes(TUI_diff.full(next, depth));
                         } else {
-                            w.put_bytes(tuidiff.diff(prev, next, depth));
+                            w.put_bytes(TUI_diff.diff(prev, next, depth));
                         }
                         flush(w);
-                        tuibuf.Buffer shown = prev;
+                        TUI_buffer.Buffer shown = prev;
                         prev = next;
                         next = shown;
                     }

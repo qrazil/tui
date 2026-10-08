@@ -6,9 +6,9 @@
 //
 // API
 // ---
-//   tuioutline.Node.leaf(id, label)              a row with no children
-//   tuioutline.Node.section(id, label, children)  a row that can fold
-//   tuioutline.Outline(roots)                     the widget itself
+//   TUI_outline.Node.leaf(id, label)              a row with no children
+//   TUI_outline.Node.section(id, label, children)  a row that can fold
+//   TUI_outline.Outline(roots)                     the widget itself
 //   outline.rows()             -> List<Row>       the FLATTENED, visible rows
 //   outline.count()            -> int             how many of them, without building them
 //   outline.current()          -> Option<Row>     the row under the cursor
@@ -38,17 +38,17 @@
 //
 // --- why every node has an id ------------------------------------------------
 //
-// A jump list (`tuijump`) and a "put the cursor back where it was" both need
+// A jump list (`TUI_jump_list`) and a "put the cursor back where it was" both need
 // to name a row that SURVIVES a fold changing every row number below it --
 // position is not a stable address, and `id` is the caller's own one: a
 // commit hash, a file path, a hunk index, blank for a row nothing else needs
 // to address by name.
 
-import tuibuf;
-import tuigeom;
-import tuiscroll;
-import tuistyle;
-import tuitext;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_scroll;
+import TUI_style;
+import TUI_text;
 
 /// One entry in the outline, and the subtree rooted at it.
 pub type Node {
@@ -56,7 +56,7 @@ pub type Node {
     pub str id;
     pub str label;
     pub List<Node> children;
-    pub tuistyle.Style style = tuistyle.Style();
+    pub TUI_style.Style style = TUI_style.Style();
     pub bool expanded = true;
 }
 
@@ -86,16 +86,16 @@ pub type Row {
 /// rows, and the scroll that follows it.
 ///
 /// ```
-/// tuioutline.Outline([tuioutline.Node.section("wip", "Unstaged changes",
-///     [tuioutline.Node.leaf("a.txt", "modified: a.txt")])])
+/// TUI_outline.Outline([TUI_outline.Node.section("wip", "Unstaged changes",
+///     [TUI_outline.Node.leaf("a.txt", "modified: a.txt")])])
 /// ```
 pub type Outline {
     pub List<Node> roots;
     /// An index into `rows()`, not into `roots` -- see the header.
     pub int cursor = 0;
-    pub tuiscroll.Viewport view = tuiscroll.Viewport();
-    pub tuistyle.Style style = tuistyle.Style();
-    pub tuistyle.Style highlight_style = tuistyle.Style(attrs: tuistyle.REVERSE);
+    pub TUI_scroll.Viewport view = TUI_scroll.Viewport();
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
     /// Columns of indent per level of nesting.
     pub int indent = 2;
     pub str expanded_mark = "\u{25BE} ";
@@ -178,7 +178,7 @@ pub Option<Row> Outline.current() {
 }
 
 /// Move the cursor by `delta` rows of the flattened, visible list, stopping
-/// at the ends -- `tuilists.ListView.step`'s own rule.
+/// at the ends -- `TUI_list_table.ListView.step`'s own rule.
 pub void Outline.move(int delta) {
     int n = count();
     if (n == 0) {
@@ -245,7 +245,7 @@ pub bool Outline.select_id(str id) {
     return false;
 }
 
-pub void Outline.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void Outline.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
@@ -269,10 +269,10 @@ pub void Outline.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         int k = off + i;
         Row row = rs[i];
         int y = area.y + i;
-        tuistyle.Style st = style.merged(row.node.style);
+        TUI_style.Style st = style.merged(row.node.style);
         if (k == cursor) {
             st = st.merged(highlight_style);
-            buf.fill(tuigeom.Rect(area.x, y, area.w, 1), " ", st);
+            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
         }
         str mark = leaf_mark;
         if (row.node.has_children()) {
@@ -285,7 +285,7 @@ pub void Outline.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         int x = area.x + row.depth * indent;
         int room = area.right() - x;
         if (room > 0) {
-            str content = tuitext.drop_columns(mark + row.node.label, hscroll);
+            str content = TUI_text.drop_columns(mark + row.node.label, hscroll);
             buf.set_str(x, y, content, st, max: room);
         }
         i = i + 1;

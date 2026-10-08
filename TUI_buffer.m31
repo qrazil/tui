@@ -2,8 +2,8 @@
 //
 // API
 // ---
-//   tuibuf.Buffer.sized(w, h)          a blank buffer at the origin
-//   tuibuf.Buffer.empty(rect)          a blank buffer covering `rect`
+//   TUI_buffer.Buffer.sized(w, h)          a blank buffer at the origin
+//   TUI_buffer.Buffer.empty(rect)          a blank buffer covering `rect`
 //   b.area()                           the rectangle it covers
 //   b.get(x, y) -> Cell                what is there
 //   b.set(x, y, cell)                  put one cell
@@ -39,14 +39,14 @@
 // A `Cell` is a struct, and a 200x50 buffer has ten thousand of them; a
 // struct per cell holding a `Style` holding two `Colour`s would be thirty
 // thousand refcounted allocations per frame. So the buffer stores three
-// parallel lists -- symbol, packed style (`tuistyle.Style.pack`), width --
+// parallel lists -- symbol, packed style (`TUI_style.Style.pack`), width --
 // and `Cell` is the shape it hands out and takes in, built on demand. Writing
 // a single-byte ASCII symbol allocates nothing at all: those 95 strings are
 // module constants, and a module constant is immortal (reference §7.3).
 
 import unicode;
-import tuigeom;
-import tuistyle;
+import TUI_geometry;
+import TUI_style;
 
 /// One cell of the grid.
 ///
@@ -55,17 +55,17 @@ import tuistyle;
 /// two-column character -- see the header.
 pub type Cell {
     pub str sym;
-    pub tuistyle.Style style = tuistyle.Style();
+    pub TUI_style.Style style = TUI_style.Style();
     pub int width = 1;
 }
 
 /// A cell holding `sym`, measured with `unicode.width`.
-pub static Cell Cell.of(str sym, tuistyle.Style style) {
+pub static Cell Cell.of(str sym, TUI_style.Style style) {
     return Cell(sym, style: style, width: unicode.width(sym));
 }
 
 /// The second half of a two-column character.
-pub static Cell Cell.continuation(tuistyle.Style style) {
+pub static Cell Cell.continuation(TUI_style.Style style) {
     return Cell("", style: style, width: 0);
 }
 
@@ -88,7 +88,7 @@ pub str Cell.to_str() {
 /// module can build one field by field; `Buffer.sized` and `Buffer.empty`
 /// are the two doors in.
 pub type Buffer {
-    tuigeom.Rect box;
+    TUI_geometry.Rect box;
     List<str> sym;
     List<int> sty;
     List<int> wid;
@@ -96,12 +96,12 @@ pub type Buffer {
 
 /// A blank `w` by `h` buffer with its corner at the origin.
 pub static Buffer Buffer.sized(int w, int h) {
-    return Buffer.empty(tuigeom.Rect(0, 0, w, h));
+    return Buffer.empty(TUI_geometry.Rect(0, 0, w, h));
 }
 
 /// A blank buffer covering `area`. A negative width or height is taken as
 /// zero.
-pub static Buffer Buffer.empty(tuigeom.Rect area) {
+pub static Buffer Buffer.empty(TUI_geometry.Rect area) {
     int w = area.w;
     int h = area.h;
     if (w < 0) {
@@ -110,7 +110,7 @@ pub static Buffer Buffer.empty(tuigeom.Rect area) {
     if (h < 0) {
         h = 0;
     }
-    tuigeom.Rect box = tuigeom.Rect(area.x, area.y, w, h);
+    TUI_geometry.Rect box = TUI_geometry.Rect(area.x, area.y, w, h);
     int n = w * h;
     List<str> sym = [];
     List<int> sty = [];
@@ -124,7 +124,7 @@ pub static Buffer Buffer.empty(tuigeom.Rect area) {
 }
 
 /// The rectangle this buffer covers, in absolute coordinates.
-pub tuigeom.Rect Buffer.area() {
+pub TUI_geometry.Rect Buffer.area() {
     return box;
 }
 
@@ -140,17 +140,17 @@ int Buffer.at(int x, int y) {
 /// The cell at `x`, `y`. **Traps** outside the buffer, like any index.
 pub Cell Buffer.get(int x, int y) {
     if (!box.contains(x, y)) {
-        trap("tuibuf.Buffer.get: " + str(x) + "," + str(y) + " is outside " + box.to_str());
+        trap("TUI_buffer.Buffer.get: " + str(x) + "," + str(y) + " is outside " + box.to_str());
     }
     int i = at(x, y);
-    return Cell(sym[i], style: tuistyle.Style.unpack(sty[i]), width: wid[i]);
+    return Cell(sym[i], style: TUI_style.Style.unpack(sty[i]), width: wid[i]);
 }
 
 /// The packed style at `x`, `y` -- what the renderer compares. **Traps**
 /// outside the buffer.
 pub int Buffer.style_at(int x, int y) {
     if (!box.contains(x, y)) {
-        trap("tuibuf.Buffer.style_at: outside the buffer");
+        trap("TUI_buffer.Buffer.style_at: outside the buffer");
     }
     return sty[at(x, y)];
 }
@@ -159,7 +159,7 @@ pub int Buffer.style_at(int x, int y) {
 /// outside the buffer.
 pub str Buffer.sym_at(int x, int y) {
     if (!box.contains(x, y)) {
-        trap("tuibuf.Buffer.sym_at: outside the buffer");
+        trap("TUI_buffer.Buffer.sym_at: outside the buffer");
     }
     return sym[at(x, y)];
 }
@@ -174,7 +174,7 @@ pub str Buffer.sym_at(int x, int y) {
 /// **Traps** when the buffers do not cover the same rectangle.
 pub bool Buffer.same_cell(Buffer other, int x, int y) {
     if (!box.eq(other.box)) {
-        trap("tuibuf.Buffer.same_cell: the buffers cover different rectangles");
+        trap("TUI_buffer.Buffer.same_cell: the buffers cover different rectangles");
     }
     int i = at(x, y);
     return wid[i] == other.wid[i] && sty[i] == other.sty[i] && sym[i] == other.sym[i];
@@ -188,10 +188,10 @@ pub bool Buffer.same_cell(Buffer other, int x, int y) {
 /// buffers do not cover the same rectangle.
 pub bool Buffer.same_row(Buffer other, int y) {
     if (!box.eq(other.box)) {
-        trap("tuibuf.Buffer.same_row: the buffers cover different rectangles");
+        trap("TUI_buffer.Buffer.same_row: the buffers cover different rectangles");
     }
     if (y < box.y || y >= box.bottom()) {
-        trap("tuibuf.Buffer.same_row: outside the buffer");
+        trap("TUI_buffer.Buffer.same_row: outside the buffer");
     }
     int i = (y - box.y) * box.w;
     int end = i + box.w;
@@ -212,13 +212,13 @@ pub bool Buffer.same_row(Buffer other, int y) {
 /// **Traps** outside the buffer.
 pub int Buffer.tail_start(int y) {
     if (y < box.y || y >= box.bottom()) {
-        trap("tuibuf.Buffer.tail_start: outside the buffer");
+        trap("TUI_buffer.Buffer.tail_start: outside the buffer");
     }
     int base = (y - box.y) * box.w;
     int cx = box.w;
     while (cx > 0) {
         int i = base + cx - 1;
-        if (sty[i] != tuistyle.RESET_STYLE || sym[i] != " ") {
+        if (sty[i] != TUI_style.RESET_STYLE || sym[i] != " ") {
             return box.x + cx;
         }
         cx = cx - 1;
@@ -233,7 +233,7 @@ pub int Buffer.tail_start(int y) {
 /// the allocation.
 pub void Buffer.append_sym(bytes out, int x, int y) {
     if (!box.contains(x, y)) {
-        trap("tuibuf.Buffer.append_sym: outside the buffer");
+        trap("TUI_buffer.Buffer.append_sym: outside the buffer");
     }
     str s = sym[at(x, y)];
     int n = s.size();
@@ -247,7 +247,7 @@ pub void Buffer.append_sym(bytes out, int x, int y) {
 /// buffer.
 pub int Buffer.width_at(int x, int y) {
     if (!box.contains(x, y)) {
-        trap("tuibuf.Buffer.width_at: outside the buffer");
+        trap("TUI_buffer.Buffer.width_at: outside the buffer");
     }
     return wid[at(x, y)];
 }
@@ -283,7 +283,7 @@ pub void Buffer.set(int x, int y, Cell c) {
 
 /// Restyle one cell, leaving its symbol alone. Outside the buffer it does
 /// nothing.
-pub void Buffer.set_style(int x, int y, tuistyle.Style st) {
+pub void Buffer.set_style(int x, int y, TUI_style.Style st) {
     if (!box.contains(x, y)) {
         return;
     }
@@ -323,7 +323,7 @@ void Buffer.put(int x, int y, str s, int p, int w) {
 ///     appended to the cell before it rather than taking a cell of its own.
 ///     With no cell before it, it is dropped.
 ///   - A newline in `s` is a cell like any other; split the text first.
-pub int Buffer.set_str(int x, int y, str s, tuistyle.Style st, int max = -1) {
+pub int Buffer.set_str(int x, int y, str s, TUI_style.Style st, int max = -1) {
     if (y < box.y || y >= box.bottom()) {
         return 0;
     }
@@ -397,12 +397,12 @@ int Buffer.fast_ascii(int x, int y, str s, int p, int limit) {
 
 /// Fill `r` with `sym`, in `st`. Only the part inside the buffer is written.
 /// **Traps** on a symbol of no width, which would never finish the row.
-pub void Buffer.fill(tuigeom.Rect r, str s, tuistyle.Style st) {
+pub void Buffer.fill(TUI_geometry.Rect r, str s, TUI_style.Style st) {
     int gw = unicode.width(s);
     if (gw <= 0) {
-        trap("tuibuf.Buffer.fill: the fill symbol has no width");
+        trap("TUI_buffer.Buffer.fill: the fill symbol has no width");
     }
-    tuigeom.Rect r2 = r.intersect(box);
+    TUI_geometry.Rect r2 = r.intersect(box);
     int p = st.pack();
     for (int y in r2.y .. r2.bottom()) {
         int cx = r2.x;
@@ -429,8 +429,8 @@ pub void Buffer.fill(tuigeom.Rect r, str s, tuistyle.Style st) {
 
 /// Restyle every cell of `r`, leaving the glyphs. This is how a list marks
 /// its selected row.
-pub void Buffer.restyle(tuigeom.Rect r, tuistyle.Style st) {
-    tuigeom.Rect r2 = r.intersect(box);
+pub void Buffer.restyle(TUI_geometry.Rect r, TUI_style.Style st) {
+    TUI_geometry.Rect r2 = r.intersect(box);
     int p = st.pack();
     for (int y in r2.y .. r2.bottom()) {
         int cx = r2.x;

@@ -6,10 +6,10 @@
 //
 // API
 // ---
-//   tuimenu.Item(key, label)                  one (key, label) pair
-//   tuimenu.WhichKey(title, items)             the popup alone
-//   tuimenu.Switch(key, label, flag)           one togglable flag
-//   tuimenu.Transient(title, base, switches)   WhichKey's sibling: switches
+//   TUI_menu.Item(key, label)                  one (key, label) pair
+//   TUI_menu.WhichKey(title, items)             the popup alone
+//   TUI_menu.Switch(key, label, flag)           one togglable flag
+//   TUI_menu.Transient(title, base, switches)   WhichKey's sibling: switches
 //                                              plus a live command preview
 //   transient.toggle(key)                      flip the switch bound to `key`
 //   transient.preview()          -> str        the literal command line, as
@@ -23,11 +23,11 @@
 // each switch, a blank line, and the rendered command -- but the box, the
 // title, the centring and the border are one piece of code, not two.
 
-import tuibuf;
-import tuigeom;
-import tuistyle;
-import tuitext;
-import tuiwidget;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_style;
+import TUI_text;
+import TUI_widget;
 
 /// One `(key, label)` pair -- one row of a `WhichKey` overlay.
 pub type Item {
@@ -40,18 +40,18 @@ pub type Item {
 type Popup {
     str title;
     List<str> rows;
-    tuistyle.Style style = tuistyle.Style();
-    tuistyle.Style title_style = tuistyle.Style(attrs: tuistyle.BOLD);
-    tuiwidget.Borders borders = tuiwidget.Borders.Rounded;
+    TUI_style.Style style = TUI_style.Style();
+    TUI_style.Style title_style = TUI_style.Style(attrs: TUI_style.BOLD);
+    TUI_widget.Borders borders = TUI_widget.Borders.Rounded;
 }
 
 /// The box this popup needs, centred in `area` and never larger than it: as
 /// wide as the title or the widest row plus the border and a column of
 /// padding either side, as tall as the rows plus the border.
-tuigeom.Rect Popup.sized(tuigeom.Rect area) {
-    int w = tuitext.width(title);
+TUI_geometry.Rect Popup.sized(TUI_geometry.Rect area) {
+    int w = TUI_text.width(title);
     for (str r in rows) {
-        int rw = tuitext.width(r);
+        int rw = TUI_text.width(r);
         if (rw > w) {
             w = rw;
         }
@@ -66,20 +66,20 @@ tuigeom.Rect Popup.sized(tuigeom.Rect area) {
     }
     int x = area.x + (area.w - w) / 2;
     int y = area.y + (area.h - h) / 2;
-    return tuigeom.Rect(x, y, w, h);
+    return TUI_geometry.Rect(x, y, w, h);
 }
 
-void Popup.render(tuibuf.Buffer buf, tuigeom.Rect area) {
-    tuigeom.Rect box = sized(area);
+void Popup.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
+    TUI_geometry.Rect box = sized(area);
     if (box.is_empty()) {
         return;
     }
-    tuiwidget.Block block = tuiwidget.Block(title: title, borders: borders, style: style, title_style: title_style, pad_x: 1);
+    TUI_widget.Block block = TUI_widget.Block(title: title, borders: borders, style: style, title_style: title_style, pad_x: 1);
     block.render(buf, box);
-    tuigeom.Rect inner = block.inner(box);
+    TUI_geometry.Rect inner = block.inner(box);
     int i = 0;
     while (i < inner.h && i < rows.size()) {
-        buf.set_str(inner.x, inner.y + i, tuitext.truncate(rows[i], inner.w), style, max: inner.w);
+        buf.set_str(inner.x, inner.y + i, TUI_text.truncate(rows[i], inner.w), style, max: inner.w);
         i = i + 1;
     }
 }
@@ -87,13 +87,13 @@ void Popup.render(tuibuf.Buffer buf, tuigeom.Rect area) {
 /// `key`, padded to `keyw` columns, two spaces, then `label` -- the row
 /// layout both overlays use.
 str keyed_row(str key, str label, int keyw) {
-    return tuitext.pad(key, keyw, tuitext.Align.Left) + "  " + label;
+    return TUI_text.pad(key, keyw, TUI_text.Align.Left) + "  " + label;
 }
 
 int widest(List<str> keys) {
     int w = 0;
     for (str k in keys) {
-        int kw = tuitext.width(k);
+        int kw = TUI_text.width(k);
         if (kw > w) {
             w = kw;
         }
@@ -105,14 +105,14 @@ int widest(List<str> keys) {
 /// pairs, sized and centred by the shared `Popup`.
 ///
 /// ```
-/// tuimenu.WhichKey("commit", [tuimenu.Item("c", "commit"),
-///     tuimenu.Item("a", "amend"), tuimenu.Item("f", "fixup")])
+/// TUI_menu.WhichKey("commit", [TUI_menu.Item("c", "commit"),
+///     TUI_menu.Item("a", "amend"), TUI_menu.Item("f", "fixup")])
 /// ```
 pub type WhichKey {
     pub str title;
     pub List<Item> items;
-    pub tuistyle.Style style = tuistyle.Style();
-    pub tuistyle.Style title_style = tuistyle.Style(attrs: tuistyle.BOLD);
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style title_style = TUI_style.Style(attrs: TUI_style.BOLD);
 }
 
 Popup WhichKey.popup() {
@@ -128,7 +128,7 @@ Popup WhichKey.popup() {
     return Popup(title, rs, style: style, title_style: title_style);
 }
 
-pub void WhichKey.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void WhichKey.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     popup().render(buf, area);
 }
 
@@ -154,9 +154,9 @@ pub type Transient {
     pub str title;
     pub str base;
     pub List<Switch> switches;
-    pub tuistyle.Style style = tuistyle.Style();
-    pub tuistyle.Style title_style = tuistyle.Style(attrs: tuistyle.BOLD);
-    pub tuistyle.Style preview_style = tuistyle.Style(attrs: tuistyle.DIM);
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style title_style = TUI_style.Style(attrs: TUI_style.BOLD);
+    pub TUI_style.Style preview_style = TUI_style.Style(attrs: TUI_style.DIM);
 }
 
 /// Flip the switch bound to `key`. Does nothing if no switch has that key.
@@ -211,6 +211,6 @@ Popup Transient.popup() {
     return Popup(title, rs, style: style, title_style: title_style);
 }
 
-pub void Transient.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void Transient.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     popup().render(buf, area);
 }

@@ -10,46 +10,46 @@
 // Four measurements, on a 200x50 grid -- a full-screen terminal:
 //
 //   draw     laying a screenful of widgets into the buffer
-//   full     `tuidiff.full`: every cell, as escape bytes
-//   diff-1   `tuidiff.diff` after one cell changed
-//   diff-0   `tuidiff.diff` with nothing changed -- the cost of the scan
+//   full     `TUI_diff.full`: every cell, as escape bytes
+//   diff-1   `TUI_diff.diff` after one cell changed
+//   diff-0   `TUI_diff.diff` with nothing changed -- the cost of the scan
 //
 // Times are the mean of many runs, because a single run of anything this
 // fast measures the clock.
 
 import date;
-import tuibuf;
-import tuidiff;
-import tuidiffview;
-import tuigeom;
-import tuilists;
-import tuioutline;
-import tuistyle;
-import tuitext;
-import tuiwidget;
+import TUI_buffer;
+import TUI_diff;
+import TUI_diff_view;
+import TUI_geometry;
+import TUI_list_table;
+import TUI_outline;
+import TUI_style;
+import TUI_text;
+import TUI_widget;
 
 const int W = 200;
 const int H = 50;
 
 /// Lay a plausible screen into `b`: a title bar, a file list, a table and a
 /// paragraph, all inside blocks.
-void paint(tuibuf.Buffer b, int tick, List<str> names, List<List<str>> rows) {
-    List<tuigeom.Rect> band = tuigeom.rows(b.area(), [tuigeom.Constraint.Length(3), tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(1)]);
-    tuiwidget.Block top = tuiwidget.Block(title: " frame " + str(tick) + " ", borders: tuiwidget.Borders.Double, title_align: tuitext.Align.Center);
+void paint(TUI_buffer.Buffer b, int tick, List<str> names, List<List<str>> rows) {
+    List<TUI_geometry.Rect> band = TUI_geometry.rows(b.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
+    TUI_widget.Block top = TUI_widget.Block(title: " frame " + str(tick) + " ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center);
     top.render(b, band[0]);
-    tuiwidget.Paragraph("a terminal user interface, drawn into a buffer of grapheme clusters", align: tuitext.Align.Center).render(b, top.inner(band[0]));
-    List<tuigeom.Rect> mid = tuigeom.cols(band[1], [tuigeom.Constraint.Length(24), tuigeom.Constraint.Percentage(40), tuigeom.Constraint.Fill(1)]);
-    tuiwidget.Block left = tuiwidget.Block(title: "files", borders: tuiwidget.Borders.Rounded);
+    TUI_widget.Paragraph("a terminal user interface, drawn into a buffer of grapheme clusters", align: TUI_text.Align.Center).render(b, top.inner(band[0]));
+    List<TUI_geometry.Rect> mid = TUI_geometry.cols(band[1], [TUI_geometry.Constraint.Length(24), TUI_geometry.Constraint.Percentage(40), TUI_geometry.Constraint.Fill(1)]);
+    TUI_widget.Block left = TUI_widget.Block(title: "files", borders: TUI_widget.Borders.Rounded);
     left.render(b, mid[0]);
-    tuilists.ListView(names, selected: tick % 60, highlight_symbol: "\u{25B8} ").render(b, left.inner(mid[0]));
-    tuiwidget.Block table = tuiwidget.Block(title: "table", pad_x: 1);
+    TUI_list_table.ListView(names, selected: tick % 60, highlight_symbol: "\u{25B8} ").render(b, left.inner(mid[0]));
+    TUI_widget.Block table = TUI_widget.Block(title: "table", pad_x: 1);
     table.render(b, mid[1]);
-    tuilists.Table(["#", "name", "size", "when"], rows, [tuigeom.Constraint.Length(4), tuigeom.Constraint.Fill(1), tuigeom.Constraint.Length(8), tuigeom.Constraint.Length(9)], selected: tick % 60, highlight_symbol: "\u{25B8} ").render(b, table.inner(mid[1]));
-    tuiwidget.Block right = tuiwidget.Block(title: "detail", pad_x: 1);
+    TUI_list_table.Table(["#", "name", "size", "when"], rows, [TUI_geometry.Constraint.Length(4), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8), TUI_geometry.Constraint.Length(9)], selected: tick % 60, highlight_symbol: "\u{25B8} ").render(b, table.inner(mid[1]));
+    TUI_widget.Block right = TUI_widget.Block(title: "detail", pad_x: 1);
     right.render(b, mid[2]);
-    tuiwidget.Paragraph("The quick brown fox jumps over the lazy dog. \u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}\u{5B57}. Wrapping this paragraph is the part of the work that has to look at every grapheme cluster, so it is the part that decides whether a frame is fast. ".repeat(6)).render(b, right.inner(mid[2]));
-    b.fill(band[2], " ", tuistyle.Style(fg: tuistyle.Colour.Indexed(0), bg: tuistyle.Colour.Indexed(7)));
-    b.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", tuistyle.Style(fg: tuistyle.Colour.Indexed(0), bg: tuistyle.Colour.Indexed(7)));
+    TUI_widget.Paragraph("The quick brown fox jumps over the lazy dog. \u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}\u{5B57}. Wrapping this paragraph is the part of the work that has to look at every grapheme cluster, so it is the part that decides whether a frame is fast. ".repeat(6)).render(b, right.inner(mid[2]));
+    b.fill(band[2], " ", TUI_style.Style(fg: TUI_style.Colour.Indexed(0), bg: TUI_style.Colour.Indexed(7)));
+    b.set_str(band[2].x + 1, band[2].y, "q quit   j/k move   ? help", TUI_style.Style(fg: TUI_style.Colour.Indexed(0), bg: TUI_style.Colour.Indexed(7)));
 }
 
 /// Nanoseconds, as milliseconds with three decimals, without floats.
@@ -86,9 +86,9 @@ for (int n in 0 .. 60) {
     names.push("item-" + str(n) + ".txt");
     rows.push([str(n), "row " + str(n) + " of the table", str(n * 37 % 1000) + " B", "today"]);
 }
-tuibuf.Buffer front = tuibuf.Buffer.sized(W, H);
-tuibuf.Buffer back = tuibuf.Buffer.sized(W, H);
-tuistyle.Depth depth = tuistyle.Depth.Ansi256;
+TUI_buffer.Buffer front = TUI_buffer.Buffer.sized(W, H);
+TUI_buffer.Buffer back = TUI_buffer.Buffer.sized(W, H);
+TUI_style.Depth depth = TUI_style.Depth.Ansi256;
 // Warm up, so the first measurement is not the first touch of the heap.
 paint(back, 0, names, rows);
 paint(front, 0, names, rows);
@@ -104,11 +104,11 @@ int t1 = date.now_ns();
 report("draw", t1 - t0, runs, 0);
 back.clear();
 paint(back, 1, names, rows);
-int full_bytes = tuidiff.full(back, depth).size();
+int full_bytes = TUI_diff.full(back, depth).size();
 t0 = date.now_ns();
 k = 0;
 while (k < runs) {
-    tuidiff.full(back, depth);
+    TUI_diff.full(back, depth);
     k = k + 1;
 }
 t1 = date.now_ns();
@@ -118,23 +118,23 @@ front.clear();
 paint(front, 1, names, rows);
 back.clear();
 paint(back, 1, names, rows);
-back.set_str(100, 25, "\u{2588}", tuistyle.Style(fg: tuistyle.Colour.Indexed(9)));
-int one_bytes = tuidiff.diff(front, back, depth).size();
+back.set_str(100, 25, "\u{2588}", TUI_style.Style(fg: TUI_style.Colour.Indexed(9)));
+int one_bytes = TUI_diff.diff(front, back, depth).size();
 t0 = date.now_ns();
 k = 0;
 while (k < runs) {
-    tuidiff.diff(front, back, depth);
+    TUI_diff.diff(front, back, depth);
     k = k + 1;
 }
 t1 = date.now_ns();
 report("diff-1", t1 - t0, runs, one_bytes);
 back.clear();
 paint(back, 1, names, rows);
-int zero_bytes = tuidiff.diff(front, back, depth).size();
+int zero_bytes = TUI_diff.diff(front, back, depth).size();
 t0 = date.now_ns();
 k = 0;
 while (k < runs) {
-    tuidiff.diff(front, back, depth);
+    TUI_diff.diff(front, back, depth);
     k = k + 1;
 }
 t1 = date.now_ns();
@@ -148,7 +148,7 @@ k = 0;
 while (k < runs) {
     back.clear();
     paint(back, k, names, rows);
-    tuidiff.diff(front, back, depth);
+    TUI_diff.diff(front, back, depth);
     k = k + 1;
 }
 t1 = date.now_ns();
@@ -163,16 +163,16 @@ report("frame", t1 - t0, runs, 0);
 // screen, which is what these four numbers watch.
 print("");
 print("a 5,200-row outline (200 sections of 25), 2,000-line diff, 72-column wrap");
-List<tuioutline.Node> roots = [];
+List<TUI_outline.Node> roots = [];
 for (int s in 0 .. 200) {
-    List<tuioutline.Node> kids = [];
+    List<TUI_outline.Node> kids = [];
     for (int c in 0 .. 25) {
-        kids.push(tuioutline.Node.leaf("s" + str(s) + ":" + str(c), "M  path/to/some/file-" + str(c) + ".txt  +12 -3"));
+        kids.push(TUI_outline.Node.leaf("s" + str(s) + ":" + str(c), "M  path/to/some/file-" + str(c) + ".txt  +12 -3"));
     }
-    roots.push(tuioutline.Node.section("s" + str(s), str(s) + "  a commit subject line of ordinary length", kids));
+    roots.push(TUI_outline.Node.section("s" + str(s), str(s) + "  a commit subject line of ordinary length", kids));
 }
-tuioutline.Outline o = tuioutline.Outline(roots);
-tuigeom.Rect screen = tuigeom.Rect(0, 0, W, H);
+TUI_outline.Outline o = TUI_outline.Outline(roots);
+TUI_geometry.Rect screen = TUI_geometry.Rect(0, 0, W, H);
 o.cursor = 2600;
 o.render(back, screen);
 t0 = date.now_ns();
@@ -193,21 +193,21 @@ while (k < runs) {
 }
 t1 = date.now_ns();
 report("select", t1 - t0, runs, 0);
-List<tuidiffview.Hunk> hunks = [];
+List<TUI_diff_view.Hunk> hunks = [];
 for (int h in 0 .. 40) {
-    List<tuidiffview.Line> ls = [];
+    List<TUI_diff_view.Line> ls = [];
     for (int l in 0 .. 50) {
         if (l % 3 == 0) {
-            ls.push(tuidiffview.Line.added("    added line " + str(l) + " of hunk " + str(h)));
+            ls.push(TUI_diff_view.Line.added("    added line " + str(l) + " of hunk " + str(h)));
         } else if (l % 3 == 1) {
-            ls.push(tuidiffview.Line.removed("    removed line " + str(l) + " of hunk " + str(h)));
+            ls.push(TUI_diff_view.Line.removed("    removed line " + str(l) + " of hunk " + str(h)));
         } else {
-            ls.push(tuidiffview.Line.context("    context line " + str(l) + " of hunk " + str(h)));
+            ls.push(TUI_diff_view.Line.context("    context line " + str(l) + " of hunk " + str(h)));
         }
     }
-    hunks.push(tuidiffview.Hunk("@@ -" + str(h * 50) + ",50 +" + str(h * 50) + ",50 @@", ls));
+    hunks.push(TUI_diff_view.Hunk("@@ -" + str(h * 50) + ",50 +" + str(h * 50) + ",50 @@", ls));
 }
-tuidiffview.DiffView dv = tuidiffview.DiffView(hunks);
+TUI_diff_view.DiffView dv = TUI_diff_view.DiffView(hunks);
 dv.cursor = 1000;
 dv.render(back, screen);
 t0 = date.now_ns();
@@ -224,17 +224,17 @@ str prose = "The quick brown fox jumps over the lazy dog, and a commit message o
 t0 = date.now_ns();
 k = 0;
 while (k < runs) {
-    tuitext.wrap(prose, 72);
+    TUI_text.wrap(prose, 72);
     k = k + 1;
 }
 t1 = date.now_ns();
 report("wrap", t1 - t0, runs, prose.size());
-// What `tuiapp.Loop` pays before a frame is even drawn: a fresh buffer, or
+// What `TUI_app.Loop` pays before a frame is even drawn: a fresh buffer, or
 // the same one cleared.
 t0 = date.now_ns();
 k = 0;
 while (k < runs) {
-    tuibuf.Buffer.sized(W, H);
+    TUI_buffer.Buffer.sized(W, H);
     k = k + 1;
 }
 t1 = date.now_ns();

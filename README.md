@@ -12,7 +12,7 @@ widgets. **Stage 2 and stage 3 are both done**: the styling layer (`Theme`,
 styled spans), the primitives `apps/git/design.md` names (a collapsible
 outline, a synced jump list, a which-key overlay and the transient menu
 built on it, an addressable diff view, a persistent footer, plus `Viewport`
-and `Scrollbar` in support of the first two), and `tuiapp.Loop`, which reads
+and `Scrollbar` in support of the first two), and `TUI_app.Loop`, which reads
 real keys through `lib/term.m31` and redraws through this library's own
 renderer. See "Left deliberately undone" below for what stage 2's original
 wishlist dropped, and why.
@@ -30,7 +30,7 @@ depends on it from its own `deps` file and imports each module by path.
     version 0.1.0
     tui https://github.com/qrazil/tui <ref>
 
-    import tui.tuiapp;
+    import tui.TUI_app;
 
 (`tui path ../tui` uses a checkout in place.) The modules stay at the root of
 this repository so those paths are `tui.<module>`; this repository's own
@@ -45,27 +45,27 @@ written up in `docs/FRICTION.md` §1.
 Fourteen, in dependency order. They are all prefixed `tui` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
-`docs/FRICTION.md` §1. `tuiapp` is the one exception worth naming: it is the only
+`docs/FRICTION.md` §1. `TUI_app` is the one exception worth naming: it is the only
 module that imports `lib/term.m31` and touches raw mode, a real read and a
 real write; every other module below it is still pure computation against a
 buffer.
 
 | module | what is in it |
 |---|---|
-| `tuistyle` | `Colour`, `Style`, `Depth`, the attribute bits, the SGR escapes, and `Theme` |
-| `tuigeom`  | `Rect`, `Constraint`, `Layout`, and the constraint solver |
-| `tuitext`  | `Align`, `wrap`, `truncate`, `pad`, `fit` — all in terminal columns |
-| `tuibuf`   | `Cell` and `Buffer` |
-| `tuidiff`  | `full`, `diff`, and the small control sequences |
-| `tuiwidget`| the `Widget` interface, `Block`, `Paragraph`, `Span` and `Line` |
-| `tuilists` | `ListView` and `Table` |
-| `tuiscroll`| `Viewport` (a scroll offset and its clamping/reveal math) and `Scrollbar` |
-| `tuioutline`| `Node`, `Outline` — the collapsible primary-view document |
-| `tuijump`  | `Entry`, `JumpList` — a flat index synced two ways to an `Outline` |
-| `tuimenu`  | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
-| `tuidiffview`| `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line |
-| `tuifooter`| `split`, `Footer` — a screen band reserved regardless of the main view |
-| `tuiapp`   | `Action`, `Handler`, `Loop` — the application loop, over `lib/term.m31` |
+| `TUI_style` | `Colour`, `Style`, `Depth`, the attribute bits, the SGR escapes, and `Theme` |
+| `TUI_geometry`  | `Rect`, `Constraint`, `Layout`, and the constraint solver |
+| `TUI_text`  | `Align`, `wrap`, `truncate`, `pad`, `fit` — all in terminal columns |
+| `TUI_buffer`   | `Cell` and `Buffer` |
+| `TUI_diff`  | `full`, `diff`, and the small control sequences |
+| `TUI_widget`| the `Widget` interface, `Block`, `Paragraph`, `Span` and `Line` |
+| `TUI_list_table` | `ListView` and `Table` |
+| `TUI_scroll`| `Viewport` (a scroll offset and its clamping/reveal math) and `Scrollbar` |
+| `TUI_outline`| `Node`, `Outline` — the collapsible primary-view document |
+| `TUI_jump_list`  | `Entry`, `JumpList` — a flat index synced two ways to an `Outline` |
+| `TUI_menu`  | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
+| `TUI_diff_view`| `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line |
+| `TUI_footer`| `split`, `Footer` — a screen band reserved regardless of the main view |
+| `TUI_app`   | `Action`, `Handler`, `Loop` — the application loop, over `lib/term.m31` |
 
 Each file's header comment is its reference documentation.
 
@@ -74,26 +74,26 @@ Each file's header comment is its reference documentation.
 ## The shape of a program
 
 ```c
-import tuibuf;
-import tuidiff;
-import tuigeom;
-import tuilists;
-import tuistyle;
-import tuitext;
-import tuiwidget;
+import TUI_buffer;
+import TUI_diff;
+import TUI_geometry;
+import TUI_list_table;
+import TUI_style;
+import TUI_text;
+import TUI_widget;
 
-tuibuf.Buffer screen = tuibuf.Buffer.sized(80, 24);
+TUI_buffer.Buffer screen = TUI_buffer.Buffer.sized(80, 24);
 
-List<tuigeom.Rect> band = tuigeom.rows(screen.area(),
-    [tuigeom.Constraint.Length(3), tuigeom.Constraint.Fill(1)]);
+List<TUI_geometry.Rect> band = TUI_geometry.rows(screen.area(),
+    [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1)]);
 
-tuiwidget.Block panel = tuiwidget.Block(title: "files",
-    borders: tuiwidget.Borders.Rounded);
+TUI_widget.Block panel = TUI_widget.Block(title: "files",
+    borders: TUI_widget.Borders.Rounded);
 panel.render(screen, band[1]);
-tuilists.ListView(names, selected: 3, highlight_symbol: "> ")
+TUI_list_table.ListView(names, selected: 3, highlight_symbol: "> ")
     .render(screen, panel.inner(band[1]));
 
-bytes frame = tuidiff.full(screen, tuistyle.Depth.Ansi256);   // one write
+bytes frame = TUI_diff.full(screen, TUI_style.Depth.Ansi256);   // one write
 ```
 
 A widget is handed the rectangle it draws in; it holds no position of its
@@ -121,7 +121,7 @@ directions in `tests/tests.m31`.
 
 ## The layout rules
 
-`tuigeom.resolve(total, constraints)` answers one size per constraint, and
+`TUI_geometry.resolve(total, constraints)` answers one size per constraint, and
 **the sizes always sum to exactly `total` and none is negative** — so the
 parts tile the whole with no gap and no overlap. That invariant is checked
 against 2 000 random constraint sets from a seeded generator, horizontally
@@ -140,13 +140,13 @@ segment has to give. Both directions use largest-remainder rounding, in
 whole cells, with ties to the earlier segment.
 
 The full statement, including why `[Max(30), Max(30)]` in 100 cells gives 30
-and 70, is the header comment of `tuigeom.m31`.
+and 70, is the header comment of `TUI_geometry.m31`.
 
 ---
 
 ## What the renderer decides
 
-`tuidiff.diff(prev, next, depth)` writes a cell when its symbol, style or
+`TUI_diff.diff(prev, next, depth)` writes a cell when its symbol, style or
 width changed. Between two changed cells it either jumps (`\x1b[nC`) or
 walks (writes the unchanged cells again), whichever is fewer bytes — and
 only walks when the run is already in the pen's style. Row changes are
@@ -165,7 +165,7 @@ belongs").
 
 ## The styling layer
 
-`Theme` (`tuistyle.m31`) is a plain struct of `Style` fields, one per role —
+`Theme` (`TUI_style.m31`) is a plain struct of `Style` fields, one per role —
 `normal`, `dim`, `title`, `accent`, `highlight`, `selected`, `error`,
 `added`, `removed`, `border` — each with a sensible default, so `Theme()` is
 a working plain theme exactly as `Style()` is a working plain style.
@@ -174,15 +174,15 @@ than hunting down every `Style(...)` a widget was built with; there is no
 registry and no lookup by name, because a struct field is what this
 language's interfaces already give for free.
 
-`Span` and `Line` (`tuiwidget.m31`) are ratatui's `Span`/`Line` *concept*
+`Span` and `Line` (`TUI_widget.m31`) are ratatui's `Span`/`Line` *concept*
 through this library's own idiom rather than its API: a `Span` is a run of
 text in one `Style`, and a `Line` is a `List<Span>` with a `render` method —
-a `Widget`, exactly like `Block` and `Paragraph`, composing with `tuigeom`
+a `Widget`, exactly like `Block` and `Paragraph`, composing with `TUI_geometry`
 the same way, rather than a separate "text buffer" type of its own.
 
 ```c
-tuiwidget.Line([tuiwidget.Span("staged: ", style: th.dim),
-    tuiwidget.Span("3 files", style: th.accent)])
+TUI_widget.Line([TUI_widget.Span("staged: ", style: th.dim),
+    TUI_widget.Span("3 files", style: th.accent)])
     .render(buf, area);
 ```
 
@@ -193,32 +193,32 @@ tuiwidget.Line([tuiwidget.Span("staged: ", style: th.dim),
 Six library primitives the interactive git client's design is built around,
 none of them git-specific:
 
-  - **`tuioutline.Outline`** — nested, collapsible sections. A node's
+  - **`TUI_outline.Outline`** — nested, collapsible sections. A node's
     children are rows only while every ancestor down to it is expanded;
     folding a section removes its whole subtree from the flattened list in
     one step. Every node carries an `id`, the caller's own key, because
     position is not a stable address once a fold changes every row number
     below it.
-  - **`tuijump.JumpList`** — a flat, selectable index of an `Outline`'s
+  - **`TUI_jump_list.JumpList`** — a flat, selectable index of an `Outline`'s
     current rows, synced two ways: `sync_from` rebuilds it from the
     outline's flattened rows, `follow` highlights the entry matching wherever
     the outline's cursor now is, and `activate` moves the outline's cursor
     to whatever is selected here. Matching is always by `id`, never by row
     number, which is what keeps the two in step regardless of what is
     currently folded.
-  - **`tuimenu.WhichKey`** and **`tuimenu.Transient`** — a popup of
+  - **`TUI_menu.WhichKey`** and **`TUI_menu.Transient`** — a popup of
     `(key, label)` pairs, and its sibling: the same popup with togglable
     `Switch`es and a live-rendered command preview. Both are built on one
     private `Popup` (a titled, sized-and-centred box of text rows) rather
     than as two unrelated components.
-  - **`tuidiffview.DiffView`** — a diff with a cursor addressable down to
+  - **`TUI_diff_view.DiffView`** — a diff with a cursor addressable down to
     the hunk *and* the line: `at()` answers a `Row` naming a hunk's header
     or one particular line of one particular hunk, which is the granularity
     "stage whatever is under the cursor" needs.
-  - **`tuifooter`** — `split(area, height)` cuts a fixed band off the
+  - **`TUI_footer`** — `split(area, height)` cuts a fixed band off the
     bottom of the screen for a `Footer` (an ordinary `Line`) to draw into
     every frame, regardless of what the main view currently is.
-  - **`tuiscroll.Viewport`** and **`tuiscroll.Scrollbar`** — the scroll
+  - **`TUI_scroll.Viewport`** and **`TUI_scroll.Scrollbar`** — the scroll
     offset and clamping math `Outline` and `DiffView` both need, and the bar
     that shows it, pulled out once rather than written a third and fourth
     time. `ListView` and `Table` keep their own inline copy, untouched.
@@ -227,19 +227,19 @@ none of them git-specific:
 
 ## The application loop
 
-`tuiapp.Loop` is the one module that touches a real terminal: raw mode via
+`TUI_app.Loop` is the one module that touches a real terminal: raw mode via
 `lib/term.m31`'s `raw()`, a read with a timeout via its `Reader`, a frame
 via this library's own diffing renderer, a flush via its `Writer`. It is
 the loop `examples/keys.m31` hand-writes, pulled out so a program built on
 this library does not write it twice.
 
 ```c
-tuiapp.Loop().run(view, on_event);
+TUI_app.Loop().run(view, on_event);
 ```
 
-`view` is an ordinary `tuiwidget.Widget` — no new drawing interface exists,
+`view` is an ordinary `TUI_widget.Widget` — no new drawing interface exists,
 because `Widget` already is "draw yourself into a rectangle of a buffer",
-which is the whole of what a frame needs. `on_event` is a `tuiapp.Handler`,
+which is the whole of what a frame needs. `on_event` is a `TUI_app.Handler`,
 a one-method interface in the same idiom `Widget` and every callback in this
 language already use: `Action handle(term.Event ev)`, answering `Continue`,
 `Redraw` or `Quit`. The loop itself decides *when* to redraw — after a
@@ -285,7 +285,7 @@ machine.
 `__rc_live=0`, and checks that gcc and clang at `-O0` and `-O2` all agree.
 Every widget and primitive added for stage 2 and stage 3 is in there,
 against synthetic buffers and synthetic `term.Event`s with no terminal
-anywhere near it — `tuiapp.Loop.run` is the one function in this library
+anywhere near it — `TUI_app.Loop.run` is the one function in this library
 that cannot be (it opens raw mode and blocks on a real read), so its own
 pure pieces are tested instead (`resized`, and a `Handler` written outside
 the library dispatched directly, the same proof `Widget` gets below) and
@@ -303,7 +303,7 @@ expectation is readable:
 +----------------------------------------+
 ```
 
-`tuidiff.show(bytes)` does the same for escape sequences:
+`TUI_diff.show(bytes)` does the same for escape sequences:
 `\e[1;1H\e[1;4mab\e[22mcd\e[0m`.
 
 Covered: a wide character at the right edge, both halves of a wide pair
@@ -340,8 +340,8 @@ named, separate omission rather than a silent one:
     for it in the course of building the six primitives above, so it did
     not fall out for free and was not built speculatively.
   - **A separate `Frame`/`Terminal` abstraction over the double buffer** —
-    `tuiapp.Loop` ended up owning the previous/next buffer pair and the
-    decision between `tuidiff.full` and `tuidiff.diff` directly, which is
+    `TUI_app.Loop` ended up owning the previous/next buffer pair and the
+    decision between `TUI_diff.full` and `TUI_diff.diff` directly, which is
     the whole of what that abstraction would have been; a second type
     wrapping the same two fields would have had no job left to do.
 

@@ -2,15 +2,15 @@
 //
 // API
 // ---
-//   tuigeom.Rect(x, y, w, h)        a rectangle in terminal cells
+//   TUI_geometry.Rect(x, y, w, h)        a rectangle in terminal cells
 //   r.right(), r.bottom()           one past the last column / row
 //   r.is_empty(), r.contains(x, y), r.intersect(o)
 //   r.inset(m), r.inset_xy(mx, my)  a margin taken off every side
-//   tuigeom.Constraint              Length | Percentage | Ratio | Min | Max | Fill
-//   tuigeom.rows(area, cs)          cut top to bottom
-//   tuigeom.cols(area, cs)          cut left to right
-//   tuigeom.Layout(dir, parts, ...) the same with margins and spacing
-//   tuigeom.resolve(total, cs)      the solver alone, on one dimension
+//   TUI_geometry.Constraint              Length | Percentage | Ratio | Min | Max | Fill
+//   TUI_geometry.rows(area, cs)          cut top to bottom
+//   TUI_geometry.cols(area, cs)          cut left to right
+//   TUI_geometry.Layout(dir, parts, ...) the same with margins and spacing
+//   TUI_geometry.resolve(total, cs)      the solver alone, on one dimension
 //
 // --- the resolution rules ---------------------------------------------------
 //
@@ -518,8 +518,8 @@ pub List<int> apportion(int amount, List<int> wt) {
 /// `dir` and `parts` are mandatory and positional; the rest are named:
 ///
 /// ```
-/// tuigeom.Layout(tuigeom.Direction.Vertical, [tuigeom.Constraint.Length(3),
-///     tuigeom.Constraint.Fill(1)], margin_y: 1)
+/// TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Length(3),
+///     TUI_geometry.Constraint.Fill(1)], margin_y: 1)
 /// ```
 pub type Layout {
     pub Direction dir;

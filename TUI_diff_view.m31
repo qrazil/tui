@@ -6,10 +6,10 @@
 //
 // API
 // ---
-//   tuidiffview.Kind          Context | Add | Remove -- what one line is
-//   tuidiffview.Line(kind, text)     one line of a hunk's body
-//   tuidiffview.Hunk(header, lines)  one `@@ ... @@` block
-//   tuidiffview.DiffView(hunks)      the widget: cursor, scroll, render
+//   TUI_diff_view.Kind          Context | Add | Remove -- what one line is
+//   TUI_diff_view.Line(kind, text)     one line of a hunk's body
+//   TUI_diff_view.Hunk(header, lines)  one `@@ ... @@` block
+//   TUI_diff_view.DiffView(hunks)      the widget: cursor, scroll, render
 //   view.at()           -> Option<Row>   what the cursor is on, right now
 //   view.count()        -> int           how many rows, without building them
 //   view.move(delta), view.render(buf, area)
@@ -24,11 +24,11 @@
 // the hunk when it is a `Header`, or exactly that one line when it is a
 // `Body`; deciding that is the caller's, not this widget's.
 
-import tuibuf;
-import tuigeom;
-import tuiscroll;
-import tuistyle;
-import tuitext;
+import TUI_buffer;
+import TUI_geometry;
+import TUI_scroll;
+import TUI_style;
+import TUI_text;
 
 /// What one line of a hunk's body is.
 pub enum Kind {
@@ -86,12 +86,12 @@ pub type Row {
 pub type DiffView {
     pub List<Hunk> hunks;
     pub int cursor = 0;
-    pub tuiscroll.Viewport view = tuiscroll.Viewport();
-    pub tuistyle.Style header_style = tuistyle.Style(attrs: tuistyle.BOLD);
-    pub tuistyle.Style add_style = tuistyle.Style(fg: tuistyle.Colour.Indexed(2));
-    pub tuistyle.Style remove_style = tuistyle.Style(fg: tuistyle.Colour.Indexed(1));
-    pub tuistyle.Style context_style = tuistyle.Style();
-    pub tuistyle.Style highlight_style = tuistyle.Style(attrs: tuistyle.REVERSE);
+    pub TUI_scroll.Viewport view = TUI_scroll.Viewport();
+    pub TUI_style.Style header_style = TUI_style.Style(attrs: TUI_style.BOLD);
+    pub TUI_style.Style add_style = TUI_style.Style(fg: TUI_style.Colour.Indexed(2));
+    pub TUI_style.Style remove_style = TUI_style.Style(fg: TUI_style.Colour.Indexed(1));
+    pub TUI_style.Style context_style = TUI_style.Style();
+    pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
 }
 
 /// The flattened rows: every hunk's header, followed by its lines, in order.
@@ -115,7 +115,7 @@ pub List<Row> DiffView.rows() {
 /// moved through, asked about and redrawn once per keystroke, and each of
 /// those used to flatten the whole thing to read one row of it -- so the
 /// three operations below walk the hunks (a few dozen) rather than the
-/// rows (a few thousand), the same way `tuioutline` does.
+/// rows (a few thousand), the same way `TUI_outline` does.
 pub int DiffView.count() {
     int n = 0;
     for (Hunk h in hunks) {
@@ -171,7 +171,7 @@ pub void DiffView.move(int delta) {
     cursor = at;
 }
 
-tuistyle.Style DiffView.line_style(Line l) {
+TUI_style.Style DiffView.line_style(Line l) {
     match (l.kind) {
         case Context: {
             return context_style;
@@ -199,7 +199,7 @@ str DiffView.marker(Line l) {
     }
 }
 
-pub void DiffView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
+pub void DiffView.render(TUI_buffer.Buffer buf, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
@@ -235,7 +235,7 @@ pub void DiffView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         }
         int y = area.y + i;
         str text = "";
-        tuistyle.Style st = context_style;
+        TUI_style.Style st = context_style;
         if (l < 0) {
             text = hunks[h].header;
             st = header_style;
@@ -246,9 +246,9 @@ pub void DiffView.render(tuibuf.Buffer buf, tuigeom.Rect area) {
         }
         if (k == cursor) {
             st = st.merged(highlight_style);
-            buf.fill(tuigeom.Rect(area.x, y, area.w, 1), " ", st);
+            buf.fill(TUI_geometry.Rect(area.x, y, area.w, 1), " ", st);
         }
-        buf.set_str(area.x, y, tuitext.truncate(text, area.w), st, max: area.w);
+        buf.set_str(area.x, y, TUI_text.truncate(text, area.w), st, max: area.w);
         if (l + 1 < hunks[h].lines.size()) {
             l = l + 1;
         } else {
