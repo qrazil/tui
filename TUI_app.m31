@@ -248,8 +248,8 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             // is three lists grown a cell at a time -- twice the cost of
             // clearing one that already exists -- and nothing about a
             // frame needs the last one's memory gone.
-            TUI_buffer.Buffer previous = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
-            TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
+            TUI_buffer.Buffer previous = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
+            TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
             view.render(previous, previous.area());
             writer.put_bytes(TUI_diff.full(previous, depth));
             flush(writer);
@@ -312,8 +312,8 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                         if (did_resize) {
                             // A resize is the one time the buffers are
                             // replaced: the old pair is the wrong shape.
-                            next = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
-                            previous = TUI_buffer.Buffer.sized(window_size.cols, window_size.rows);
+                            next = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
+                            previous = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
                         } else {
                             next.clear();
                         }
@@ -426,7 +426,7 @@ pub Action fold(Action first, Action second) {
 pub term.Size screen_size() {
     match (term.size()) {
         case Ok(term.Size window_size): {
-            if (window_size.rows > 0 && window_size.cols > 0) {
+            if (window_size.rows > 0 && window_size.columns > 0) {
                 return window_size;
             }
         }
@@ -439,7 +439,7 @@ pub term.Size screen_size() {
 /// Whether two readings of the window's size differ -- the loop's own resize
 /// test, pulled out so it can be checked without a terminal at all.
 pub bool has_resized(term.Size previous, term.Size current) {
-    return previous.rows != current.rows || previous.cols != current.cols;
+    return previous.rows != current.rows || previous.columns != current.columns;
 }
 
 void flush(term.Writer writer) {

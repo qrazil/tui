@@ -830,9 +830,9 @@ TUI_input.Outcome TextArea.cut() {
 }
 
 TUI_input.Outcome TextArea.handle_key(term.Key key) {
-    bool is_ctrl = key.has(term.CTRL);
-    bool is_alt = key.has(term.ALT);
-    bool is_shift = key.has(term.SHIFT);
+    bool is_ctrl = key.has_modifiers(term.CTRL);
+    bool is_alt = key.has_modifiers(term.ALT);
+    bool is_shift = key.has_modifiers(term.SHIFT);
     match (key.code) {
         case Char(int code): {
             if (is_ctrl) {

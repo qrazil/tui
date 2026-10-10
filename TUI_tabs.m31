@@ -444,22 +444,22 @@ TabOutcome Tabs.handle_key(term.Key key) {
             return moved(did_select_last());
         }
         case PageUp: {
-            if (key.has(term.CTRL)) {
+            if (key.has_modifiers(term.CTRL)) {
                 return moved(did_select_previous());
             }
             return TabOutcome.Ignored;
         }
         case PageDown: {
-            if (key.has(term.CTRL)) {
+            if (key.has_modifiers(term.CTRL)) {
                 return moved(did_select_next());
             }
             return TabOutcome.Ignored;
         }
         case Char(int code): {
-            if (key.has(term.CTRL) && code == 'w') {
+            if (key.has_modifiers(term.CTRL) && code == 'w') {
                 return request_close(selected);
             }
-            if (key.has(term.ALT) && code >= '1' && code <= '9') {
+            if (key.has_modifiers(term.ALT) && code >= '1' && code <= '9') {
                 return moved(did_select(code - '1'));
             }
             return TabOutcome.Ignored;

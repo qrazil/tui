@@ -66,7 +66,7 @@ void State.reload() {
             names = entry_names;
             List<str> items = [];
             for (str entry_name in entry_names) {
-                if (fs.is_dir(fs.join(path(), entry_name))) {
+                if (fs.is_directory(fs.join(path(), entry_name))) {
                     items.push(entry_name + "/");
                 } else {
                     items.push(entry_name);
@@ -94,7 +94,7 @@ void State.show_preview() {
     }
     str name = names[list.selected];
     str full = fs.join(path(), name);
-    if (fs.is_dir(full)) {
+    if (fs.is_directory(full)) {
         preview = "directory";
         return;
     }
@@ -146,7 +146,7 @@ void State.enter() {
     }
     str name = names[list.selected];
     str full = fs.join(path(), name);
-    if (fs.is_dir(full)) {
+    if (fs.is_directory(full)) {
         parts.push(name);
         reload();
     }
