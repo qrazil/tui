@@ -1,4 +1,39 @@
-# tui -> m31 naming convention: public renames
+# tui -> m31 0.4.0: what changes for a downstream program
+
+Version 0.4.0, from master f19daf8 (v0.3.0). **No public name of tui changed in
+this release**: every module, type, function, field, constant and named
+argument keeps the name it had in 0.3.0, and `m31c lint` reports no finding
+for this repository (it already followed `docs/naming-decision.md`). The
+version is a minor bump because the library now needs **m31 v0.4.0 or later**
+and does not build with older compilers (`import text.unicode;` is a path
+import that only 0.4.0 knows), so a program on m31 0.3.x must stay on tui 0.3.0.
+
+What a program that depends on tui has to do on moving to m31 0.4.0 comes from
+the m31 standard library renames (m31's `CHANGELOG.md`, "Moving a program from
+0.3.x"), because tui's public API passes m31 types through:
+
+| where | old | new |
+|---|---|---|
+| import | `import unicode;` | `import text.unicode;` (the module is still used as `unicode.width(..)`) |
+| `term.Size` returned by `term.size` and held by `TUI_app.Loop` code | `.cols` | `.columns` |
+| `term.Key` handed to every widget's `handle` | `key.has(term.CTRL)` | `key.has_modifiers(term.CTRL)` |
+| `fs` | `fs.is_dir(path)` | `fs.is_directory(path)` |
+
+`term.Size.columns` and `term.Key.has_modifiers` are the two a handler written
+against `TUI_app.Handler` is likely to meet; the other renames in the m31
+changelog (`term.fg` -> `term.foreground`, `os.args` -> `os.arguments`, and
+the rest) do not appear anywhere in tui's API.
+
+Inside this repository: `TUI_app.m31` (window size fields), `TUI_input.m31`,
+`TUI_textarea.m31` and `TUI_tabs.m31` (modifier tests), `TUI_buffer.m31` and
+`TUI_text.m31` (the `unicode` import) and `examples/browse.m31`
+(`fs.is_directory`). Tests and their expected output are untouched: the
+output of `tests/tests.m31` and `tests/widgets.m31` is byte-for-byte what it
+was.
+
+---
+
+# Earlier release (0.2.0), the naming convention renames
 
 Branch `naming/migrate` of tui, from master 593d39a (v0.1.1). Consumers (gitui) must update every item below.
 

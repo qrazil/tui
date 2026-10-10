@@ -31,7 +31,9 @@ remains.
 **This library is not part of the standard library.** The compiler knows
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
-depends on it from its own `deps` file and imports each module by path.
+depends on it from its own `deps` file and imports each module by path. This
+version (0.4.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
+a program moving from m31 0.3.x has to change.
 
     name myapp
     version 0.1.0
