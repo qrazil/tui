@@ -1,8 +1,9 @@
 # tui — a terminal user interface library
 
 A buffer of grapheme clusters, a diffing renderer, ratatui's constraint
-layout, width-aware text, a styling layer, thirteen widgets, and the
-application loop that joins all of it to a real terminal. Nothing below the
+layout, width-aware text, a styling layer, twenty-one widgets and widget-like
+pieces, a mouse router, and the application loop that joins all of it to a real
+terminal. Nothing below the
 loop touches a terminal: everything else is computation against an
 in-memory buffer, and the output of a frame is one `bytes`. That is what
 makes it testable, and it is the whole design.
@@ -14,12 +15,18 @@ outline, a synced jump list, a which-key overlay and the transient menu
 built on it, an addressable diff view, a persistent footer, plus `Viewport`
 and `Scrollbar` in support of the first two), and `TUI_app.Loop`, which reads
 real keys through `lib/term.m31` and redraws through this library's own
-renderer. See "Left deliberately undone" below for what stage 2's original
-wishlist dropped, and why.
+renderer. **Stage 4 is also done**: the dashboard widgets (`Gauge`, `Sparkline`,
+`BarChart`, `Chart`), `Spinner`, the input widgets (`TextInput`, `TextArea`),
+`Tabs`, and mouse support end to end: a `Pointer` that turns SGR reports into
+clicks, drags and wheel turns, a `Router` that sends each to the region under
+it, `handle_mouse` on every interactive widget, and an opt-in timer, mouse and
+paste mode on `TUI_app.Loop`. See "Left deliberately undone" below for what
+remains.
 
     M31_ROOT=/path/to/m31 bash scripts/check.sh                              # tests, then the benchmark
     M31_ROOT=/path/to/m31 bash scripts/build.sh examples/demo.m31 -o /tmp/d    # a static screen; run /tmp/d
     M31_ROOT=/path/to/m31 bash scripts/build.sh examples/browse.m31 -o /tmp/b  # an interactive one; run /tmp/b
+    M31_ROOT=/path/to/m31 bash scripts/build.sh examples/widgets.m31 -o /tmp/w # every stage 4 widget, mouse and timer
 
 **This library is not part of the standard library.** The compiler knows
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
@@ -42,7 +49,7 @@ written up in `docs/FRICTION.md` §1.
 
 ## The modules
 
-Fourteen, in dependency order. They are all prefixed `tui` because module
+Twenty-seven, in dependency order. They are all prefixed `tui` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
 `docs/FRICTION.md` §1. `TUI_app` is the one exception worth naming: it is the only
@@ -65,7 +72,20 @@ buffer.
 | `TUI_menu`  | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
 | `TUI_diff_view`| `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line |
 | `TUI_footer`| `split`, `Footer` — a screen band reserved regardless of the main view |
-| `TUI_app`   | `Action`, `Handler`, `Loop` — the application loop, over `lib/term.m31` |
+| `TUI_eighths` | eighth-block bar maths: `of_ratio`, `scaled`, `vertical`, `horizontal`, `bounds_of` |
+| `TUI_scale` | `nice_ticks` and `Scale`: one mapping that places both tick marks and their labels |
+| `TUI_clip` | `put_str` and `paint` into a clip rectangle, so a widget cannot draw outside its area |
+| `TUI_word` | word-boundary motion over grapheme clusters, shared by the two text widgets |
+| `TUI_gauge` | `Gauge` — a ratio as a filled bar with a label, in eighths of a cell |
+| `TUI_sparkline` | `Sparkline` — a series as a row of vertical eighth-blocks |
+| `TUI_barchart` | `Bar`, `BarGroup`, `BarChart` — vertical or horizontal, grouped, with value labels |
+| `TUI_chart` | `Dataset`, `Axis`, `Chart` — line, scatter and bar over braille, dot or block markers, with a legend and a hover readout |
+| `TUI_spinner` | `Spinner` and its frame sets, advanced by the loop's timer |
+| `TUI_input` | `TextInput` — a one-line editor: selection, kill ring, undo/redo, paste, validation, scrolling |
+| `TUI_textarea` | `TextArea` — a multi-line editor: selection, wrapping, line numbers, undo/redo, wheel scroll |
+| `TUI_tabs` | `Tab`, `Tabs` — a tab bar with overflow scrolling, selection and close requests |
+| `TUI_mouse` | `Gesture`, `Pointer`, `Region`, `Router` — mouse reports to clicks, drags and hovers, routed to widgets |
+| `TUI_app`   | `Action`, `Handler`, `Ticker`, `MouseHandler`, `Loop` — the application loop, over `lib/term.m31` |
 
 Each file's header comment is its reference documentation.
 
@@ -256,6 +276,44 @@ is always restored on the way out, trap included, because that is what
 
     M31_ROOT=/path/to/m31 bash scripts/build.sh examples/browse.m31 -o /tmp/browse && /tmp/browse
 
+### Timer, mouse and paste (opt-in)
+
+Everything below is off by default, so a `Loop()` with no arguments behaves
+exactly as before.
+
+```c
+loop = TUI_app.Loop(animate_ms: 80, should_report_mouse: true,
+                    should_report_hover: true, should_report_paste: true,
+                    router: router);
+loop.run_with(view, on_event, on_tick, on_mouse);
+```
+
+  - **Timer.** `animate_ms > 0` calls `on_tick.tick(elapsed_ms)` about that
+    often; the read's timeout is the time to the next tick, so an idle program
+    sleeps in the kernel and a stream of input cannot starve the timer.
+    There is no monotonic clock in m31 (`docs/FRICTION.md` §22), so elapsed
+    time comes from the wall clock, is clamped to one second, and a clock
+    that goes backwards counts as zero.
+  - **Mouse.** `should_report_mouse` turns reporting on at entry and off on
+    exit; `should_report_hover` adds motion with no button down. Each report
+    goes to `router`, which makes gestures (`Press`, `Drag`, `Release`, `Click` with a count of 1, 2
+    or 3, `Hover`, `Leave`, and four `Scroll` directions) and
+    finds the region of the last frame under the pointer. A drag is captured
+    by the region it began in until its Release. With mouse reporting on,
+    mouse events reach `on_mouse`, not `on_event`.
+  - **Paste.** `should_report_paste` makes a paste one `Event.Paste`, which
+    `TextInput` and `TextArea` insert as a unit (one undo step).
+
+A trap, `os.exit` or a signal restores the terminal's raw mode but not these
+modes (`docs/FRICTION.md` §23), so a program killed that way leaves the mouse
+on until the shell is reset. `loop.leave_sequence()` is the exact bytes a
+normal exit writes, for a program that wants to write them itself.
+
+`examples/widgets.m31` uses all of it: a tab bar, a chart with a hover
+readout, an outline and a diff view that take clicks and the wheel, a text
+field, a gauge, a sparkline and a spinner, with the mouse and the keyboard
+both working.
+
 ---
 
 ## Performance
@@ -280,16 +338,24 @@ machine.
 
 ## Testing without a terminal
 
-`tests/tests.m31` prints a report — 163 assertions plus rendered frames — and
-`check.sh` compares it against `tests/tests.out`, checks for a `FAIL` line, checks
+There are two test programs, `tests/tests.m31` (the stage 1 to 3 library:
+175 `ok` lines plus rendered frames) and `tests/widgets.m31` (stage 4: 419
+assertions plus rendered frames, golden renders of every new widget).
+`check.sh` runs each, compares it against its `.out` file (`tests/tests.out`,
+`tests/widgets.out`; `--bless` rewrites them), checks for a `FAIL` line, checks
 `__rc_live=0`, and checks that gcc and clang at `-O0` and `-O2` all agree.
-Every widget and primitive added for stage 2 and stage 3 is in there,
+Every widget and primitive added for stage 2 and stage 3 is in the first,
 against synthetic buffers and synthetic `term.Event`s with no terminal
 anywhere near it — `TUI_app.Loop.run` is the one function in this library
 that cannot be (it opens raw mode and blocks on a real read), so its own
 pure pieces are tested instead (`has_resized`, and a `Handler` written outside
 the library dispatched directly, the same proof `Widget` gets below) and
-the loop itself is proven by `examples/browse.m31` against a real terminal.
+the loop itself is proven by `examples/browse.m31` and `examples/widgets.m31`
+against a real terminal. The stage 4 pieces that sit on the loop are pure:
+the exact enter and leave byte sequences, the timer's timeout and clamping,
+and the fold of routed answers are each a function with a test; mouse
+handling is tested by feeding `term.Mouse` reports and a clock value to a
+`Pointer` and a `Router` directly.
 
 A buffer prints itself: `print(buf)` gives the rows as text, and
 `buf.frame()` puts a rule around them so trailing spaces are visible and an
@@ -317,33 +383,49 @@ three forms a one-method interface accepts.
 
 ## Left deliberately undone
 
-Stage 2's original wishlist named a few things not built here, each a
-named, separate omission rather than a silent one:
+Stage 4 built the whole of stage 2's original wishlist (`Gauge`, `Sparkline`,
+`BarChart`, `Chart`, `Tabs`, mouse events, `TextInput`, `Spinner`), plus
+`TextArea`. What still is not here, and why:
 
-  - **`Gauge`, `Sparkline`, `BarChart`, `Chart`** — dashboard widgets. Nothing
-    in a text-document-shaped client (`apps/git/design.md`'s own frame, and
-    the only concrete client this library is being built toward so far)
-    has a role for one, and adding a chart widget on spec, with nothing to
-    render it TO, is exactly the guessing this library's design has avoided
-    elsewhere.
-  - **`Tabs`** — the locked design is one continuous, collapsible document
-    with a jump list beside it, not a set of screens to switch between; a
-    tabs widget would be built for a shape this library is not taking.
-  - **Mouse events** — the locked design is keyboard-driven throughout.
-    `lib/term.m31` already decodes SGR mouse reports (`Event.Mouse`) for
-    whatever does want them; there is simply nothing here that reads one.
-  - **`TextInput`** — no named client need yet. Nothing in
-    `apps/git/design.md` asks for free-text entry (a commit message is the
-    likely first caller, and it is not designed yet); adding it now would be
-    guessing at a shape.
-  - **`Spinner`** — lowest priority on the original list, and nothing asked
-    for it in the course of building the six primitives above, so it did
-    not fall out for free and was not built speculatively.
   - **A separate `Frame`/`Terminal` abstraction over the double buffer** —
-    `TUI_app.Loop` ended up owning the previous/next buffer pair and the
-    decision between `TUI_diff.full` and `TUI_diff.diff` directly, which is
-    the whole of what that abstraction would have been; a second type
-    wrapping the same two fields would have had no job left to do.
+    `TUI_app.Loop` owns the previous/next buffer pair and the decision between
+    `TUI_diff.full` and `TUI_diff.diff` directly, which is the whole of what
+    that abstraction would have been; a second type wrapping the same two
+    fields would have no job left to do. This still stands.
+  - **Restoring the mouse and the alternate screen on a trap, `os.exit` or a
+    signal.** `lib/term.m31` restores termios on those paths and nothing else,
+    because the safety story is a destructor and `on_exit` is not run
+    (`docs/FRICTION.md` §23). A normal exit, including `Quit`, restores
+    everything; a killed program leaves mouse reporting on. It needs a
+    hook in `term`, not a workaround here.
+  - **A monotonic clock.** The timer runs on the wall clock and is clamped
+    (`docs/FRICTION.md` §22). It cannot be exact across a clock step.
+  - **Editor-grade `TextArea`.** It has a cursor, a selection, word motion,
+    undo and redo, wrapping, line numbers, paste and the mouse. It does not
+    have rectangular selection, multiple cursors, folding, syntax colour, search, or input
+    methods (IME composition); those belong to an editor built on it, not to
+    a widget. Its model (lines of grapheme clusters, a `Position`) is
+    documented in `TUI_textarea.m31`'s header for that purpose.
+  - **A test of the real terminal path.** The loop's pure pieces are tested
+    and every example was smoke-tested in a pty by hand, but there is no pty
+    harness in `check.sh`, so mouse mode on a real terminal is not a CI
+    assertion, and CI runs only what the macOS and Linux bash and C
+    compilers can run with no terminal.
+  - **Chart extras.** No log axes, no secondary axis, no area fill, no
+    annotations. Axis ticks are "nice numbers"; labels are fixed-point or
+    short-form, because m31 has neither `str.replace` nor `math.sin`
+    (`docs/FRICTION.md` §24).
+
+`Tabs` deserves a plain account, because the earlier text of this section gave
+a reason that was not the real one. It said a tabs widget "would be built for
+a shape this library is not taking" — the locked design in `apps/git/design.md`
+being one continuous, collapsible document. That was true of the one client,
+and it was used as a reason to skip a widget that every general-purpose UI
+library has, which is a reason about the client and not about the library. It
+was left out because nothing in that client needed it. It is built now for
+generality: a bar that scrolls when it overflows, selection by key and by
+click, and closing as a request (`CloseRequested`) the program answers,
+because only the program knows whether a tab has unsaved state.
 
 `lib/term.m31` itself is not on this list: it already existed, complete and
 tested, before this work started — see the module table above, and do not

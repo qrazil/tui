@@ -13,6 +13,7 @@
 //   view.at()           -> Option<Row>   what the cursor is on, right now
 //   view.count()        -> int           how many rows, without building them
 //   view.move(delta), view.render(buf, area)
+//   view.handle_mouse(gesture, area)   press puts the cursor on a row, wheel moves it
 //
 // --- what a `Row` addresses ---------------------------------------------------
 //
@@ -26,6 +27,7 @@
 
 import TUI_buffer;
 import TUI_geometry;
+import TUI_mouse;
 import TUI_scroll;
 import TUI_style;
 import TUI_text;
@@ -199,6 +201,46 @@ str DiffView.marker(Line line) {
     }
 }
 
+/// A mouse gesture over the diff, drawn in `area` (as last rendered): a Press
+/// puts the cursor on the row under it (header or line, so `at()` says exactly
+/// what a click selected); the wheel moves the cursor by `WHEEL_ROWS`.
+/// `Changed` when the cursor moved, else `Ignored`.
+pub TUI_mouse.Response DiffView.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
+    int before = cursor;
+    match (gesture.kind) {
+        case Press: {
+            int index = view.offset + gesture.y - area.y;
+            if (!area.is_empty() && area.has_point(gesture.x, gesture.y) && index < count()) {
+                cursor = index;
+            }
+        }
+        case ScrollUp: {
+            move(0 - WHEEL_ROWS);
+        }
+        case ScrollDown: {
+            move(WHEEL_ROWS);
+        }
+        case Drag: {
+        }
+        case Release: {
+        }
+        case Click: {
+        }
+        case Hover: {
+        }
+        case Leave: {
+        }
+        case ScrollLeft: {
+        }
+        case ScrollRight: {
+        }
+    }
+    if (cursor == before) {
+        return TUI_mouse.Response.Ignored;
+    }
+    return TUI_mouse.Response.Changed;
+}
+
 pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
@@ -259,3 +301,6 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
         screen_row = screen_row + 1;
     }
 }
+
+/// How many rows a wheel notch moves the cursor.
+pub const int WHEEL_ROWS = 3;

@@ -1,0 +1,49 @@
+// Drawing that stays inside a rectangle, not merely inside the buffer.
+//
+// API
+// ---
+//   TUI_clip.put_str(buffer, clip, x, y, text, style)   -> columns drawn
+//   TUI_clip.paint(buffer, clip, rect, symbol, style)   fill, clipped to `clip`
+//
+// `Buffer.set_str` and `Buffer.fill` clip to the BUFFER, which is right for
+// a widget that owns the whole screen and wrong for one handed a rectangle in
+// the middle of it: a label wider than its bar must not run into the next
+// widget. These two are the same calls clipped to a rectangle -- the one the
+// widget was given -- on every side, and they are what the chart widgets draw
+// with.
+//
+// Text that starts left of `clip` is drawn from the first whole cluster inside
+// it, so a wide character straddling the edge becomes a blank column rather
+// than half a glyph, the rule `Buffer.set_str` follows at the buffer's edge.
+
+import TUI_buffer;
+import TUI_geometry;
+import TUI_style;
+import TUI_text;
+
+/// Draw `text` at `x`, `y`, only where it falls inside `clip`. Answers the
+/// columns drawn, which excludes anything cut off on the left.
+pub int put_str(TUI_buffer.Buffer buffer, TUI_geometry.Rect clip, int x, int y, str text, TUI_style.Style style) {
+    if (clip.is_empty() || y < clip.y || y >= clip.bottom() || x >= clip.right()) {
+        return 0;
+    }
+    str shown = text;
+    int start = x;
+    if (x < clip.x) {
+        shown = TUI_text.drop_columns(text, clip.x - x);
+        start = x + TUI_text.width(text) - TUI_text.width(shown);
+    }
+    if (start >= clip.right()) {
+        return 0;
+    }
+    return buffer.set_str(start, y, shown, style, max: clip.right() - start);
+}
+
+/// `Buffer.fill`, only inside `clip`.
+pub void paint(TUI_buffer.Buffer buffer, TUI_geometry.Rect clip, TUI_geometry.Rect rect, str symbol, TUI_style.Style style) {
+    TUI_geometry.Rect inside = rect.intersect(clip);
+    if (inside.is_empty()) {
+        return;
+    }
+    buffer.fill(inside, symbol, style);
+}

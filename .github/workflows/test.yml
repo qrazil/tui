@@ -2,8 +2,9 @@ name: Test
 
 # Builds and tests this library against a pinned release of
 # github.com/qrazil/m31. This is a library, not a standalone app -- tests/tests.m31,
-# examples/bench.m31, demo.m31 and browse.m31 each compile by m31c and then link, as
-# ordinary C, against the m31 runtime's own source files directly (there is
+# tests/widgets.m31, examples/bench.m31, demo.m31, browse.m31 and widgets.m31
+# each compile by m31c and then link, as ordinary C, against the m31 runtime's own
+# source files directly (there is
 # no pre-built runtime library to link against instead). qrazil/m31's own
 # release tarballs bundle exactly that (config.sh + runtime/, see that
 # repo's release.yml and docs/apps-repo-split-decision.md), alongside the

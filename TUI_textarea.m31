@@ -1,0 +1,1472 @@
+// A multi-line text box: cursor, selection, scrolling, wrapping, line numbers.
+//
+// API
+// ---
+//   TUI_textarea.TextArea(...)           the box; every argument has a default
+//   TUI_textarea.TextArea.of(text)       a box that starts with `text`
+//   area_box.handle(event) -> TUI_input.Outcome    one terminal event in, what happened out
+//   area_box.handle_mouse(gesture, area) click, double/triple click, drag, wheel
+//   area_box.render(buffer, area) / layout(area) / cursor_position(area)
+//   area_box.text() / set_text(t) / line_count() / line(row)
+//   area_box.selection()  -> Option<Selection>      the selected span, ordered
+//   area_box.selected_text() / select_all() / clear_selection()
+//   area_box.replace(from, to, text)     the one editing primitive
+//   TUI_textarea.Position(row, column)   a place in the text
+//
+// --- the model, which is all a caller needs to build on ---------------------
+//
+// The text is a list of lines (`lines`), without their `\n`, and there is
+// always at least one, possibly empty: the text `"a\n"` is `["a", ""]`. A
+// **Position** is `(row, column)`: a line, and a cursor position BETWEEN two
+// grapheme clusters of it, 0 before the first and `length` after the last.
+// Columns are cluster counts, not bytes and not terminal columns, so a cursor
+// step is one visible character however wide or however many code points.
+//
+// The **cursor** is `(row, column)`. The **selection** is the span between the
+// cursor and the **anchor** (`anchor_row`, `anchor_column`, valid when
+// `has_anchor`): the anchor is where the selection started, the cursor is
+// the end that moves, and either may come first. `selection()` answers the
+// ordered span; `has_selection()` is false when the two coincide.
+//
+// Every change to the text goes through `replace(from, to, text)`: cut out the
+// span `from..to` (ordered positions), put `text` there (it may hold `\n`),
+// leave the cursor after it. Typing, Enter, Backspace, paste, cut, kill are
+// each a call to it, so there is one place that keeps the lines, the cursor
+// and the undo history agreeing. Anything a caller builds -- a search and
+// replace, a formatter -- can use it the same way.
+//
+// This is the base for a form field or a commit-message box. It is
+// deliberately modest: lines are plain strings (re-clustered when a line is
+// touched), undo keeps a snapshot of the line list, and nothing is indexed.
+// A program that edits large files wants its own text engine (a rope or a
+// gap buffer); `replace`, `Position` and `Selection` are the seam to put
+// one behind.
+//
+// --- keys -------------------------------------------------------------------
+//
+//   arrows, Home/End (the line), Ctrl-Home/End (the text), PageUp/PageDown
+//   Ctrl-A/E line start/end, Ctrl-B/F, Ctrl-P/N, Ctrl-Left/Right, Alt-B/F  readline
+//   Shift + any of the motions        extend the selection
+//   Alt-A                             select all
+//   Enter newline;   Alt-Enter        submit
+//   Backspace, Delete, Ctrl-D         delete the selection, or a cluster
+//   Alt-Backspace, Ctrl-W             delete the word before the cursor
+//   Alt-D                             delete the word after it
+//   Ctrl-K, Ctrl-U                    kill to the end / the start of the line
+//   Ctrl-C copy;  Ctrl-X cut;  Ctrl-V, Ctrl-Y paste  (the box's own clipboard)
+//   Ctrl-Z, Ctrl-_  undo;   Alt-_  redo
+//   Tab                               spaces to the next tab stop (`tab_width`; 0 leaves Tab alone)
+//   Escape                            clear the selection, or Cancelled when there is none
+//   Ctrl-C with no selection          Cancelled
+//
+// `Outcome` is `TUI_input.Outcome`, with the same meaning: `Ignored` means
+// nothing changed, so the caller may use the event itself.
+//
+// --- wrapping ---------------------------------------------------------------
+//
+// With `should_wrap` a line longer than the text width continues on the next
+// row, broken between clusters (never inside one; a cluster wider than the
+// row gets a row to itself). One column of the width is kept free, so the
+// cursor at the end of a full row has a cell to sit in. Up and Down then
+// move by VISUAL row, with the column they started from remembered (the
+// "goal column") so a short row in between does not lose it. Without
+// wrapping the box scrolls sideways (`left`) to keep the cursor in view.
+//
+// The box learns its width from `layout(area)` or `render`; before the first
+// one, wrapping is off in motion and the page is ten rows.
+//
+// --- scrolling and the wheel ------------------------------------------------
+//
+// `render` scrolls just far enough to keep the cursor in view -- but only
+// after something that moved the cursor. The mouse wheel scrolls the view
+// WITHOUT moving the cursor, and `render` leaves it where the wheel put it
+// until the next key.
+
+import term;
+import TUI_buffer;
+import TUI_clip;
+import TUI_geometry;
+import TUI_input;
+import TUI_mouse;
+import TUI_style;
+import TUI_text;
+import TUI_word;
+
+/// A place in the text. See the header.
+pub type Position {
+    pub int row;
+    pub int column;
+}
+
+/// Is this place strictly before `other`?
+pub bool Position.is_before(Position other) {
+    return row < other.row || (row == other.row && column < other.column);
+}
+
+pub bool Position.is_same(Position other) {
+    return row == other.row && column == other.column;
+}
+
+pub str Position.to_str() {
+    return str(row) + ":" + str(column);
+}
+
+/// A span of the text, `start` first.
+pub type Selection {
+    pub Position start;
+    pub Position end;
+}
+
+type Snapshot {
+    List<str> lines;
+    int row;
+    int column;
+}
+
+// A visual row: the `part`th wrapped piece of line `row`.
+type Spot {
+    int row;
+    int part;
+}
+
+const int LAST_OTHER = 0;
+const int LAST_TYPING = 1;
+const int LAST_KILL = 2;
+const int UNDO_LIMIT = 100;
+const int PAGE_DEFAULT = 10;
+const int WHEEL_ROWS = 3;
+const int WHEEL_COLUMNS = 4;
+const int MOVE_LEFT = 0;
+const int MOVE_RIGHT = 1;
+const int MOVE_UP = 2;
+const int MOVE_DOWN = 3;
+const int MOVE_WORD_LEFT = 4;
+const int MOVE_WORD_RIGHT = 5;
+const int MOVE_LINE_START = 6;
+const int MOVE_LINE_END = 7;
+const int MOVE_TEXT_START = 8;
+const int MOVE_TEXT_END = 9;
+const int MOVE_PAGE_UP = 10;
+const int MOVE_PAGE_DOWN = 11;
+
+/// The box. `TextArea()` is an empty focused box.
+pub type TextArea {
+    /// The lines, without their newlines; never empty.
+    pub List<str> lines = [""];
+    pub int row = 0;
+    pub int column = 0;
+    pub bool has_anchor = false;
+    pub int anchor_row = 0;
+    pub int anchor_column = 0;
+    /// The first visible line (and, when wrapping, its `top_part`th piece).
+    pub int top_row = 0;
+    pub int top_part = 0;
+    /// The first visible terminal column when not wrapping.
+    pub int left = 0;
+    pub bool should_wrap = false;
+    pub bool should_show_numbers = false;
+    pub bool is_focused = true;
+    pub int tab_width = 4;
+    pub str placeholder = "";
+    pub str clipboard = "";
+    pub TUI_input.Validator validator = TUI_input.accept_any;
+    pub str error = "";
+    pub int revision = 0;
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style cursor_style = TUI_style.Style(attrs: TUI_style.REVERSE);
+    pub TUI_style.Style selection_style = TUI_style.Style(background: TUI_style.Colour.Indexed(4));
+    pub TUI_style.Style number_style = TUI_style.Style(attrs: TUI_style.DIM);
+    pub TUI_style.Style placeholder_style = TUI_style.Style(attrs: TUI_style.DIM);
+    int text_width = 0;
+    int page_size = PAGE_DEFAULT;
+    int goal = -1;
+    bool should_follow = true;
+    int last = 0;
+    List<Snapshot> undo_stack = [];
+    List<Snapshot> redo_stack = [];
+}
+
+/// A box that starts out holding `text`, cursor at its end.
+pub static TextArea TextArea.of(str text) {
+    TextArea box = TextArea();
+    box.set_text(text);
+    return box;
+}
+
+// --- the text ---------------------------------------------------------------
+
+/// All of it, lines joined with `\n`.
+pub str TextArea.text() {
+    return lines.join("\n");
+}
+
+pub int TextArea.line_count() {
+    return lines.size();
+}
+
+/// One line's text; "" past the end.
+pub str TextArea.line(int index) {
+    if (index < 0 || index >= lines.size()) {
+        return "";
+    }
+    return lines[index];
+}
+
+/// How many clusters line `index` has.
+pub int TextArea.line_length(int index) {
+    return glyphs_of(index).size();
+}
+
+List<str> TextArea.glyphs_of(int index) {
+    return TUI_text.clusters(line(index));
+}
+
+/// Replace the text from outside: cursor at the end, no selection, undo
+/// history forgotten.
+pub void TextArea.set_text(str text) {
+    lines = text.split("\n");
+    row = lines.size() - 1;
+    column = line_length(row);
+    has_anchor = false;
+    undo_stack.clear();
+    redo_stack.clear();
+    error = "";
+    top_row = 0;
+    top_part = 0;
+    left = 0;
+    goal = -1;
+    last = LAST_OTHER;
+    should_follow = true;
+    revision = revision + 1;
+}
+
+pub Position TextArea.cursor() {
+    return Position(row, column);
+}
+
+/// Put the cursor at `target` (clamped into the text), selection cleared.
+pub void TextArea.set_cursor(Position target) {
+    place(target.row, target.column);
+    has_anchor = false;
+    goal = -1;
+    last = LAST_OTHER;
+    should_follow = true;
+}
+
+void TextArea.place(int target_row, int target_column) {
+    int clamped_row = target_row;
+    if (clamped_row < 0) {
+        clamped_row = 0;
+    }
+    if (clamped_row >= lines.size()) {
+        clamped_row = lines.size() - 1;
+    }
+    int clamped_column = target_column;
+    if (clamped_column < 0) {
+        clamped_column = 0;
+    }
+    int length = line_length(clamped_row);
+    if (clamped_column > length) {
+        clamped_column = length;
+    }
+    row = clamped_row;
+    column = clamped_column;
+}
+
+// --- selection --------------------------------------------------------------
+
+pub bool TextArea.has_selection() {
+    return has_anchor && (anchor_row != row || anchor_column != column);
+}
+
+/// The selected span, `start` first, or `None`.
+pub Option<Selection> TextArea.selection() {
+    if (!has_selection()) {
+        return Option<Selection>.None;
+    }
+    Position here = Position(row, column);
+    Position there = Position(anchor_row, anchor_column);
+    if (here.is_before(there)) {
+        return Option<Selection>.Some(Selection(here, there));
+    }
+    return Option<Selection>.Some(Selection(there, here));
+}
+
+/// The text between two ordered positions.
+pub str TextArea.text_between(Position start, Position end) {
+    if (start.row == end.row) {
+        return glyphs_of(start.row).slice(start.column, end.column).join("");
+    }
+    List<str> pieces = [];
+    List<str> first = glyphs_of(start.row);
+    pieces.push(first.slice(start.column, first.size()).join(""));
+    for (int middle in start.row + 1 .. end.row) {
+        pieces.push(line(middle));
+    }
+    pieces.push(glyphs_of(end.row).slice(0, end.column).join(""));
+    return pieces.join("\n");
+}
+
+pub str TextArea.selected_text() {
+    match (selection()) {
+        case Some(Selection span): {
+            return text_between(span.start, span.end);
+        }
+        case None: {
+            return "";
+        }
+    }
+}
+
+pub void TextArea.select_all() {
+    anchor_row = 0;
+    anchor_column = 0;
+    has_anchor = true;
+    place(lines.size() - 1, line_length(lines.size() - 1));
+    goal = -1;
+    last = LAST_OTHER;
+    should_follow = true;
+}
+
+pub void TextArea.clear_selection() {
+    has_anchor = false;
+}
+
+// A position pulled into the text.
+Position TextArea.within(Position target) {
+    int clamped_row = target.row;
+    if (clamped_row < 0) {
+        clamped_row = 0;
+    }
+    if (clamped_row >= lines.size()) {
+        clamped_row = lines.size() - 1;
+    }
+    int clamped_column = target.column;
+    if (clamped_column < 0) {
+        clamped_column = 0;
+    }
+    if (clamped_column > line_length(clamped_row)) {
+        clamped_column = line_length(clamped_row);
+    }
+    return Position(clamped_row, clamped_column);
+}
+
+// --- the one editing primitive ------------------------------------------------
+
+/// Replace the span `from`..`to` with `insert`, which may contain `\n`. The
+/// two positions are clamped into the text and put in order, so a span given
+/// backwards, or past the end, means what it plainly says. The cursor ends up after the insertion, the
+/// selection is cleared and `revision` counts one more. Does NOT record
+/// undo: the key handlers do, because they know what is one step.
+pub void TextArea.replace(Position first, Position second, str insert) {
+    Position from = within(first);
+    Position stop = within(second);
+    if (stop.is_before(from)) {
+        from = within(second);
+        stop = within(first);
+    }
+    List<str> head_glyphs = glyphs_of(from.row);
+    List<str> tail_glyphs = glyphs_of(stop.row);
+    str head = head_glyphs.slice(0, from.column).join("") + insert;
+    str tail = tail_glyphs.slice(stop.column, tail_glyphs.size()).join("");
+    List<str> made = (head + tail).split("\n");
+    List<str> next = lines.slice(0, from.row);
+    for (str piece in made) {
+        next.push(piece);
+    }
+    for (int index in stop.row + 1 .. lines.size()) {
+        next.push(lines[index]);
+    }
+    lines = next;
+    List<str> inserted_lines = head.split("\n");
+    int new_row = from.row + inserted_lines.size() - 1;
+    row = new_row;
+    column = TUI_text.clusters(inserted_lines[inserted_lines.size() - 1]).size();
+    has_anchor = false;
+    error = "";
+    goal = -1;
+    should_follow = true;
+    revision = revision + 1;
+}
+
+Snapshot TextArea.snapshot() {
+    return Snapshot(lines.slice(0, lines.size()), row, column);
+}
+
+void TextArea.record_undo() {
+    undo_stack.push(snapshot());
+    if (undo_stack.size() > UNDO_LIMIT) {
+        undo_stack.remove_at(0);
+    }
+    redo_stack.clear();
+}
+
+void TextArea.restore(Snapshot shot) {
+    lines = shot.lines;
+    row = shot.row;
+    column = shot.column;
+    has_anchor = false;
+    error = "";
+    goal = -1;
+    last = LAST_OTHER;
+    should_follow = true;
+    revision = revision + 1;
+}
+
+pub TUI_input.Outcome TextArea.undo() {
+    if (undo_stack.size() == 0) {
+        return TUI_input.Outcome.Ignored;
+    }
+    redo_stack.push(snapshot());
+    restore(undo_stack.pop());
+    return TUI_input.Outcome.Changed;
+}
+
+pub TUI_input.Outcome TextArea.redo() {
+    if (redo_stack.size() == 0) {
+        return TUI_input.Outcome.Ignored;
+    }
+    undo_stack.push(snapshot());
+    restore(redo_stack.pop());
+    return TUI_input.Outcome.Changed;
+}
+
+// Remove the selection as part of an edit that has already recorded undo.
+// Answers whether there was one.
+bool TextArea.did_cut_selection() {
+    match (selection()) {
+        case Some(Selection span): {
+            replace(span.start, span.end, "");
+            return true;
+        }
+        case None: {
+            return false;
+        }
+    }
+}
+
+// Insert at the cursor, over the selection. `kind` is LAST_TYPING for a
+// typed character (one undo step per word) and LAST_OTHER otherwise.
+TUI_input.Outcome TextArea.insert_text(str insert, int kind) {
+    if (insert == "") {
+        return TUI_input.Outcome.Ignored;
+    }
+    bool should_snapshot = last != LAST_TYPING || kind != LAST_TYPING || has_selection();
+    if (!should_snapshot && column > 0 && TUI_word.is_space(glyphs_of(row)[column - 1]) && !TUI_word.is_space(TUI_text.clusters(insert)[0])) {
+        should_snapshot = true;
+    }
+    if (should_snapshot) {
+        record_undo();
+    }
+    did_cut_selection();
+    replace(Position(row, column), Position(row, column), insert);
+    last = kind;
+    return TUI_input.Outcome.Changed;
+}
+
+// Delete [from, stop) as one undo step; the selection, if any, goes instead.
+TUI_input.Outcome TextArea.delete_span(Position from, Position stop) {
+    if (has_selection()) {
+        record_undo();
+        did_cut_selection();
+        last = LAST_OTHER;
+        return TUI_input.Outcome.Changed;
+    }
+    if (!from.is_before(stop)) {
+        return TUI_input.Outcome.Ignored;
+    }
+    record_undo();
+    replace(from, stop, "");
+    last = LAST_OTHER;
+    return TUI_input.Outcome.Changed;
+}
+
+// Delete to a motion's end, as a kill: it goes on the clipboard, and
+// consecutive kills are one undo step and one clipboard entry.
+TUI_input.Outcome TextArea.kill_span(Position from, Position stop, bool is_forward) {
+    if (!from.is_before(stop)) {
+        return TUI_input.Outcome.Ignored;
+    }
+    str gone = text_between(from, stop);
+    if (last == LAST_KILL) {
+        if (is_forward) {
+            clipboard = clipboard + gone;
+        } else {
+            clipboard = gone + clipboard;
+        }
+    } else {
+        record_undo();
+        clipboard = gone;
+    }
+    replace(from, stop, "");
+    last = LAST_KILL;
+    return TUI_input.Outcome.Changed;
+}
+
+// --- wrapping and visual rows -------------------------------------------------
+
+int TextArea.wrap_columns() {
+    if (!should_wrap || text_width <= 0) {
+        return 0;
+    }
+    int room = text_width - 1;
+    if (room < 1) {
+        room = 1;
+    }
+    return room;
+}
+
+// The cluster index each visual row of a line starts at; [0] when not wrapping.
+List<int> TextArea.parts_of(List<str> glyphs) {
+    List<int> starts = [0];
+    int room = wrap_columns();
+    if (room == 0) {
+        return starts;
+    }
+    int used = 0;
+    for (int index in 0 .. glyphs.size()) {
+        int cell_width = TUI_text.width(glyphs[index]);
+        if (used > 0 && used + cell_width > room) {
+            starts.push(index);
+            used = 0;
+        }
+        used = used + cell_width;
+    }
+    return starts;
+}
+
+int TextArea.part_at(List<int> starts, int target_column) {
+    int part = 0;
+    for (int index in 0 .. starts.size()) {
+        if (starts[index] <= target_column) {
+            part = index;
+        }
+    }
+    return part;
+}
+
+int TextArea.part_end(List<int> starts, int part, int length) {
+    if (part + 1 < starts.size()) {
+        return starts[part + 1];
+    }
+    return length;
+}
+
+int TextArea.columns_between(List<str> glyphs, int from, int stop) {
+    int total = 0;
+    for (int index in from .. stop) {
+        total = total + TUI_text.width(glyphs[index]);
+    }
+    return total;
+}
+
+Spot TextArea.cursor_spot() {
+    List<int> starts = parts_of(glyphs_of(row));
+    return Spot(row, part_at(starts, column));
+}
+
+bool TextArea.has_spot_after(Spot spot) {
+    return spot.row + 1 < lines.size() || spot.part + 1 < parts_of(glyphs_of(spot.row)).size();
+}
+
+bool TextArea.has_spot_before(Spot spot) {
+    return spot.row > 0 || spot.part > 0;
+}
+
+Spot TextArea.spot_after(Spot spot) {
+    if (spot.part + 1 < parts_of(glyphs_of(spot.row)).size()) {
+        return Spot(spot.row, spot.part + 1);
+    }
+    if (spot.row + 1 < lines.size()) {
+        return Spot(spot.row + 1, 0);
+    }
+    return spot;
+}
+
+Spot TextArea.spot_before(Spot spot) {
+    if (spot.part > 0) {
+        return Spot(spot.row, spot.part - 1);
+    }
+    if (spot.row > 0) {
+        return Spot(spot.row - 1, parts_of(glyphs_of(spot.row - 1)).size() - 1);
+    }
+    return spot;
+}
+
+bool TextArea.is_spot_before(Spot first, Spot second) {
+    return first.row < second.row || (first.row == second.row && first.part < second.part);
+}
+
+Spot TextArea.top_spot() {
+    int clamped_row = top_row;
+    if (clamped_row >= lines.size()) {
+        clamped_row = lines.size() - 1;
+    }
+    if (clamped_row < 0) {
+        clamped_row = 0;
+    }
+    int count = parts_of(glyphs_of(clamped_row)).size();
+    int clamped_part = top_part;
+    if (clamped_part >= count) {
+        clamped_part = count - 1;
+    }
+    if (clamped_part < 0) {
+        clamped_part = 0;
+    }
+    return Spot(clamped_row, clamped_part);
+}
+
+// --- moving -----------------------------------------------------------------
+
+// The column to land on in visual row `part` of `row`, aiming at display
+// column `aim` counted from the row's start.
+int TextArea.column_for(int target_row, int part, int aim) {
+    List<str> glyphs = glyphs_of(target_row);
+    List<int> starts = parts_of(glyphs);
+    int start = starts[part];
+    int end = part_end(starts, part, glyphs.size());
+    int used = 0;
+    int index = start;
+    while (index < end) {
+        int cell_width = TUI_text.width(glyphs[index]);
+        if (aim < used + cell_width) {
+            return index;
+        }
+        used = used + cell_width;
+        index = index + 1;
+    }
+    if (part + 1 < starts.size() && end > start) {
+        return end - 1;
+    }
+    return end;
+}
+
+// One visual row up or down, keeping the goal column. Answers whether it moved.
+bool TextArea.did_move_vertically(int delta) {
+    List<str> glyphs = glyphs_of(row);
+    List<int> starts = parts_of(glyphs);
+    int part = part_at(starts, column);
+    if (goal < 0) {
+        goal = columns_between(glyphs, starts[part], column);
+    }
+    Spot here = Spot(row, part);
+    Spot there = here;
+    if (delta < 0 && has_spot_before(here)) {
+        there = spot_before(here);
+    }
+    if (delta > 0 && has_spot_after(here)) {
+        there = spot_after(here);
+    }
+    if (there.row == here.row && there.part == here.part) {
+        return false;
+    }
+    row = there.row;
+    column = column_for(there.row, there.part, goal);
+    return true;
+}
+
+bool TextArea.did_apply_motion(int motion) {
+    int before_row = row;
+    int before_column = column;
+    int keep_goal = goal;
+    goal = -1;
+    List<str> glyphs = glyphs_of(row);
+    if (motion == MOVE_LEFT) {
+        if (column > 0) {
+            column = column - 1;
+        } else if (row > 0) {
+            row = row - 1;
+            column = line_length(row);
+        }
+    } else if (motion == MOVE_RIGHT) {
+        if (column < glyphs.size()) {
+            column = column + 1;
+        } else if (row + 1 < lines.size()) {
+            row = row + 1;
+            column = 0;
+        }
+    } else if (motion == MOVE_UP || motion == MOVE_DOWN) {
+        goal = keep_goal;
+        int delta = 1;
+        if (motion == MOVE_UP) {
+            delta = -1;
+        }
+        if (!did_move_vertically(delta)) {
+            // Past the first or last row the cursor goes to the end of the text.
+            goal = -1;
+            if (delta < 0 && (row != 0 || column != 0)) {
+                column = 0;
+            } else if (delta > 0 && column != glyphs.size()) {
+                column = glyphs.size();
+            }
+        }
+    } else if (motion == MOVE_PAGE_UP || motion == MOVE_PAGE_DOWN) {
+        goal = keep_goal;
+        int delta = 1;
+        if (motion == MOVE_PAGE_UP) {
+            delta = -1;
+        }
+        int step = 0;
+        while (step < page_size && did_move_vertically(delta)) {
+            step = step + 1;
+        }
+    } else if (motion == MOVE_WORD_LEFT) {
+        if (column == 0 && row > 0) {
+            row = row - 1;
+            column = line_length(row);
+        } else {
+            column = TUI_word.previous_word(glyphs, column);
+        }
+    } else if (motion == MOVE_WORD_RIGHT) {
+        if (column == glyphs.size() && row + 1 < lines.size()) {
+            row = row + 1;
+            column = 0;
+        } else {
+            column = TUI_word.next_word(glyphs, column);
+        }
+    } else if (motion == MOVE_LINE_START) {
+        column = 0;
+    } else if (motion == MOVE_LINE_END) {
+        column = glyphs.size();
+    } else if (motion == MOVE_TEXT_START) {
+        row = 0;
+        column = 0;
+    } else if (motion == MOVE_TEXT_END) {
+        row = lines.size() - 1;
+        column = line_length(row);
+    }
+    should_follow = true;
+    last = LAST_OTHER;
+    return row != before_row || column != before_column;
+}
+
+// A motion key: with Shift the selection grows, without it a selection is
+// dropped (Left and Right then land on its edge, as in every editor).
+TUI_input.Outcome TextArea.move(int motion, bool is_extending) {
+    if (!is_extending && has_selection() && (motion == MOVE_LEFT || motion == MOVE_RIGHT)) {
+        match (selection()) {
+            case Some(Selection span): {
+                Position target = span.end;
+                if (motion == MOVE_LEFT) {
+                    target = span.start;
+                }
+                set_cursor(target);
+                return TUI_input.Outcome.Changed;
+            }
+            case None: {
+            }
+        }
+    }
+    bool was_selecting = has_selection();
+    if (is_extending && !has_anchor) {
+        anchor_row = row;
+        anchor_column = column;
+        has_anchor = true;
+    }
+    bool did_move = did_apply_motion(motion);
+    if (!is_extending) {
+        has_anchor = false;
+    }
+    if (did_move || (was_selecting && !is_extending)) {
+        return TUI_input.Outcome.Changed;
+    }
+    return TUI_input.Outcome.Ignored;
+}
+
+// --- events -----------------------------------------------------------------
+
+/// One event in, what became of it out. See the header.
+pub TUI_input.Outcome TextArea.handle(term.Event event) {
+    match (event) {
+        case Key(term.Key key): {
+            return handle_key(key);
+        }
+        case Paste(str pasted): {
+            return paste(pasted);
+        }
+        case Mouse(term.Mouse mouse): {
+            return TUI_input.Outcome.Ignored;
+        }
+        case Unknown(bytes raw): {
+            return TUI_input.Outcome.Ignored;
+        }
+    }
+}
+
+/// Insert pasted text over the selection, as one edit.
+pub TUI_input.Outcome TextArea.paste(str pasted) {
+    return insert_text(clean_paste(pasted, tab_width), LAST_OTHER);
+}
+
+TUI_input.Outcome TextArea.submit() {
+    match (validator.check(text())) {
+        case Some(str why): {
+            error = why;
+            return TUI_input.Outcome.Rejected(why);
+        }
+        case None: {
+        }
+    }
+    return TUI_input.Outcome.Submitted;
+}
+
+TUI_input.Outcome TextArea.copy() {
+    if (!has_selection()) {
+        return TUI_input.Outcome.Ignored;
+    }
+    clipboard = selected_text();
+    return TUI_input.Outcome.Ignored;
+}
+
+TUI_input.Outcome TextArea.cut() {
+    if (!has_selection()) {
+        return TUI_input.Outcome.Ignored;
+    }
+    clipboard = selected_text();
+    record_undo();
+    did_cut_selection();
+    last = LAST_OTHER;
+    return TUI_input.Outcome.Changed;
+}
+
+TUI_input.Outcome TextArea.handle_key(term.Key key) {
+    bool is_ctrl = key.has(term.CTRL);
+    bool is_alt = key.has(term.ALT);
+    bool is_shift = key.has(term.SHIFT);
+    match (key.code) {
+        case Char(int code): {
+            if (is_ctrl) {
+                return handle_control(code);
+            }
+            if (is_alt) {
+                return handle_alt(code);
+            }
+            if (code < 32 || code == 127 || (code >= 128 && code < 160)) {
+                return TUI_input.Outcome.Ignored;
+            }
+            return insert_text(str.from_chars([code]), LAST_TYPING);
+        }
+        case Enter: {
+            if (is_alt) {
+                return submit();
+            }
+            return insert_text("\n", LAST_OTHER);
+        }
+        case Escape: {
+            if (has_selection()) {
+                clear_selection();
+                return TUI_input.Outcome.Changed;
+            }
+            return TUI_input.Outcome.Cancelled;
+        }
+        case Backspace: {
+            if (is_alt || is_ctrl) {
+                return delete_word_back();
+            }
+            Position here = Position(row, column);
+            return delete_span(before_cursor(), here);
+        }
+        case Delete: {
+            if (is_alt || is_ctrl) {
+                return kill_word_forward();
+            }
+            return delete_span(Position(row, column), after_cursor());
+        }
+        case Left: {
+            return move(motion_for(MOVE_LEFT, MOVE_WORD_LEFT, is_ctrl || is_alt), is_shift);
+        }
+        case Right: {
+            return move(motion_for(MOVE_RIGHT, MOVE_WORD_RIGHT, is_ctrl || is_alt), is_shift);
+        }
+        case Up: {
+            return move(MOVE_UP, is_shift);
+        }
+        case Down: {
+            return move(MOVE_DOWN, is_shift);
+        }
+        case Home: {
+            return move(motion_for(MOVE_LINE_START, MOVE_TEXT_START, is_ctrl), is_shift);
+        }
+        case End: {
+            return move(motion_for(MOVE_LINE_END, MOVE_TEXT_END, is_ctrl), is_shift);
+        }
+        case PageUp: {
+            return move(MOVE_PAGE_UP, is_shift);
+        }
+        case PageDown: {
+            return move(MOVE_PAGE_DOWN, is_shift);
+        }
+        case Tab: {
+            if (tab_width <= 0) {
+                return TUI_input.Outcome.Ignored;
+            }
+            int to_stop = tab_width - column % tab_width;
+            return insert_text(" ".repeat(to_stop), LAST_OTHER);
+        }
+        case BackTab: {
+            return TUI_input.Outcome.Ignored;
+        }
+        case Insert: {
+            return TUI_input.Outcome.Ignored;
+        }
+        case F(int number): {
+            return TUI_input.Outcome.Ignored;
+        }
+    }
+}
+
+Position TextArea.before_cursor() {
+    if (column > 0) {
+        return Position(row, column - 1);
+    }
+    if (row > 0) {
+        return Position(row - 1, line_length(row - 1));
+    }
+    return Position(row, column);
+}
+
+Position TextArea.after_cursor() {
+    if (column < line_length(row)) {
+        return Position(row, column + 1);
+    }
+    if (row + 1 < lines.size()) {
+        return Position(row + 1, 0);
+    }
+    return Position(row, column);
+}
+
+TUI_input.Outcome TextArea.delete_word_back() {
+    if (has_selection()) {
+        return delete_span(cursor(), cursor());
+    }
+    int start = TUI_word.previous_word(glyphs_of(row), column);
+    if (start == column) {
+        return delete_span(before_cursor(), cursor());
+    }
+    return delete_span(Position(row, start), cursor());
+}
+
+TUI_input.Outcome TextArea.kill_word_forward() {
+    List<str> glyphs = glyphs_of(row);
+    int end = TUI_word.next_word(glyphs, column);
+    if (end == column) {
+        return kill_span(cursor(), after_cursor(), true);
+    }
+    return kill_span(cursor(), Position(row, end), true);
+}
+
+TUI_input.Outcome TextArea.handle_control(int code) {
+    if (code == 'a') {
+        return move(MOVE_LINE_START, false);
+    }
+    if (code == 'e') {
+        return move(MOVE_LINE_END, false);
+    }
+    if (code == 'b') {
+        return move(MOVE_LEFT, false);
+    }
+    if (code == 'f') {
+        return move(MOVE_RIGHT, false);
+    }
+    if (code == 'p') {
+        return move(MOVE_UP, false);
+    }
+    if (code == 'n') {
+        return move(MOVE_DOWN, false);
+    }
+    if (code == 'd') {
+        return delete_span(cursor(), after_cursor());
+    }
+    if (code == 'k') {
+        int length = line_length(row);
+        if (column == length) {
+            return kill_span(cursor(), after_cursor(), true);
+        }
+        return kill_span(cursor(), Position(row, length), true);
+    }
+    if (code == 'u') {
+        return kill_span(Position(row, 0), cursor(), false);
+    }
+    if (code == 'w') {
+        return delete_word_back();
+    }
+    if (code == 'c') {
+        if (!has_selection()) {
+            return TUI_input.Outcome.Cancelled;
+        }
+        return copy();
+    }
+    if (code == 'x') {
+        return cut();
+    }
+    if (code == 'v' || code == 'y') {
+        return insert_text(clipboard, LAST_OTHER);
+    }
+    if (code == 'z' || code == '_' || code == '/') {
+        return undo();
+    }
+    return TUI_input.Outcome.Ignored;
+}
+
+TUI_input.Outcome TextArea.handle_alt(int raw_code) {
+    int code = raw_code;
+    if (code >= 'A' && code <= 'Z') {
+        code = code + 32;
+    }
+    if (code == 'b') {
+        return move(MOVE_WORD_LEFT, false);
+    }
+    if (code == 'f') {
+        return move(MOVE_WORD_RIGHT, false);
+    }
+    if (code == 'd') {
+        return kill_word_forward();
+    }
+    if (code == 'a') {
+        select_all();
+        return TUI_input.Outcome.Changed;
+    }
+    if (code == '_') {
+        return redo();
+    }
+    return TUI_input.Outcome.Ignored;
+}
+
+/// How many columns the line-number gutter takes in a box `width` wide
+/// (0 when numbers are off or there would be no room left for text).
+pub int TextArea.gutter_width(int width) {
+    if (!should_show_numbers) {
+        return 0;
+    }
+    int gutter = digits_of(lines.size()) + 1;
+    if (gutter >= width) {
+        return 0;
+    }
+    return gutter;
+}
+
+/// Tell the box how big it is drawn, without drawing: wrapping, the page
+/// size and mouse positions all depend on it. `render` calls this.
+pub void TextArea.layout(TUI_geometry.Rect area) {
+    int width = area.width - gutter_width(area.width);
+    if (width < 0) {
+        width = 0;
+    }
+    text_width = width;
+    page_size = area.height;
+    if (page_size < 1) {
+        page_size = 1;
+    }
+}
+
+// Scroll just far enough to bring the cursor into view.
+void TextArea.reveal_cursor(int height) {
+    if (height <= 0) {
+        return;
+    }
+    Spot target = cursor_spot();
+    Spot top = top_spot();
+    if (is_spot_before(target, top)) {
+        top = target;
+    } else {
+        Spot walk = top;
+        int steps = 0;
+        bool is_found = false;
+        while (steps < height) {
+            if (walk.row == target.row && walk.part == target.part) {
+                is_found = true;
+                break;
+            }
+            if (!has_spot_after(walk)) {
+                break;
+            }
+            walk = spot_after(walk);
+            steps = steps + 1;
+        }
+        if (!is_found) {
+            top = target;
+            for (int back in 0 .. height - 1) {
+                if (has_spot_before(top)) {
+                    top = spot_before(top);
+                }
+            }
+        }
+    }
+    top_row = top.row;
+    top_part = top.part;
+    if (wrap_columns() > 0) {
+        left = 0;
+        return;
+    }
+    List<str> glyphs = glyphs_of(row);
+    int cursor_column = columns_between(glyphs, 0, column);
+    int cell_width = 1;
+    if (column < glyphs.size()) {
+        cell_width = TUI_text.width(glyphs[column]);
+        if (cell_width < 1) {
+            cell_width = 1;
+        }
+    }
+    if (cell_width > text_width) {
+        cell_width = text_width;
+    }
+    if (cursor_column < left) {
+        left = cursor_column;
+    }
+    if (cursor_column + cell_width > left + text_width) {
+        left = cursor_column + cell_width - text_width;
+    }
+    if (left < 0) {
+        left = 0;
+    }
+}
+
+/// Where the terminal's own cursor belongs for a box drawn in `area`.
+pub TUI_geometry.Point TextArea.cursor_position(TUI_geometry.Rect area) {
+    layout(area);
+    if (should_follow) {
+        reveal_cursor(area.height);
+    }
+    int text_x = area.x + gutter_width(area.width);
+    List<str> glyphs = glyphs_of(row);
+    List<int> starts = parts_of(glyphs);
+    int part = part_at(starts, column);
+    int offset = columns_between(glyphs, starts[part], column) - left;
+    if (offset < 0) {
+        offset = 0;
+    }
+    int visual = visual_row_of(Spot(row, part));
+    return TUI_geometry.Point(text_x + offset, area.y + visual);
+}
+
+// How many visual rows below the top row the spot is (negative if above).
+int TextArea.visual_row_of(Spot target) {
+    Spot top = top_spot();
+    if (is_spot_before(target, top)) {
+        return -1;
+    }
+    Spot walk = top;
+    int steps = 0;
+    while (!(walk.row == target.row && walk.part == target.part) && has_spot_after(walk)) {
+        walk = spot_after(walk);
+        steps = steps + 1;
+        if (steps > 100000) {
+            break;
+        }
+    }
+    return steps;
+}
+
+// The text position under a screen cell, or the nearest one.
+Position TextArea.position_at(TUI_geometry.Rect area, int x, int y) {
+    layout(area);
+    Spot spot = top_spot();
+    int steps = y - area.y;
+    while (steps > 0 && has_spot_after(spot)) {
+        spot = spot_after(spot);
+        steps = steps - 1;
+    }
+    int aim = x - (area.x + gutter_width(area.width)) + left;
+    if (aim < 0) {
+        aim = 0;
+    }
+    if (steps > 0) {
+        return Position(spot.row, line_length(spot.row));
+    }
+    return Position(spot.row, column_for(spot.row, spot.part, aim));
+}
+
+// The ordered span of the word under a position (a run of word characters,
+// or of blanks, or one other character), for a double click.
+Selection TextArea.word_at(Position spot) {
+    List<str> glyphs = glyphs_of(spot.row);
+    if (glyphs.size() == 0) {
+        return Selection(spot, spot);
+    }
+    int pivot = spot.column;
+    if (pivot >= glyphs.size()) {
+        pivot = glyphs.size() - 1;
+    }
+    bool is_word_run = TUI_word.is_word(glyphs[pivot]);
+    bool is_space_run = TUI_word.is_space(glyphs[pivot]);
+    int start = pivot;
+    int end = pivot + 1;
+    while (start > 0 && is_same_kind(glyphs[start - 1], is_word_run, is_space_run)) {
+        start = start - 1;
+    }
+    while (end < glyphs.size() && is_same_kind(glyphs[end], is_word_run, is_space_run)) {
+        end = end + 1;
+    }
+    return Selection(Position(spot.row, start), Position(spot.row, end));
+}
+
+void TextArea.select_span(Selection span) {
+    anchor_row = span.start.row;
+    anchor_column = span.start.column;
+    has_anchor = true;
+    row = span.end.row;
+    column = span.end.column;
+    goal = -1;
+    last = LAST_OTHER;
+    should_follow = true;
+}
+
+/// A mouse gesture inside `area` (the rectangle the box was drawn in).
+/// Press places the cursor (with Shift, extends the selection), Drag extends
+/// it, a double click selects the word and a triple click the line; the
+/// wheel scrolls the view without moving the cursor.
+pub TUI_mouse.Response TextArea.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return TUI_mouse.Response.Ignored;
+    }
+    match (gesture.kind) {
+        case Press: {
+            if (!gesture.is_primary()) {
+                return TUI_mouse.Response.Ignored;
+            }
+            Position spot = position_at(area, gesture.x, gesture.y);
+            if (gesture.has_mods(term.SHIFT) && has_anchor) {
+                place(spot.row, spot.column);
+            } else {
+                place(spot.row, spot.column);
+                anchor_row = row;
+                anchor_column = column;
+                has_anchor = true;
+            }
+            goal = -1;
+            last = LAST_OTHER;
+            should_follow = true;
+            return TUI_mouse.Response.Changed;
+        }
+        case Drag: {
+            if (!gesture.is_primary() || !has_anchor) {
+                return TUI_mouse.Response.Ignored;
+            }
+            Position spot = position_at(area, gesture.x, gesture.y);
+            place(spot.row, spot.column);
+            goal = -1;
+            should_follow = true;
+            return TUI_mouse.Response.Changed;
+        }
+        case Click: {
+            if (!gesture.is_primary() || gesture.clicks < 2) {
+                return TUI_mouse.Response.Ignored;
+            }
+            Position spot = position_at(area, gesture.x, gesture.y);
+            if (gesture.clicks == 2) {
+                select_span(word_at(spot));
+            } else {
+                select_span(Selection(Position(spot.row, 0), Position(spot.row, line_length(spot.row))));
+            }
+            return TUI_mouse.Response.Changed;
+        }
+        case ScrollUp: {
+            return scroll_view(-WHEEL_ROWS, 0);
+        }
+        case ScrollDown: {
+            return scroll_view(WHEEL_ROWS, 0);
+        }
+        case ScrollLeft: {
+            return scroll_view(0, -WHEEL_COLUMNS);
+        }
+        case ScrollRight: {
+            return scroll_view(0, WHEEL_COLUMNS);
+        }
+        case Release: {
+            return TUI_mouse.Response.Ignored;
+        }
+        case Hover: {
+            return TUI_mouse.Response.Ignored;
+        }
+        case Leave: {
+            return TUI_mouse.Response.Ignored;
+        }
+    }
+}
+
+// Move the view by whole rows / columns, not the cursor.
+TUI_mouse.Response TextArea.scroll_view(int rows, int columns) {
+    Spot top = top_spot();
+    Spot moved = top;
+    int steps = rows;
+    while (steps > 0 && has_spot_after(moved)) {
+        moved = spot_after(moved);
+        steps = steps - 1;
+    }
+    while (steps < 0 && has_spot_before(moved)) {
+        moved = spot_before(moved);
+        steps = steps + 1;
+    }
+    int new_left = left;
+    if (wrap_columns() == 0) {
+        new_left = left + columns;
+        if (new_left < 0) {
+            new_left = 0;
+        }
+    }
+    should_follow = false;
+    if (moved.row == top.row && moved.part == top.part && new_left == left) {
+        return TUI_mouse.Response.Ignored;
+    }
+    top_row = moved.row;
+    top_part = moved.part;
+    left = new_left;
+    return TUI_mouse.Response.Changed;
+}
+
+/// Draw the box in `area`.
+pub void TextArea.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    layout(area);
+    TUI_clip.paint(buffer, area, area, " ", style);
+    if (should_follow) {
+        reveal_cursor(area.height);
+        should_follow = false;
+    }
+    int gutter = gutter_width(area.width);
+    TUI_geometry.Rect text_rect = TUI_geometry.Rect(area.x + gutter, area.y, area.width - gutter, area.height);
+    if (text_rect.is_empty()) {
+        return;
+    }
+    if (lines.size() == 1 && lines[0] == "") {
+        if (placeholder != "") {
+            TUI_clip.put_str(buffer, text_rect, text_rect.x, text_rect.y, placeholder, style.merged(placeholder_style));
+        }
+    }
+    Spot spot = top_spot();
+    for (int offset in 0 .. area.height) {
+        draw_row(buffer, area, text_rect, gutter, area.y + offset, spot);
+        if (!has_spot_after(spot)) {
+            break;
+        }
+        spot = spot_after(spot);
+    }
+}
+
+void TextArea.draw_row(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, TUI_geometry.Rect text_rect, int gutter, int y, Spot spot) {
+    List<str> glyphs = glyphs_of(spot.row);
+    List<int> starts = parts_of(glyphs);
+    int start = starts[spot.part];
+    int end = part_end(starts, spot.part, glyphs.size());
+    TUI_geometry.Rect band = TUI_geometry.Rect(text_rect.x, y, text_rect.width, 1);
+    if (gutter > 0 && spot.part == 0) {
+        str number = TUI_text.pad(str(spot.row + 1), gutter - 1, TUI_text.Align.Right);
+        TUI_geometry.Rect gutter_rect = TUI_geometry.Rect(area.x, y, gutter, 1);
+        TUI_clip.put_str(buffer, gutter_rect, area.x, y, number, style.merged(number_style));
+    }
+    int origin = text_rect.x - left;
+    if (end > start) {
+        TUI_clip.put_str(buffer, band, origin, y, glyphs.slice(start, end).join(""), style);
+    }
+    match (selection()) {
+        case Some(Selection span): {
+            if (spot.row >= span.start.row && spot.row <= span.end.row) {
+                int from = 0;
+                if (spot.row == span.start.row) {
+                    from = span.start.column;
+                }
+                int stop = glyphs.size();
+                if (spot.row == span.end.row) {
+                    stop = span.end.column;
+                }
+                if (from < start) {
+                    from = start;
+                }
+                if (stop > end) {
+                    stop = end;
+                }
+                int first = origin + columns_between(glyphs, start, from);
+                int last_cell = first;
+                if (stop > from) {
+                    last_cell = origin + columns_between(glyphs, start, stop);
+                }
+                if (spot.row < span.end.row && end == glyphs.size()) {
+                    last_cell = last_cell + 1;
+                }
+                highlight(buffer, band, first, last_cell, selection_style);
+            }
+        }
+        case None: {
+        }
+    }
+    if (is_focused && spot.row == row && spot.part == part_at(starts, column)) {
+        int cell_x = origin + columns_between(glyphs, start, column);
+        int cell_width = 1;
+        if (column < glyphs.size()) {
+            cell_width = TUI_text.width(glyphs[column]);
+            if (cell_width < 1) {
+                cell_width = 1;
+            }
+        }
+        highlight(buffer, band, cell_x, cell_x + cell_width, cursor_style);
+    }
+}
+
+// Pasted or clipboard text: CRLF and lone CR are newlines, tabs are spaces,
+// other control characters are dropped.
+str clean_paste(str pasted, int tab_width) {
+    List<int> kept = [];
+    int previous = 0;
+    for (int code in pasted.chars()) {
+        if (code == 10 && previous == 13) {
+            previous = code;
+            continue;
+        }
+        previous = code;
+        if (code == 10 || code == 13) {
+            kept.push(10);
+        } else if (code == 9) {
+            for (int step in 0 .. tab_width) {
+                kept.push(32);
+            }
+        } else if (code >= 32 && code != 127 && !(code >= 128 && code < 160)) {
+            kept.push(code);
+        }
+    }
+    return str.from_chars(kept);
+}
+
+int motion_for(int plain, int wider, bool is_wide) {
+    if (is_wide) {
+        return wider;
+    }
+    return plain;
+}
+
+// --- geometry of the drawn box ---------------------------------------------
+
+int digits_of(int number) {
+    int count = 1;
+    int rest = number;
+    while (rest >= 10) {
+        rest = rest / 10;
+        count = count + 1;
+    }
+    return count;
+}
+
+// --- mouse ------------------------------------------------------------------
+
+bool is_same_kind(str glyph, bool is_word_run, bool is_space_run) {
+    if (is_word_run) {
+        return TUI_word.is_word(glyph);
+    }
+    if (is_space_run) {
+        return TUI_word.is_space(glyph);
+    }
+    return !TUI_word.is_word(glyph) && !TUI_word.is_space(glyph);
+}
+
+// --- drawing ----------------------------------------------------------------
+
+// Merge `extra` into the style of the cells [from, stop) of a one-row band.
+void highlight(TUI_buffer.Buffer buffer, TUI_geometry.Rect band, int from, int stop, TUI_style.Style extra) {
+    for (int x in from .. stop) {
+        if (x >= band.x && x < band.right()) {
+            TUI_style.Style under = buffer.get(x, band.y).style;
+            buffer.set_style(x, band.y, under.merged(extra));
+        }
+    }
+}

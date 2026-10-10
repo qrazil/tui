@@ -2,6 +2,7 @@
 //
 // API
 // ---
+//   TUI_geometry.Point(x, y)                     a cell: where a cursor is
 //   TUI_geometry.Rect(x, y, width, height)      a rectangle in terminal cells
 //   r.right(), r.bottom()           one past the last column / row
 //   r.is_empty(), r.has_point(point_x, point_y), r.intersect(other)
@@ -65,6 +66,14 @@
 // cells, summing exactly, and where two segments have an equal claim on the
 // last cell the earlier one gets it. Nothing here is floating point -- a
 // terminal has no half columns, and a rule that rounds twice tiles wrongly.
+
+/// A cell of the screen: a column and a row, 0-based, in the same absolute
+/// coordinates a `Rect` uses. What a widget answers when asked where its
+/// cursor is.
+pub type Point {
+    pub int x;
+    pub int y;
+}
 
 /// A rectangle of terminal cells: `width` columns and `height` rows, with its
 /// top-left corner at `x`, `y`. Coordinates are absolute in the buffer, so a

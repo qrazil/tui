@@ -16,6 +16,7 @@
 //   outline.toggle() / .expand() / .collapse()    fold the row under the cursor
 //   outline.did_select_id(id)  -> bool            move the cursor to a row by id
 //   outline.scroll_h(delta)                       pan every row sideways
+//   outline.handle_mouse(gesture, area)           press selects, double click folds, wheel moves
 //   outline.render(buf, area)
 //
 // --- what "visible" means ----------------------------------------------------
@@ -46,6 +47,7 @@
 
 import TUI_buffer;
 import TUI_geometry;
+import TUI_mouse;
 import TUI_scroll;
 import TUI_style;
 import TUI_text;
@@ -245,6 +247,85 @@ pub bool Outline.did_select_id(str id) {
     return false;
 }
 
+/// A mouse gesture over the outline, drawn in `area` (the rectangle the last
+/// `render` was given): a Press moves the cursor to the row under it, and
+/// folds that row when it is on its fold mark; a double click folds the row;
+/// the wheel moves the cursor by `WHEEL_ROWS`. Answers `Changed` when the
+/// cursor or a fold moved, `Activated` when a fold changed, else `Ignored`.
+pub TUI_mouse.Response Outline.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
+    match (gesture.kind) {
+        case Press: {
+            int index = view.offset + gesture.y - area.y;
+            if (area.is_empty() || !area.has_point(gesture.x, gesture.y) || index >= count()) {
+                return TUI_mouse.Response.Ignored;
+            }
+            cursor = index;
+            match (current()) {
+                case Some(Row row): {
+                    int mark_x = area.x + row.depth * indent;
+                    if (row.node.has_children() && gesture.x >= mark_x && gesture.x < mark_x + 2 && gesture.clicks <= 1) {
+                        toggle();
+                        return TUI_mouse.Response.Activated;
+                    }
+                }
+                case None: {
+                }
+            }
+            return TUI_mouse.Response.Changed;
+        }
+        case Click: {
+            if (gesture.clicks >= 2) {
+                match (current()) {
+                    case Some(Row row): {
+                        if (row.node.has_children()) {
+                            toggle();
+                            return TUI_mouse.Response.Activated;
+                        }
+                    }
+                    case None: {
+                    }
+                }
+            }
+            return TUI_mouse.Response.Ignored;
+        }
+        case ScrollUp: {
+            return step_by(0 - WHEEL_ROWS);
+        }
+        case ScrollDown: {
+            return step_by(WHEEL_ROWS);
+        }
+        case Drag: {
+            return TUI_mouse.Response.Ignored;
+        }
+        case Release: {
+            return TUI_mouse.Response.Ignored;
+        }
+        case Hover: {
+            return TUI_mouse.Response.Ignored;
+        }
+        case Leave: {
+            return TUI_mouse.Response.Ignored;
+        }
+        case ScrollLeft: {
+            scroll_h(0 - 4);
+            return TUI_mouse.Response.Changed;
+        }
+        case ScrollRight: {
+            scroll_h(4);
+            return TUI_mouse.Response.Changed;
+        }
+    }
+}
+
+TUI_mouse.Response Outline.step_by(int delta) {
+    int before = cursor;
+    move(delta);
+    if (cursor == before) {
+        return TUI_mouse.Response.Ignored;
+    }
+    return TUI_mouse.Response.Changed;
+}
+
 pub void Outline.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
@@ -291,6 +372,9 @@ pub void Outline.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
         screen_row = screen_row + 1;
     }
 }
+
+/// How many rows a wheel notch moves the cursor.
+pub const int WHEEL_ROWS = 3;
 
 int visible(Node node) {
     int row_count = 1;

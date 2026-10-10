@@ -1,0 +1,177 @@
+// Sub-cell precision for bars: a cell is cut into eighths, and the glyph that
+// shows `n` of them is the one block character that fills exactly that much.
+//
+// API
+// ---
+//   TUI_eighths.clamp_ratio(ratio)             0.0 .. 1.0; NaN is 0.0
+//   TUI_eighths.of_ratio(ratio, cells)         how many eighths of `cells` cells
+//   TUI_eighths.scaled(value, lower, upper, total)  the same for a value in a range
+//   TUI_eighths.vertical(n)                    the glyph filled `n` eighths from the bottom
+//   TUI_eighths.horizontal(n)                  the glyph filled `n` eighths from the left
+//   TUI_eighths.floats(ints)                   a `List<int>` as a `List<float>`
+//
+// Gauge, Sparkline and BarChart all draw the same way: work out how many
+// eighths of the whole bar a value is, spend a whole cell for each eight of
+// them, and let one last glyph show the remainder. This module is that
+// arithmetic and the two glyph ladders, so the three widgets round alike.
+//
+// --- the ladders ------------------------------------------------------------
+//
+// Vertical, filling from the BOTTOM of the cell, 1/8 to 8/8:
+//
+//     ▁ ▂ ▃ ▄ ▅ ▆ ▇ █    U+2581 .. U+2588
+//
+// Horizontal, filling from the LEFT of the cell, 1/8 to 8/8:
+//
+//     ▏ ▎ ▍ ▌ ▋ ▊ ▉ █    U+258F .. U+2589, then U+2588
+//
+// Unicode has no glyph for a bar growing from the top or the right, so a bar
+// is always anchored at the bottom or the left. A cell of zero eighths is a
+// space. A terminal with a font that lacks the block elements shows boxes;
+// the block elements are in every monospace font anyone ships, and the
+// alternative -- a table of fallbacks nobody asked for -- is not here.
+//
+// --- rounding ---------------------------------------------------------------
+//
+// A ratio becomes the NEAREST whole number of eighths, halves up. That is the
+// only place a float is turned into an integer in any of the bar widgets, so
+// "how long is this bar" has one answer everywhere.
+
+import math;
+
+const Array<str> VERTICAL = [" ", "\u{2581}", "\u{2582}", "\u{2583}", "\u{2584}", "\u{2585}", "\u{2586}", "\u{2587}", "\u{2588}"];
+const Array<str> HORIZONTAL = [" ", "\u{258F}", "\u{258E}", "\u{258D}", "\u{258C}", "\u{258B}", "\u{258A}", "\u{2589}", "\u{2588}"];
+
+/// `ratio`, pulled into `0.0 .. 1.0`. A NaN is 0.0: a bar with nothing
+/// sensible to show shows nothing.
+pub float clamp_ratio(float ratio) {
+    if (math.is_nan(ratio)) {
+        return 0.0;
+    }
+    if (ratio < 0.0) {
+        return 0.0;
+    }
+    if (ratio > 1.0) {
+        return 1.0;
+    }
+    return ratio;
+}
+
+/// How many eighths a bar of `cells` cells shows for `ratio`: `0 .. cells * 8`.
+pub int of_ratio(float ratio, int cells) {
+    if (cells <= 0) {
+        return 0;
+    }
+    int total = cells * 8;
+    int eighths = int(math.floor(clamp_ratio(ratio) * float(total) + 0.5));
+    if (eighths > total) {
+        return total;
+    }
+    return eighths;
+}
+
+/// How many of `total` eighths `value` fills, in a range that runs from `lower`
+/// (nothing) to `upper` (everything). A range with no width, or a value that is
+/// not a number, is 0; a value outside the range is pulled onto its nearest end.
+pub int scaled(float value, float lower, float upper, int total) {
+    if (total <= 0 || math.is_nan(value) || math.is_nan(lower) || math.is_nan(upper)) {
+        return 0;
+    }
+    if (upper <= lower) {
+        return 0;
+    }
+    float ratio = clamp_ratio((value - lower) / (upper - lower));
+    int eighths = int(math.floor(ratio * float(total) + 0.5));
+    if (eighths > total) {
+        return total;
+    }
+    return eighths;
+}
+
+/// The glyph that fills `eighths` eighths of a cell from the bottom. Outside
+/// `0 .. 8` it is pulled to the nearest end.
+pub str vertical(int eighths) {
+    if (eighths <= 0) {
+        return VERTICAL[0];
+    }
+    if (eighths >= 8) {
+        return VERTICAL[8];
+    }
+    return VERTICAL[eighths];
+}
+
+/// The glyph that fills `eighths` eighths of a cell from the left.
+pub str horizontal(int eighths) {
+    if (eighths <= 0) {
+        return HORIZONTAL[0];
+    }
+    if (eighths >= 8) {
+        return HORIZONTAL[8];
+    }
+    return HORIZONTAL[eighths];
+}
+
+/// A list of integers as floats, which is what every data-bearing widget takes.
+pub List<float> floats(List<int> values) {
+    List<float> out = [];
+    for (int value in values) {
+        out.push(float(value));
+    }
+    return out;
+}
+
+/// The range a set of values is drawn against: `lower` is an empty bar and
+/// `upper` a full one.
+pub type Bounds {
+    pub float lower;
+    pub float upper;
+}
+
+/// The bounds for `data`, where the caller may have pinned either end.
+///
+/// An end that is not pinned comes from the data -- the largest finite value
+/// for `upper`, and for `lower` the smallest finite value or 0.0, whichever is
+/// less, so a bar is proportional to its value and an all-positive series
+/// starts at nothing. If the two end up equal (no data, one value, all zero)
+/// `upper` is `lower + 1.0`: a range must have a width, and a bar of zero in
+/// it is empty. Values that are NaN or infinite are not looked at.
+pub Bounds bounds_of(List<float> data, Option<float> pinned_lower, Option<float> pinned_upper) {
+    float lowest = 0.0;
+    float highest = 0.0;
+    bool did_see = false;
+    for (float value in data) {
+        if (!math.is_finite(value)) {
+            continue;
+        }
+        if (!did_see || value < lowest) {
+            lowest = value;
+        }
+        if (!did_see || value > highest) {
+            highest = value;
+        }
+        did_see = true;
+    }
+    if (lowest > 0.0) {
+        lowest = 0.0;
+    }
+    float lower = lowest;
+    float upper = highest;
+    match (pinned_lower) {
+        case Some(float value): {
+            lower = value;
+        }
+        case None: {
+        }
+    }
+    match (pinned_upper) {
+        case Some(float value): {
+            upper = value;
+        }
+        case None: {
+        }
+    }
+    if (!(upper > lower)) {
+        upper = lower + 1.0;
+    }
+    return Bounds(lower, upper);
+}

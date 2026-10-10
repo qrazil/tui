@@ -1,0 +1,880 @@
+// A one-line text field: cursor, scrolling, readline keys, undo, history.
+//
+// API
+// ---
+//   TUI_input.TextInput(...)            the field; every argument has a default
+//   TUI_input.TextInput.of(text)        a field that starts with `text`
+//   input.handle(event)  -> Outcome     one terminal event in, what happened out
+//   input.handle_mouse(gesture, area)   a click or drag sets the cursor
+//   input.render(buffer, area)          draw (the cursor is a reversed cell)
+//   input.cursor_position(area)         where the terminal's own cursor belongs
+//   input.text() / set_text(t) / clear() / take()
+//   TUI_input.Outcome                   Changed | Submitted | Cancelled | Ignored | Rejected(why)
+//   interface TUI_input.Validator { Option<str> check(str text); }
+//
+// --- the contract: handle(event) is pure state, answers an Outcome -----------
+//
+// `handle` never draws and never reads a clock. It takes a `term.Event` and
+// answers what became of it:
+//
+//   Changed       the text or the cursor moved: draw again
+//   Submitted     Enter, and the validator accepted the text
+//   Rejected(why) Enter, and the validator refused: the text stays, `why` is
+//                 in `input.error` and the field draws in `error_style`
+//   Cancelled     Escape or Ctrl-C
+//   Ignored       **nothing changed**: the key is not one this field uses, or
+//                 it would do nothing here (Left at the start, Up with no
+//                 history). The caller is free to use the event itself, so a
+//                 form can move to the previous field on the Up the input
+//                 declined.
+//
+// Because Ignored means "no state change" exactly, a caller can draw only
+// when the answer is not Ignored.
+//
+// The field is a list of **grapheme clusters**, and the cursor is a position
+// between two of them: an emoji with a skin tone, `e` + U+0301, a flag, a
+// Hangul syllable made of jamo are one cursor step and one Backspace each.
+// Typed text arrives a code point at a time, so every insertion re-clusters
+// the line: typing U+0301 after `e` makes `é` one cluster, not two.
+//
+// --- keys -------------------------------------------------------------------
+//
+//   Left/Right, Ctrl-B/Ctrl-F       a cluster       Home/Ctrl-A, End/Ctrl-E   the ends
+//   Ctrl-Left/Right, Alt-B/Alt-F    a word          (letters, digits, `_`, and anything beyond ASCII)
+//   Backspace, Delete, Ctrl-D       delete a cluster
+//   Alt-Backspace, Ctrl-Backspace   kill the word before the cursor
+//   Alt-D, Ctrl-Delete              kill the word after it
+//   Ctrl-W                          kill the blank-delimited word before it
+//   Ctrl-K, Ctrl-U                  kill to the end / to the start
+//   Ctrl-Y, Alt-Y                   yank the last kill; right after, cycle older ones
+//   Ctrl-T                          transpose the clusters around the cursor
+//   Ctrl-Z, Ctrl-_ (Ctrl-/)         undo        Alt-_   redo
+//   Up/Ctrl-P, Down/Ctrl-N          history (when there is any)
+//   Enter, Ctrl-J                   submit      Escape, Ctrl-C   cancel
+//
+// Consecutive kills are one entry in the kill ring (a Ctrl-K after a Ctrl-K
+// extends the first; a backward kill puts its text in front), and one undo
+// step. Typing is one undo step per word. A paste is one step.
+//
+// --- paste ------------------------------------------------------------------
+//
+// With bracketed paste on (`TUI_app.Loop(should_report_paste: true)`) the
+// terminal delivers pasted text as one `Event.Paste`, and it is inserted as
+// one edit. A line break or a tab becomes a space, other control characters
+// are dropped: this is one line, and a paste must not be able to press Enter.
+//
+// --- password mode and history ---------------------------------------------
+//
+// With `mask` set (`"*"`, `"\u{2022}"`) every cluster is drawn as the mask,
+// one column wide however wide the cluster is, and the field records nothing
+// in `history`. The text is still `text()`.
+//
+// `history` is the caller's list, newest last. Up walks back through it, Down
+// forward to the line that was being typed (the draft). Submitting appends the
+// text unless it is empty or a repeat of the newest entry.
+//
+// --- scrolling --------------------------------------------------------------
+//
+// `scroll` is the first visible COLUMN of the text. `render` moves it only as
+// far as keeps the cursor cell inside the area, like `ListView`'s offset. A
+// wide cluster cut by the left edge is drawn as a blank column rather than
+// half a glyph.
+
+import term;
+import TUI_buffer;
+import TUI_clip;
+import TUI_geometry;
+import TUI_mouse;
+import TUI_style;
+import TUI_text;
+import TUI_word;
+
+/// What became of one event. See the header: `Ignored` means no state changed.
+pub enum Outcome {
+    Changed;
+    Submitted;
+    Cancelled;
+    Ignored;
+    /// Enter, with a validator that said no. The string is the validator's reason.
+    Rejected(str);
+}
+
+pub str Outcome.to_str() {
+    match (this) {
+        case Changed: {
+            return "changed";
+        }
+        case Submitted: {
+            return "submitted";
+        }
+        case Cancelled: {
+            return "cancelled";
+        }
+        case Ignored: {
+            return "ignored";
+        }
+        case Rejected(str why): {
+            return "rejected: " + why;
+        }
+    }
+}
+
+/// Decides whether the text may be submitted: `None` accepts it, `Some(why)`
+/// refuses it with a reason to show. A plain function with this shape works.
+pub interface Validator {
+    Option<str> check(str text);
+}
+
+/// The default validator: everything is acceptable.
+pub Option<str> accept_any(str text) {
+    return Option<str>.None;
+}
+
+const int LAST_OTHER = 0;
+const int LAST_TYPING = 1;
+const int LAST_KILL = 2;
+const int LAST_YANK = 3;
+const int UNDO_LIMIT = 100;
+const int KILL_LIMIT = 30;
+
+type Snapshot {
+    List<str> glyphs;
+    int cursor;
+}
+
+/// The field. Every argument is optional: `TextInput()` is an empty,
+/// focused field with no placeholder.
+pub type TextInput {
+    /// The clusters of the text.
+    pub List<str> glyphs = [];
+    /// The cursor, as a position between clusters: 0 is before the first,
+    /// `glyphs.size()` is after the last.
+    pub int cursor = 0;
+    /// The first visible column. `render` keeps the cursor in view.
+    pub int scroll = 0;
+    /// Drawn dim while the field is empty.
+    pub str placeholder = "";
+    /// When not empty, every cluster is drawn as this (and history is off).
+    pub str mask = "";
+    /// A focused field draws its cursor.
+    pub bool is_focused = true;
+    /// The most clusters the field takes; 0 for no limit.
+    pub int max_glyphs = 0;
+    pub Validator validator = accept_any;
+    /// The validator's reason from the last refused submit; "" when none. Any
+    /// edit clears it.
+    pub str error = "";
+    /// Counts every change to the text (not the cursor): a caller that
+    /// filters a list as the user types compares it to the last one it saw.
+    pub int revision = 0;
+    /// Submitted lines, oldest first.
+    pub List<str> history = [];
+    pub int history_limit = 100;
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style cursor_style = TUI_style.Style(attrs: TUI_style.REVERSE);
+    pub TUI_style.Style placeholder_style = TUI_style.Style(attrs: TUI_style.DIM);
+    pub TUI_style.Style error_style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(9));
+    int history_index = 0;
+    str draft = "";
+    List<str> kills = [];
+    int last = 0;
+    int yank_start = 0;
+    int yank_index = 0;
+    List<Snapshot> undo_stack = [];
+    List<Snapshot> redo_stack = [];
+}
+
+/// A field that starts out holding `text`, cursor at the end.
+pub static TextInput TextInput.of(str text) {
+    TextInput input = TextInput();
+    input.glyphs = TUI_text.clusters(text);
+    input.cursor = input.glyphs.size();
+    return input;
+}
+
+// --- the text ---------------------------------------------------------------
+
+/// The text, all of it.
+pub str TextInput.text() {
+    return glyphs.join("");
+}
+
+/// How many clusters it is.
+pub int TextInput.length() {
+    return glyphs.size();
+}
+
+/// Is there nothing in the field?
+pub bool TextInput.is_empty() {
+    return glyphs.size() == 0;
+}
+
+/// Replace the text from outside: cursor to the end, undo history and error
+/// forgotten (this is not an edit the user made). `history` is kept.
+pub void TextInput.set_text(str text) {
+    glyphs = TUI_text.clusters(text);
+    cursor = glyphs.size();
+    undo_stack.clear();
+    redo_stack.clear();
+    error = "";
+    last = LAST_OTHER;
+    revision = revision + 1;
+    history_index = history.size();
+}
+
+/// Empty the field.
+pub void TextInput.clear() {
+    set_text("");
+}
+
+/// The text, and the field emptied: what a chat box does on Submitted.
+pub str TextInput.take() {
+    str out = text();
+    clear();
+    return out;
+}
+
+str TextInput.join_range(int from, int stop) {
+    return glyphs.slice(from, stop).join("");
+}
+
+// Replace clusters [from, stop) with `insert` and put the cursor after it. THE
+// one place the text changes: it re-clusters, so a combining mark typed after
+// `e` joins it.
+void TextInput.splice(int from, int stop, str insert) {
+    str before = join_range(0, from) + insert;
+    str after = join_range(stop, glyphs.size());
+    List<str> parts = TUI_text.clusters(before + after);
+    int moved = TUI_text.clusters(before).size();
+    if (moved > parts.size()) {
+        moved = parts.size();
+    }
+    glyphs = parts;
+    cursor = moved;
+    error = "";
+    revision = revision + 1;
+}
+
+// --- undo -------------------------------------------------------------------
+
+Snapshot TextInput.snapshot() {
+    return Snapshot(glyphs.slice(0, glyphs.size()), cursor);
+}
+
+void TextInput.record_undo() {
+    undo_stack.push(snapshot());
+    if (undo_stack.size() > UNDO_LIMIT) {
+        undo_stack.remove_at(0);
+    }
+    redo_stack.clear();
+}
+
+void TextInput.restore(Snapshot shot) {
+    glyphs = shot.glyphs;
+    cursor = shot.cursor;
+    error = "";
+    revision = revision + 1;
+    last = LAST_OTHER;
+}
+
+/// Undo the last edit. `Ignored` when there is nothing to undo.
+pub Outcome TextInput.undo() {
+    if (undo_stack.size() == 0) {
+        return Outcome.Ignored;
+    }
+    redo_stack.push(snapshot());
+    restore(undo_stack.pop());
+    return Outcome.Changed;
+}
+
+/// Redo what `undo` undid. `Ignored` when there is nothing to redo.
+pub Outcome TextInput.redo() {
+    if (redo_stack.size() == 0) {
+        return Outcome.Ignored;
+    }
+    undo_stack.push(snapshot());
+    restore(redo_stack.pop());
+    return Outcome.Changed;
+}
+
+// --- editing ----------------------------------------------------------------
+
+// Insert `raw` at the cursor. `kind` is LAST_TYPING for a typed character
+// (undo steps are per word) and LAST_OTHER for a paste (one step).
+Outcome TextInput.insert_text(str raw, int kind) {
+    List<str> pieces = TUI_text.clusters(raw);
+    if (max_glyphs > 0) {
+        int room = max_glyphs - glyphs.size();
+        if (room <= 0) {
+            return Outcome.Ignored;
+        }
+        if (pieces.size() > room) {
+            pieces = pieces.slice(0, room);
+        }
+    }
+    if (pieces.size() == 0) {
+        return Outcome.Ignored;
+    }
+    bool should_snapshot = last != LAST_TYPING || kind != LAST_TYPING;
+    if (!should_snapshot && cursor > 0 && TUI_word.is_space(glyphs[cursor - 1]) && !TUI_word.is_space(pieces[0])) {
+        should_snapshot = true;
+    }
+    if (should_snapshot) {
+        record_undo();
+    }
+    splice(cursor, cursor, pieces.join(""));
+    last = kind;
+    leave_history();
+    return Outcome.Changed;
+}
+
+// Typing or editing a recalled history line makes it the current line.
+void TextInput.leave_history() {
+    history_index = history.size();
+}
+
+// Delete [from, stop) as one undo step each time (not part of a kill).
+Outcome TextInput.delete_range(int wanted_from, int wanted_to) {
+    int from = wanted_from;
+    int stop = wanted_to;
+    if (from < 0) {
+        from = 0;
+    }
+    if (stop > glyphs.size()) {
+        stop = glyphs.size();
+    }
+    if (from >= stop) {
+        return Outcome.Ignored;
+    }
+    record_undo();
+    splice(from, stop, "");
+    cursor = from;
+    last = LAST_OTHER;
+    leave_history();
+    return Outcome.Changed;
+}
+
+// Delete [from, stop) and keep it in the kill ring.
+Outcome TextInput.kill_range(int from, int stop, bool is_forward) {
+    if (from >= stop) {
+        return Outcome.Ignored;
+    }
+    str gone = join_range(from, stop);
+    if (last == LAST_KILL && kills.size() > 0) {
+        int newest = kills.size() - 1;
+        if (is_forward) {
+            kills[newest] = kills[newest] + gone;
+        } else {
+            kills[newest] = gone + kills[newest];
+        }
+    } else {
+        record_undo();
+        kills.push(gone);
+        if (kills.size() > KILL_LIMIT) {
+            kills.remove_at(0);
+        }
+    }
+    splice(from, stop, "");
+    cursor = from;
+    last = LAST_KILL;
+    leave_history();
+    return Outcome.Changed;
+}
+
+/// Insert the newest kill at the cursor.
+pub Outcome TextInput.yank() {
+    if (kills.size() == 0) {
+        return Outcome.Ignored;
+    }
+    record_undo();
+    yank_start = cursor;
+    yank_index = kills.size() - 1;
+    splice(cursor, cursor, kills[yank_index]);
+    last = LAST_YANK;
+    leave_history();
+    return Outcome.Changed;
+}
+
+// Right after a yank, replace it with the next older kill.
+Outcome TextInput.yank_older() {
+    if (last != LAST_YANK || kills.size() < 2) {
+        return Outcome.Ignored;
+    }
+    yank_index = (yank_index - 1 + kills.size()) % kills.size();
+    splice(yank_start, cursor, kills[yank_index]);
+    last = LAST_YANK;
+    return Outcome.Changed;
+}
+
+Outcome TextInput.transpose() {
+    int size = glyphs.size();
+    if (size < 2 || cursor == 0) {
+        return Outcome.Ignored;
+    }
+    int right = cursor;
+    if (right == size) {
+        right = size - 1;
+    }
+    record_undo();
+    str left_glyph = glyphs[right - 1];
+    str right_glyph = glyphs[right];
+    splice(right - 1, right + 1, right_glyph + left_glyph);
+    cursor = right + 1;
+    last = LAST_OTHER;
+    leave_history();
+    return Outcome.Changed;
+}
+
+// --- moving -----------------------------------------------------------------
+
+Outcome TextInput.move_to(int target) {
+    int clamped = target;
+    if (clamped < 0) {
+        clamped = 0;
+    }
+    if (clamped > glyphs.size()) {
+        clamped = glyphs.size();
+    }
+    last = LAST_OTHER;
+    if (clamped == cursor) {
+        return Outcome.Ignored;
+    }
+    cursor = clamped;
+    return Outcome.Changed;
+}
+
+// --- history ----------------------------------------------------------------
+
+Outcome TextInput.history_back() {
+    if (history.size() == 0 || history_index <= 0) {
+        return Outcome.Ignored;
+    }
+    if (history_index >= history.size()) {
+        draft = text();
+        history_index = history.size();
+    }
+    history_index = history_index - 1;
+    load_line(history[history_index]);
+    return Outcome.Changed;
+}
+
+Outcome TextInput.history_forward() {
+    if (history_index >= history.size()) {
+        return Outcome.Ignored;
+    }
+    history_index = history_index + 1;
+    if (history_index >= history.size()) {
+        load_line(draft);
+    } else {
+        load_line(history[history_index]);
+    }
+    return Outcome.Changed;
+}
+
+void TextInput.load_line(str line) {
+    record_undo();
+    glyphs = TUI_text.clusters(line);
+    cursor = glyphs.size();
+    error = "";
+    revision = revision + 1;
+    last = LAST_OTHER;
+}
+
+// --- events -----------------------------------------------------------------
+
+/// One event in, what became of it out. See the header.
+pub Outcome TextInput.handle(term.Event event) {
+    match (event) {
+        case Key(term.Key key): {
+            return handle_key(key);
+        }
+        case Paste(str pasted): {
+            return paste(pasted);
+        }
+        case Mouse(term.Mouse mouse): {
+            return Outcome.Ignored;
+        }
+        case Unknown(bytes raw): {
+            return Outcome.Ignored;
+        }
+    }
+}
+
+/// Insert pasted text as one edit: line breaks and tabs become spaces, other
+/// control characters are dropped.
+pub Outcome TextInput.paste(str pasted) {
+    List<int> kept = [];
+    int previous = 0;
+    for (int code in pasted.chars()) {
+        if (code == 10 && previous == 13) {
+            previous = code;
+            continue;
+        }
+        previous = code;
+        if (code == 10 || code == 13 || code == 9) {
+            kept.push(32);
+        } else if (code >= 32 && code != 127 && !(code >= 128 && code < 160)) {
+            kept.push(code);
+        }
+    }
+    if (kept.size() == 0) {
+        return Outcome.Ignored;
+    }
+    return insert_text(str.from_chars(kept), LAST_OTHER);
+}
+
+Outcome TextInput.submit() {
+    str line = text();
+    match (validator.check(line)) {
+        case Some(str why): {
+            error = why;
+            return Outcome.Rejected(why);
+        }
+        case None: {
+        }
+    }
+    if (mask == "" && line != "" && (history.size() == 0 || history[history.size() - 1] != line)) {
+        history.push(line);
+        if (history.size() > history_limit) {
+            history.remove_at(0);
+        }
+    }
+    history_index = history.size();
+    draft = "";
+    last = LAST_OTHER;
+    return Outcome.Submitted;
+}
+
+Outcome TextInput.handle_key(term.Key key) {
+    bool is_ctrl = key.has(term.CTRL);
+    bool is_alt = key.has(term.ALT);
+    match (key.code) {
+        case Char(int code): {
+            if (is_ctrl) {
+                return handle_control(code);
+            }
+            if (is_alt) {
+                return handle_alt(code);
+            }
+            if (code < 32 || code == 127 || (code >= 128 && code < 160)) {
+                return Outcome.Ignored;
+            }
+            return insert_text(str.from_chars([code]), LAST_TYPING);
+        }
+        case Enter: {
+            return submit();
+        }
+        case Escape: {
+            return Outcome.Cancelled;
+        }
+        case Backspace: {
+            if (is_alt || is_ctrl) {
+                return kill_range(TUI_word.previous_word(glyphs, cursor), cursor, false);
+            }
+            return delete_range(cursor - 1, cursor);
+        }
+        case Delete: {
+            if (is_alt || is_ctrl) {
+                return kill_range(cursor, TUI_word.next_word(glyphs, cursor), true);
+            }
+            return delete_range(cursor, cursor + 1);
+        }
+        case Left: {
+            if (is_alt || is_ctrl) {
+                return move_to(TUI_word.previous_word(glyphs, cursor));
+            }
+            return move_to(cursor - 1);
+        }
+        case Right: {
+            if (is_alt || is_ctrl) {
+                return move_to(TUI_word.next_word(glyphs, cursor));
+            }
+            return move_to(cursor + 1);
+        }
+        case Home: {
+            return move_to(0);
+        }
+        case End: {
+            return move_to(glyphs.size());
+        }
+        case Up: {
+            return history_back();
+        }
+        case Down: {
+            return history_forward();
+        }
+        case Tab: {
+            return Outcome.Ignored;
+        }
+        case BackTab: {
+            return Outcome.Ignored;
+        }
+        case PageUp: {
+            return Outcome.Ignored;
+        }
+        case PageDown: {
+            return Outcome.Ignored;
+        }
+        case Insert: {
+            return Outcome.Ignored;
+        }
+        case F(int number): {
+            return Outcome.Ignored;
+        }
+    }
+}
+
+// Ctrl plus a letter. The decoder gives the lowercase letter.
+Outcome TextInput.handle_control(int code) {
+    if (code == 'a') {
+        return move_to(0);
+    }
+    if (code == 'e') {
+        return move_to(glyphs.size());
+    }
+    if (code == 'b') {
+        return move_to(cursor - 1);
+    }
+    if (code == 'f') {
+        return move_to(cursor + 1);
+    }
+    if (code == 'd') {
+        return delete_range(cursor, cursor + 1);
+    }
+    if (code == 'k') {
+        return kill_range(cursor, glyphs.size(), true);
+    }
+    if (code == 'u') {
+        return kill_range(0, cursor, false);
+    }
+    if (code == 'w') {
+        return kill_range(TUI_word.previous_blank_word(glyphs, cursor), cursor, false);
+    }
+    if (code == 'y') {
+        return yank();
+    }
+    if (code == 't') {
+        return transpose();
+    }
+    if (code == 'z' || code == '_' || code == '/') {
+        return undo();
+    }
+    if (code == 'p') {
+        return history_back();
+    }
+    if (code == 'n') {
+        return history_forward();
+    }
+    if (code == 'j' || code == 'm') {
+        return submit();
+    }
+    if (code == 'c' || code == 'g') {
+        return Outcome.Cancelled;
+    }
+    return Outcome.Ignored;
+}
+
+// Alt plus a key.
+Outcome TextInput.handle_alt(int raw_code) {
+    int code = raw_code;
+    if (code >= 'A' && code <= 'Z') {
+        code = code + 32;
+    }
+    if (code == 'b') {
+        return move_to(TUI_word.previous_word(glyphs, cursor));
+    }
+    if (code == 'f') {
+        return move_to(TUI_word.next_word(glyphs, cursor));
+    }
+    if (code == 'd') {
+        return kill_range(cursor, TUI_word.next_word(glyphs, cursor), true);
+    }
+    if (code == 'y') {
+        return yank_older();
+    }
+    if (code == '_') {
+        return redo();
+    }
+    return Outcome.Ignored;
+}
+
+// --- mouse ------------------------------------------------------------------
+
+/// A press or drag inside `area` (the rectangle the field was drawn in) puts
+/// the cursor on the cluster under the pointer, or at the end when the
+/// pointer is past the text. Anything else is `Ignored`.
+pub TUI_mouse.Response TextInput.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
+    if (area.is_empty() || !gesture.is_primary()) {
+        return TUI_mouse.Response.Ignored;
+    }
+    bool is_pointing = false;
+    match (gesture.kind) {
+        case Press: {
+            is_pointing = true;
+        }
+        case Drag: {
+            is_pointing = true;
+        }
+        case Release: {
+        }
+        case Click: {
+        }
+        case Hover: {
+        }
+        case Leave: {
+        }
+        case ScrollUp: {
+        }
+        case ScrollDown: {
+        }
+        case ScrollLeft: {
+        }
+        case ScrollRight: {
+        }
+    }
+    if (!is_pointing) {
+        return TUI_mouse.Response.Ignored;
+    }
+    int column = gesture.x - area.x + scroll;
+    if (column < 0) {
+        column = 0;
+    }
+    int before = cursor;
+    cursor = index_at_column(column);
+    last = LAST_OTHER;
+    if (cursor == before) {
+        return TUI_mouse.Response.Ignored;
+    }
+    return TUI_mouse.Response.Changed;
+}
+
+/// The cluster index whose cells hold text column `column`; the end of the
+/// text when it is past it.
+pub int TextInput.index_at_column(int column) {
+    int start = 0;
+    int index = 0;
+    while (index < glyphs.size()) {
+        int cell_width = glyph_width(glyphs[index]);
+        if (column < start + cell_width) {
+            return index;
+        }
+        start = start + cell_width;
+        index = index + 1;
+    }
+    return glyphs.size();
+}
+
+// --- drawing ----------------------------------------------------------------
+
+int TextInput.glyph_width(str glyph) {
+    if (mask != "") {
+        return TUI_text.width(mask);
+    }
+    return TUI_text.width(glyph);
+}
+
+str TextInput.shown(str glyph) {
+    if (mask != "") {
+        return mask;
+    }
+    return glyph;
+}
+
+/// The text column the cursor cell starts at.
+pub int TextInput.cursor_column() {
+    int column = 0;
+    int index = 0;
+    while (index < cursor && index < glyphs.size()) {
+        column = column + glyph_width(glyphs[index]);
+        index = index + 1;
+    }
+    return column;
+}
+
+// The width the cursor cell takes: the cluster it is on, or 1 past the end.
+int TextInput.cursor_width() {
+    if (cursor < glyphs.size()) {
+        int cell_width = glyph_width(glyphs[cursor]);
+        if (cell_width > 0) {
+            return cell_width;
+        }
+    }
+    return 1;
+}
+
+// Move `scroll` just far enough to bring the cursor cell into `room` columns.
+void TextInput.reveal_cursor(int room) {
+    if (room <= 0) {
+        scroll = 0;
+        return;
+    }
+    int column = cursor_column();
+    int cell_width = cursor_width();
+    if (cell_width > room) {
+        cell_width = room;
+    }
+    if (column < scroll) {
+        scroll = column;
+    }
+    if (column + cell_width > scroll + room) {
+        scroll = column + cell_width - room;
+    }
+    if (scroll < 0) {
+        scroll = 0;
+    }
+}
+
+/// Where the terminal's own cursor belongs for a field drawn in `area`,
+/// for a program that shows it instead of (or as well as) the reversed cell.
+/// Call after `render`, which settles the scroll.
+pub TUI_geometry.Point TextInput.cursor_position(TUI_geometry.Rect area) {
+    reveal_cursor(area.width);
+    int offset = cursor_column() - scroll;
+    if (offset < 0) {
+        offset = 0;
+    }
+    if (area.width > 0 && offset >= area.width) {
+        offset = area.width - 1;
+    }
+    return TUI_geometry.Point(area.x + offset, area.y);
+}
+
+/// Draw the field in the top row of `area`.
+pub void TextInput.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    TUI_geometry.Rect row = TUI_geometry.Rect(area.x, area.y, area.width, 1);
+    TUI_clip.paint(buffer, row, row, " ", style);
+    reveal_cursor(area.width);
+    if (glyphs.size() == 0) {
+        if (placeholder != "") {
+            TUI_clip.put_str(buffer, row, area.x, area.y, placeholder, style.merged(placeholder_style));
+        }
+    } else {
+        List<str> parts = [];
+        for (str glyph in glyphs) {
+            parts.push(shown(glyph));
+        }
+        TUI_style.Style text_style = style;
+        if (error != "") {
+            text_style = style.merged(error_style);
+        }
+        TUI_clip.put_str(buffer, row, area.x - scroll, area.y, parts.join(""), text_style);
+    }
+    if (is_focused) {
+        draw_cursor(buffer, row);
+    }
+}
+
+void TextInput.draw_cursor(TUI_buffer.Buffer buffer, TUI_geometry.Rect row) {
+    int x = row.x + cursor_column() - scroll;
+    int cell_width = cursor_width();
+    for (int step in 0 .. cell_width) {
+        int cell_x = x + step;
+        if (cell_x >= row.x && cell_x < row.right()) {
+            TUI_style.Style under = buffer.get(cell_x, row.y).style;
+            buffer.set_style(cell_x, row.y, under.merged(cursor_style));
+        }
+    }
+}

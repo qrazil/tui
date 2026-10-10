@@ -1,0 +1,615 @@
+// The mouse: gestures out of button reports, and routing them to widgets by
+// the rectangles the program laid out.
+//
+// API
+// ---
+//   TUI_mouse.Gesture            what the pointer did: Press, Drag, Release, Click, Hover, Leave, Scroll*
+//   TUI_mouse.Pointer(...)       a recogniser: reports in, gestures out (clicks, double clicks, drags)
+//   pointer.feed(mouse, now_ms)  -> List<Gesture>
+//   TUI_mouse.Router             regions + pointer + focus + hover + drag capture
+//   router.begin_frame()         forget the regions; the view registers them again as it draws
+//   router.add(id, area, ...)    a region, topmost last
+//   router.route(mouse, now_ms)  -> List<Routed>
+//   TUI_mouse.Routed             a gesture, the region it is for, and that region's rectangle
+//   TUI_mouse.Response           what a widget answers: Ignored | Changed | Activated
+//   TUI_mouse.HOVER_ON / HOVER_OFF  the terminal sequences for motion with no button down
+//
+// --- how it fits together ---------------------------------------------------
+//
+// A widget holds no position (TUI_widget.m31). So the program, which already
+// cuts the screen into rectangles to draw, tells the router what it cut:
+//
+//     router.begin_frame();                         // at the top of the view
+//     router.add("files", files_area);              // for each widget it draws
+//     router.add("detail", detail_area, is_focusable: false);
+//
+// and the router answers "which region is under this cell" from what the LAST
+// frame drew, which is what the user was looking at when they clicked. A
+// region added later is on top of one added earlier. The widgets themselves
+// take a gesture and the rectangle they were drawn in:
+//
+//     outline.handle_mouse(routed.gesture, routed.area)
+//
+// and do the arithmetic from there (which row, which column, which tab).
+// Coordinates everywhere here are 0-based cells, like `Rect`; the terminal's
+// own reports are 1-based and `Pointer.feed` converts.
+//
+// --- gestures ---------------------------------------------------------------
+//
+// `Pointer` turns the terminal's reports into the events a widget wants:
+//
+//   - **Press** when a button goes down, **Release** when it comes up, and
+//     **Drag** for each cell the pointer moves to in between;
+//   - **Click** when a button comes up on the cell it went down on with no
+//     drag between, with `clicks` counting 1, 2, 3: a second click on the same
+//     cell within `double_click_ms` of the first is `clicks == 2`. A double
+//     click is a Click with `clicks == 2` AFTER the Click with `clicks == 1`,
+//     so a handler that selects on click and activates on double click needs
+//     no state of its own;
+//   - **Hover** when the pointer moves with no button down, and **Leave** (from
+//     the router, not the pointer) for the region it left;
+//   - **ScrollUp/Down/Left/Right** for the wheel.
+//
+// The time is passed in, in milliseconds from any epoch that does not go
+// backwards much: the pointer never reads a clock, so a test replays a
+// sequence with exact timings. A clock that does go backwards just fails to
+// make a double click.
+//
+// Hover needs the terminal to report motion with no button down
+// (`HOVER_ON`, DEC mode 1003). `term.MOUSE_ON` does not ask for it, because
+// every motion of the mouse is then a report to decode and a redraw to
+// consider; `TUI_app.Loop(should_report_hover: true)` asks for it.
+//
+// --- focus ------------------------------------------------------------------
+//
+// A Press on a region that `is_focusable` focuses it; the router keeps one
+// focused id, and `focus_next`/`focus_previous` cycle it over the focusable
+// regions in the order they were added, for a keyboard that wants to use the
+// same notion. The Routed that moved focus says so (`did_focus`), and a
+// Press on no region leaves focus where it was.
+//
+// --- drag capture -----------------------------------------------------------
+//
+// From a Press until its Release, Drag, Release and Click go to the region the
+// press was in, wherever the pointer is: a drag that leaves the rectangle
+// still scrolls the list it started on rather than whatever it crosses.
+
+import term;
+import TUI_geometry;
+
+/// Hover reporting: motion with no button held (xterm's any-event tracking).
+pub const str HOVER_ON = "\x1b[?1003h";
+pub const str HOVER_OFF = "\x1b[?1003l";
+
+/// What the pointer did.
+pub enum Kind {
+    Press;
+    Drag;
+    Release;
+    Click;
+    Hover;
+    Leave;
+    ScrollUp;
+    ScrollDown;
+    ScrollLeft;
+    ScrollRight;
+}
+
+pub str Kind.to_str() {
+    match (this) {
+        case Press: {
+            return "press";
+        }
+        case Drag: {
+            return "drag";
+        }
+        case Release: {
+            return "release";
+        }
+        case Click: {
+            return "click";
+        }
+        case Hover: {
+            return "hover";
+        }
+        case Leave: {
+            return "leave";
+        }
+        case ScrollUp: {
+            return "scroll-up";
+        }
+        case ScrollDown: {
+            return "scroll-down";
+        }
+        case ScrollLeft: {
+            return "scroll-left";
+        }
+        case ScrollRight: {
+            return "scroll-right";
+        }
+    }
+}
+
+/// One thing the pointer did, at a cell. `x` and `y` are 0-based.
+pub type Gesture {
+    pub Kind kind;
+    pub int x;
+    pub int y;
+    /// 0 left, 1 middle, 2 right; 0 for the wheel and for Hover.
+    pub int button = 0;
+    /// `term.SHIFT | term.ALT | term.CTRL` as held.
+    pub int mods = 0;
+    /// For a Click: 1, 2 or 3. 0 for everything else.
+    pub int clicks = 0;
+    /// Where the button went down, for Drag, Release and Click.
+    pub int origin_x = -1;
+    pub int origin_y = -1;
+}
+
+/// Were all of `mask`'s modifier bits held?
+pub bool Gesture.has_mods(int mask) {
+    return (mods & mask) == mask;
+}
+
+/// Is this a left-button gesture?
+pub bool Gesture.is_primary() {
+    return button == 0;
+}
+
+/// Is this a wheel gesture?
+pub bool Gesture.is_scroll() {
+    match (kind) {
+        case ScrollUp: {
+            return true;
+        }
+        case ScrollDown: {
+            return true;
+        }
+        case ScrollLeft: {
+            return true;
+        }
+        case ScrollRight: {
+            return true;
+        }
+        case Press: {
+            return false;
+        }
+        case Drag: {
+            return false;
+        }
+        case Release: {
+            return false;
+        }
+        case Click: {
+            return false;
+        }
+        case Hover: {
+            return false;
+        }
+        case Leave: {
+            return false;
+        }
+    }
+}
+
+/// Does this gesture end a press: a Release, or a Click?
+pub bool Gesture.is_press_end() {
+    match (kind) {
+        case Click: {
+            return true;
+        }
+        case Release: {
+            return true;
+        }
+        case Press: {
+            return false;
+        }
+        case Drag: {
+            return false;
+        }
+        case Hover: {
+            return false;
+        }
+        case Leave: {
+            return false;
+        }
+        case ScrollUp: {
+            return false;
+        }
+        case ScrollDown: {
+            return false;
+        }
+        case ScrollLeft: {
+            return false;
+        }
+        case ScrollRight: {
+            return false;
+        }
+    }
+}
+
+pub str Gesture.to_str() {
+    str out = kind.to_str() + " " + str(x) + "," + str(y);
+    if (clicks > 1) {
+        out = out + " x" + str(clicks);
+    }
+    return out;
+}
+
+/// What a widget says about a gesture it was handed.
+pub enum Response {
+    /// Nothing for this widget in it.
+    Ignored;
+    /// The widget's state changed: draw again.
+    Changed;
+    /// The user chose something: a double click on a row, say. State may have
+    /// changed too.
+    Activated;
+}
+
+/// A name for the answer, for a log or a test.
+pub str Response.to_str() {
+    match (this) {
+        case Ignored: {
+            return "ignored";
+        }
+        case Changed: {
+            return "changed";
+        }
+        case Activated: {
+            return "activated";
+        }
+    }
+}
+
+/// The recogniser. See the header for what it makes of the terminal's reports.
+pub type Pointer {
+    /// The longest gap between two clicks that still make a double click.
+    pub int double_click_ms = 400;
+    bool is_down = false;
+    int down_button = 0;
+    int down_x = 0;
+    int down_y = 0;
+    bool did_drag = false;
+    int hover_x = -1;
+    int hover_y = -1;
+    int last_click_ms = 0;
+    int last_click_x = -1;
+    int last_click_y = -1;
+    int last_click_button = -1;
+    int click_count = 0;
+}
+
+/// Feed one report from the terminal, with the time it arrived at in
+/// milliseconds. Answers the gestures it makes, in order -- none, one, or two
+/// (a Release and the Click it completes).
+pub List<Gesture> Pointer.feed(term.Mouse mouse, int now_ms) {
+    int x = mouse.col - 1;
+    int y = mouse.row - 1;
+    if (x < 0) {
+        x = 0;
+    }
+    if (y < 0) {
+        y = 0;
+    }
+    List<Gesture> out = [];
+    match (mouse.kind) {
+        case Down(int button): {
+            is_down = true;
+            down_button = button;
+            down_x = x;
+            down_y = y;
+            did_drag = false;
+            out.push(Gesture(Kind.Press, x, y, button: button, mods: mouse.mods, origin_x: x, origin_y: y));
+        }
+        case Drag(int button): {
+            if (!is_down) {
+                is_down = true;
+                down_button = button;
+                down_x = x;
+                down_y = y;
+            }
+            did_drag = true;
+            out.push(Gesture(Kind.Drag, x, y, button: down_button, mods: mouse.mods, origin_x: down_x, origin_y: down_y));
+        }
+        case Up(int button): {
+            if (!is_down) {
+                return out;
+            }
+            out.push(Gesture(Kind.Release, x, y, button: down_button, mods: mouse.mods, origin_x: down_x, origin_y: down_y));
+            if (!did_drag && x == down_x && y == down_y && button == down_button) {
+                out.push(Gesture(Kind.Click, x, y, button: down_button, mods: mouse.mods, clicks: count_click(x, y, down_button, now_ms), origin_x: down_x, origin_y: down_y));
+            }
+            is_down = false;
+            did_drag = false;
+        }
+        case Moved: {
+            if (x == hover_x && y == hover_y) {
+                return out;
+            }
+            hover_x = x;
+            hover_y = y;
+            out.push(Gesture(Kind.Hover, x, y, mods: mouse.mods));
+        }
+        case ScrollUp: {
+            out.push(Gesture(Kind.ScrollUp, x, y, mods: mouse.mods));
+        }
+        case ScrollDown: {
+            out.push(Gesture(Kind.ScrollDown, x, y, mods: mouse.mods));
+        }
+        case ScrollLeft: {
+            out.push(Gesture(Kind.ScrollLeft, x, y, mods: mouse.mods));
+        }
+        case ScrollRight: {
+            out.push(Gesture(Kind.ScrollRight, x, y, mods: mouse.mods));
+        }
+    }
+    return out;
+}
+
+// The click count for a click at `x`, `y` now: one more than the last click if
+// it was the same button, on the same cell, no longer ago than the double
+// click time (and not in the future), up to three; otherwise one.
+int Pointer.count_click(int x, int y, int button, int now_ms) {
+    int gap = now_ms - last_click_ms;
+    if (click_count > 0 && x == last_click_x && y == last_click_y && button == last_click_button && gap >= 0 && gap <= double_click_ms) {
+        click_count = click_count + 1;
+        if (click_count > 3) {
+            click_count = 1;
+        }
+    } else {
+        click_count = 1;
+    }
+    last_click_ms = now_ms;
+    last_click_x = x;
+    last_click_y = y;
+    last_click_button = button;
+    return click_count;
+}
+
+/// A named rectangle of the screen.
+pub type Region {
+    pub str id;
+    pub TUI_geometry.Rect area;
+    /// Does a Press here move focus to it?
+    pub bool is_focusable = true;
+}
+
+/// A gesture, and the region it is for.
+pub type Routed {
+    pub Gesture gesture;
+    /// The region's id, or "" when the gesture fell on no region.
+    pub str id;
+    /// The region's rectangle (empty when `id` is "").
+    pub TUI_geometry.Rect area;
+    /// Did this gesture move focus to `id`?
+    pub bool did_focus = false;
+}
+
+/// Regions, pointer, focus, hover and drag capture in one place.
+pub type Router {
+    pub Pointer pointer = Pointer();
+    List<Region> regions = [];
+    str focus_id = "";
+    str hover_id = "";
+    str capture_id = "";
+}
+
+/// Forget the regions. Call at the top of the view; it adds them again as it
+/// lays the screen out.
+pub void Router.begin_frame() {
+    regions.clear();
+}
+
+/// Register a region. One added later is on top of one added earlier where
+/// they overlap.
+pub void Router.add(str id, TUI_geometry.Rect area, bool is_focusable = true) {
+    regions.push(Region(id, area, is_focusable: is_focusable));
+}
+
+/// The topmost region holding the cell `x`, `y`.
+pub Option<Region> Router.hit(int x, int y) {
+    int index = regions.size() - 1;
+    while (index >= 0) {
+        Region region = regions[index];
+        if (region.area.has_point(x, y)) {
+            return Option<Region>.Some(region);
+        }
+        index = index - 1;
+    }
+    return Option<Region>.None;
+}
+
+/// The region with this id, if the last frame registered one.
+pub Option<Region> Router.find(str id) {
+    for (Region region in regions) {
+        if (region.id == id) {
+            return Option<Region>.Some(region);
+        }
+    }
+    return Option<Region>.None;
+}
+
+/// The id with focus, or "".
+pub str Router.focused() {
+    return focus_id;
+}
+
+pub bool Router.is_focused(str id) {
+    return focus_id == id;
+}
+
+/// The id under the pointer, or "".
+pub str Router.hovered() {
+    return hover_id;
+}
+
+/// Give focus to `id`.
+pub void Router.focus(str id) {
+    focus_id = id;
+}
+
+// The ids of the focusable regions, in the order added, each once.
+List<str> Router.focus_order() {
+    List<str> ids = [];
+    for (Region region in regions) {
+        if (region.is_focusable && !ids.contains(region.id)) {
+            ids.push(region.id);
+        }
+    }
+    return ids;
+}
+
+/// Move focus to the next focusable region, wrapping. With nothing focused it
+/// is the first.
+pub void Router.focus_next() {
+    step_focus(1);
+}
+
+/// Move focus to the previous focusable region, wrapping.
+pub void Router.focus_previous() {
+    step_focus(-1);
+}
+
+void Router.step_focus(int delta) {
+    List<str> ids = focus_order();
+    if (ids.size() == 0) {
+        return;
+    }
+    int current = -1;
+    match (ids.index_of(focus_id)) {
+        case Some(int found): {
+            current = found;
+        }
+        case None: {
+        }
+    }
+    int next = 0;
+    if (current < 0 && delta < 0) {
+        next = ids.size() - 1;
+    } else if (current >= 0) {
+        next = (current + delta + ids.size()) % ids.size();
+    }
+    focus_id = ids[next];
+}
+
+/// Feed one report. Answers the gestures it makes, each addressed to the
+/// region it is for. Hover that moves from one region to another also
+/// answers a Leave for the region it left, before the Hover.
+pub List<Routed> Router.route(term.Mouse mouse, int now_ms) {
+    List<Routed> out = [];
+    List<Gesture> gestures = pointer.feed(mouse, now_ms);
+    for (Gesture gesture in gestures) {
+        route_one(out, gesture);
+    }
+    // The button is up (the last gesture of the report is a Release, or the
+    // Click it made): the press is over, and whatever comes next with no press
+    // of its own is for whatever is under the pointer.
+    if (gestures.size() > 0 && gestures[gestures.size() - 1].is_press_end()) {
+        capture_id = "";
+    }
+    return out;
+}
+
+void Router.route_one(List<Routed> out, Gesture gesture) {
+    match (gesture.kind) {
+        case Press: {
+            Option<Region> found = hit(gesture.x, gesture.y);
+            match (found) {
+                case Some(Region region): {
+                    capture_id = region.id;
+                    bool did_focus = false;
+                    if (region.is_focusable && focus_id != region.id) {
+                        focus_id = region.id;
+                        did_focus = true;
+                    }
+                    out.push(Routed(gesture, region.id, region.area, did_focus: did_focus));
+                }
+                case None: {
+                    capture_id = "";
+                    out.push(Routed(gesture, "", TUI_geometry.Rect(0, 0, 0, 0)));
+                }
+            }
+        }
+        case Drag: {
+            out.push(captured(gesture));
+        }
+        case Release: {
+            out.push(captured(gesture));
+        }
+        case Click: {
+            out.push(captured(gesture));
+        }
+        case Hover: {
+            Option<Region> found = hit(gesture.x, gesture.y);
+            str now_id = "";
+            TUI_geometry.Rect now_area = TUI_geometry.Rect(0, 0, 0, 0);
+            match (found) {
+                case Some(Region region): {
+                    now_id = region.id;
+                    now_area = region.area;
+                }
+                case None: {
+                }
+            }
+            if (now_id != hover_id && hover_id != "") {
+                out.push(Routed(Gesture(Kind.Leave, gesture.x, gesture.y), hover_id, area_of(hover_id)));
+            }
+            hover_id = now_id;
+            out.push(Routed(gesture, now_id, now_area));
+        }
+        case Leave: {
+            out.push(Routed(gesture, "", TUI_geometry.Rect(0, 0, 0, 0)));
+        }
+        case ScrollUp: {
+            out.push(under(gesture));
+        }
+        case ScrollDown: {
+            out.push(under(gesture));
+        }
+        case ScrollLeft: {
+            out.push(under(gesture));
+        }
+        case ScrollRight: {
+            out.push(under(gesture));
+        }
+    }
+}
+
+TUI_geometry.Rect Router.area_of(str id) {
+    match (find(id)) {
+        case Some(Region region): {
+            return region.area;
+        }
+        case None: {
+            return TUI_geometry.Rect(0, 0, 0, 0);
+        }
+    }
+}
+
+// A gesture for the region the current press started in, if it still exists.
+Routed Router.captured(Gesture gesture) {
+    if (capture_id == "") {
+        return Routed(gesture, "", TUI_geometry.Rect(0, 0, 0, 0));
+    }
+    match (find(capture_id)) {
+        case Some(Region region): {
+            return Routed(gesture, region.id, region.area);
+        }
+        case None: {
+            return Routed(gesture, "", TUI_geometry.Rect(0, 0, 0, 0));
+        }
+    }
+}
+
+// A gesture for the topmost region under it.
+Routed Router.under(Gesture gesture) {
+    match (hit(gesture.x, gesture.y)) {
+        case Some(Region region): {
+            return Routed(gesture, region.id, region.area);
+        }
+        case None: {
+            return Routed(gesture, "", TUI_geometry.Rect(0, 0, 0, 0));
+        }
+    }
+}

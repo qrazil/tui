@@ -1,0 +1,281 @@
+// Numbers on an axis: nice tick values, the scale that places them, and how
+// they are written.
+//
+// API
+// ---
+//   TUI_scale.nice_number(range, should_round)  1, 2, 5 or 10 times a power of ten
+//   TUI_scale.nice_ticks(lower, upper, target, should_expand) -> Ticks
+//   TUI_scale.Scale(lower, upper, cells, per_cell)  value <-> cell position
+//   scale.cell(value), scale.sub(value), scale.value_at_cell(cell)
+//   TUI_scale.format_fixed(value, decimals)     "-3.50"
+//   TUI_scale.format_short(value)               "3.5", "12", "0.25"
+//
+// --- one scale for marks and labels -----------------------------------------
+//
+// A chart that computes a tick's column in one place and a data point's
+// column in another is off by one somewhere, and it is the sort of error
+// nobody sees until they line a ruler against the screen. So there is one
+// `Scale` and both ask it. `sub(value)` is the position in sub-cell units
+// (a braille cell is 2 wide and 4 tall, a half block 1 by 2), and `cell(value)`
+// is `sub(value) / per_cell`: the cell that holds the mark. A label for the
+// tick at `v` is centred on `cell(v)`, the same cell the mark for `v` is
+// plotted in, by construction.
+//
+// `sub(lower)` is 0 and `sub(upper)` is the last sub-cell, `cells * per_cell
+// - 1`, so both ends of the data are on the plot and none is clipped.
+//
+// --- nice numbers -----------------------------------------------------------
+//
+// Ticks are the multiples of a step that is 1, 2 or 5 times a power of ten,
+// chosen so there are about `target` of them (Heckbert's "nice numbers for
+// graph labels"). `should_expand` decides what happens to the ends of the
+// data: expanded, the axis runs from the tick at or below `lower` to the tick
+// at or above `upper`, so the first and last labels sit on the plot's edges;
+// not expanded, the axis is exactly `lower .. upper` and the ticks are the
+// multiples of the step that fall inside it.
+//
+// Everything is decided in floating point and then written through
+// `format_fixed`, which rounds the value to the tick's number of decimals
+// before it prints one, so 0.1 * 3 is "0.3" and not "0.30000000000000004".
+
+import math;
+
+/// Ten to the `exponent`, for `exponent >= 0`, exactly: every power of ten up
+/// to 1e22 is a double.
+float pow10(int exponent) {
+    float out = 1.0;
+    for (int i in 0 .. exponent) {
+        out = out * 10.0;
+    }
+    return out;
+}
+
+/// A "nice" number near `range`: 1, 2, 5 or 10 times a power of ten. With
+/// `should_round` it is the nearest of those; without, the smallest that is
+/// not less than `range`. A range of zero or less, or one that is not a
+/// number, is 1.0.
+pub float nice_number(float range, bool should_round) {
+    if (math.is_nan(range) || !math.is_finite(range) || range <= 0.0) {
+        return 1.0;
+    }
+    int exponent = 0;
+    float fraction = range;
+    while (fraction >= 10.0) {
+        fraction = fraction / 10.0;
+        exponent = exponent + 1;
+    }
+    while (fraction < 1.0) {
+        fraction = fraction * 10.0;
+        exponent = exponent - 1;
+    }
+    float nice = 10.0;
+    if (should_round) {
+        if (fraction < 1.5) {
+            nice = 1.0;
+        } else if (fraction < 3.0) {
+            nice = 2.0;
+        } else if (fraction < 7.0) {
+            nice = 5.0;
+        }
+    } else if (fraction <= 1.0) {
+        nice = 1.0;
+    } else if (fraction <= 2.0) {
+        nice = 2.0;
+    } else if (fraction <= 5.0) {
+        nice = 5.0;
+    }
+    if (exponent >= 0) {
+        return nice * pow10(exponent);
+    }
+    return nice / pow10(-exponent);
+}
+
+/// The ticks for an axis: where they are, how far apart, and how many decimals
+/// their labels need.
+pub type Ticks {
+    /// The axis's own ends. Equal to the inputs unless they were expanded.
+    pub float lower;
+    pub float upper;
+    pub float step;
+    pub int decimals;
+    pub List<float> values;
+}
+
+/// How many decimal places a step needs to be written exactly: 0 for 5, 1 for
+/// 0.5, 2 for 0.25. At most 9.
+int decimals_of(float step) {
+    for (int places in 0 .. 9) {
+        float scaled = step * pow10(places);
+        if (math.fabs(scaled - math.round(scaled)) < 0.0000001 * math.fmax(1.0, math.fabs(scaled))) {
+            return places;
+        }
+    }
+    return 9;
+}
+
+/// Ticks for `lower .. upper`, about `target` of them (at least 2).
+///
+/// The bounds may come in either order. A range of no width (one value, no
+/// data) is widened to a range around it -- one unit either side of zero, or
+/// 10% of the value -- because an axis must have a length. NaN or infinite
+/// bounds are replaced by `0.0 .. 1.0`.
+pub Ticks nice_ticks(float lower, float upper, int target, bool should_expand) {
+    float low = lower;
+    float high = upper;
+    if (!math.is_finite(low) || !math.is_finite(high)) {
+        low = 0.0;
+        high = 1.0;
+    }
+    if (low > high) {
+        float swap = low;
+        low = high;
+        high = swap;
+    }
+    if (high - low < 1.0e-300) {
+        if (low == 0.0) {
+            low = -1.0;
+            high = 1.0;
+        } else {
+            float pad = math.fabs(low) * 0.1;
+            low = low - pad;
+            high = high + pad;
+        }
+    }
+    int count = target;
+    if (count < 2) {
+        count = 2;
+    }
+    float span = nice_number(high - low, false);
+    float step = nice_number(span / float(count - 1), true);
+    float first = math.ceil(low / step - 0.000000001);
+    float last = math.floor(high / step + 0.000000001);
+    if (should_expand) {
+        first = math.floor(low / step + 0.000000001);
+        last = math.ceil(high / step - 0.000000001);
+    }
+    int places = decimals_of(step);
+    List<float> values = [];
+    int steps = int(last - first);
+    for (int index in 0 .. steps + 1) {
+        values.push((first + float(index)) * step);
+    }
+    float axis_lower = low;
+    float axis_upper = high;
+    if (should_expand) {
+        axis_lower = first * step;
+        axis_upper = last * step;
+    }
+    return Ticks(axis_lower, axis_upper, step, places, values);
+}
+
+/// `value` written with exactly `decimals` places (0 to 9), rounded half away
+/// from zero: `format_fixed(-3.5, 2)` is `-3.50`. Never `-0` or `-0.00`. A value
+/// too large to scale into an `int`, or not a number, is written by `to_str`.
+pub str format_fixed(float value, int decimals) {
+    if (!math.is_finite(value)) {
+        return value.to_str();
+    }
+    int places = decimals;
+    if (places < 0) {
+        places = 0;
+    }
+    if (places > 9) {
+        places = 9;
+    }
+    float magnitude = math.fabs(value) * pow10(places);
+    if (magnitude >= 9000000000000000000.0) {
+        return value.to_str();
+    }
+    int scaled = int(math.floor(magnitude + 0.5));
+    str digits = str(scaled);
+    while (digits.size() < places + 1) {
+        digits = "0" + digits;
+    }
+    str text = digits;
+    if (places > 0) {
+        int point = digits.size() - places;
+        text = digits.substr(0, point) + "." + digits.substr(point, digits.size());
+    }
+    if (value < 0.0 && scaled != 0) {
+        return "-" + text;
+    }
+    return text;
+}
+
+/// `value` written as shortly as it can be without losing up to two decimals:
+/// `12`, `3.5`, `0.25`. The label for a value that is not itself a tick.
+pub str format_short(float value) {
+    if (!math.is_finite(value)) {
+        return value.to_str();
+    }
+    for (int places in 0 .. 2) {
+        float scaled = math.fabs(value) * pow10(places);
+        if (math.fabs(scaled - math.round(scaled)) < 0.0000001 * math.fmax(1.0, scaled)) {
+            return format_fixed(value, places);
+        }
+    }
+    return format_fixed(value, 2);
+}
+
+/// Where values fall along one axis of `cells` cells, `per_cell` sub-cells to a
+/// cell. See the header for why marks and labels both ask this.
+pub type Scale {
+    pub float lower;
+    pub float upper;
+    pub int cells;
+    pub int per_cell = 1;
+}
+
+/// How many sub-cells the axis has.
+pub int Scale.length() {
+    if (cells <= 0 || per_cell <= 0) {
+        return 0;
+    }
+    return cells * per_cell;
+}
+
+/// The sub-cell `value` lands in, from 0 (at `lower`) to `length() - 1` (at
+/// `upper`); a value outside the axis is pulled onto its nearest end. An axis
+/// of no length, or a value that is not a number, answers 0.
+pub int Scale.sub(float value) {
+    int total = length();
+    if (total <= 0 || math.is_nan(value) || !(upper > lower)) {
+        return 0;
+    }
+    float ratio = (value - lower) / (upper - lower);
+    if (ratio < 0.0) {
+        return 0;
+    }
+    if (ratio > 1.0) {
+        return total - 1;
+    }
+    int position = int(math.floor(ratio * float(total - 1) + 0.5));
+    if (position > total - 1) {
+        return total - 1;
+    }
+    return position;
+}
+
+/// The cell, `0 .. cells - 1` from the low end, that holds `value`.
+pub int Scale.cell(float value) {
+    if (cells <= 0 || per_cell <= 0) {
+        return 0;
+    }
+    return sub(value) / per_cell;
+}
+
+/// Is `value` on the axis at all, rather than pulled to its edge?
+pub bool Scale.is_inside(float value) {
+    return !math.is_nan(value) && value >= lower && value <= upper;
+}
+
+/// The value at the middle of cell `cell`: the inverse of `cell`, to within
+/// the width of a cell. For finding what is under the mouse.
+pub float Scale.value_at_cell(int cell) {
+    int total = length();
+    if (total <= 1) {
+        return lower;
+    }
+    float middle = float(cell * per_cell) + float(per_cell - 1) / 2.0;
+    return lower + (upper - lower) * middle / float(total - 1);
+}

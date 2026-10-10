@@ -1,0 +1,816 @@
+// A line / scatter chart with axes, nice tick labels, a legend and a hover.
+//
+// API
+// ---
+//   TUI_chart.Point(x, y)                           one sample
+//   TUI_chart.Dataset(name, points, kind:, style:)  a series; Dataset.of_values(name, ys)
+//   TUI_chart.Axis(title:, min:, max:, ticks:, style:)   one axis; bounds optional
+//   TUI_chart.Chart(datasets, x_axis:, y_axis:, marker:, legend:, ...)
+//   chart.render(buffer, area)
+//   chart.plot_rect(area)                           the rectangle the data is drawn in
+//   chart.nearest(area, x, y) -> Option<Hover>      the data point nearest a screen cell
+//   chart.value_at(area, x, y) -> Option<Point>     the data coordinates under a screen cell
+//   chart.handle_mouse(gesture, area)               hover: sets `chart.hover`
+//   TUI_chart.Kind  Line | Scatter       TUI_chart.Marker  Braille | HalfBlock | Dot
+//   TUI_chart.LegendPosition  Hidden | TopRight | TopLeft | BottomRight | BottomLeft
+//
+// --- one scale places the marks AND the labels ------------------------------
+//
+// The axis bounds are decided once, from the pinned `min`/`max` or from the
+// data, and when neither end is pinned they are widened to "nice" tick values
+// (1, 2 or 5 times a power of ten: `TUI_scale.nice_ticks`), so the first and
+// last labels sit on the plot's edges. That gives a `TUI_scale.Scale` per axis,
+// in the sub-cell units of the marker (a braille cell is 2 by 4 dots, a half
+// block 1 by 2, a dot 1 by 1), and then BOTH the data points and the tick
+// labels ask the same scale where they go. A tick at value `v` is labelled under
+// the cell that holds a point whose x is `v`; there is no second formula to
+// disagree with the first.
+//
+// A tick label that would touch the one before it is left out, not
+// overwritten, so a narrow chart shows fewer labels instead of garbled ones.
+//
+// --- what is drawn ----------------------------------------------------------
+//
+//   - a **Line** dataset joins consecutive points with a straight segment,
+//     clipped to the axis bounds (a segment that leaves the plot is cut where
+//     it leaves, not bent along the edge); a **Scatter** one draws each point.
+//     Points that are not finite numbers are skipped, and a line does not
+//     bridge them.
+//   - each dataset is drawn in its own `style`; where two share a cell the
+//     later dataset's colour wins and the dots of both are kept.
+//   - the y axis on the left and the x axis along the bottom, with a tick
+//     mark at each labelled value; `title` on either puts one line of text
+//     above the plot (y) or below the labels (x).
+//   - a legend of the datasets that have a name, inside the plot, in a corner.
+//   - the hovered point (`hover`), if any: its cell reversed and a tooltip with
+//     its dataset and coordinates.
+//
+// When the area is too small for the axes (under 3 rows or 4 columns of plot)
+// the chart is the plot alone, edge to edge, without labels.
+//
+// --- hover ------------------------------------------------------------------
+//
+// `handle_mouse` takes a gesture and the rectangle the chart was drawn in
+// (see `TUI_mouse`): Hover, Drag and Press inside the plot snap `hover` to the
+// nearest data point within `hover_radius` cells (a cell is about twice as
+// tall as it is wide, so rows count double); outside the plot, or on Leave, it
+// is cleared. It answers `Changed` only when `hover` changed, so a program
+// redraws only when the pointer moves onto another point.
+
+import math;
+import term;
+import TUI_buffer;
+import TUI_clip;
+import TUI_geometry;
+import TUI_mouse;
+import TUI_scale;
+import TUI_style;
+import TUI_text;
+
+/// One sample.
+pub type Point {
+    pub float x;
+    pub float y;
+}
+
+pub enum Kind {
+    Line;
+    Scatter;
+}
+
+/// The glyphs the plot is made of.
+pub enum Marker {
+    /// 2 by 4 dots a cell: the finest.
+    Braille;
+    /// 1 by 2: upper and lower half blocks, for terminals without braille.
+    HalfBlock;
+    /// 1 by 1: a bullet per cell.
+    Dot;
+}
+
+pub enum LegendPosition {
+    Hidden;
+    TopRight;
+    TopLeft;
+    BottomRight;
+    BottomLeft;
+}
+
+/// One series.
+pub type Dataset {
+    pub str name = "";
+    pub List<Point> points = [];
+    pub Kind kind = Kind.Line;
+    pub TUI_style.Style style = TUI_style.Style();
+}
+
+/// A dataset whose x values are 0, 1, 2, ...
+pub static Dataset Dataset.of_values(str name, List<float> values, Kind kind = Kind.Line, TUI_style.Style style = TUI_style.Style()) {
+    List<Point> points = [];
+    for (int index in 0 .. values.size()) {
+        points.push(Point(float(index), values[index]));
+    }
+    return Dataset(name: name, points: points, kind: kind, style: style);
+}
+
+/// One axis. `min`/`max` pin an end; an end left `None` follows the data (and,
+/// with both ends unpinned, is widened to a tick value). `ticks` is how many
+/// labels to aim for; 0 chooses by the size of the plot.
+pub type Axis {
+    pub str title = "";
+    pub Option<float> min = Option<float>.None;
+    pub Option<float> max = Option<float>.None;
+    pub int ticks = 0;
+    pub TUI_style.Style style = TUI_style.Style(attrs: TUI_style.DIM);
+}
+
+/// The data point under the pointer.
+pub type Hover {
+    /// Which dataset, and which point of it.
+    pub int dataset;
+    pub int index;
+    pub float x;
+    pub float y;
+}
+
+/// The chart.
+pub type Chart {
+    pub List<Dataset> datasets;
+    pub Axis x_axis = Axis();
+    pub Axis y_axis = Axis();
+    pub Marker marker = Marker.Braille;
+    pub LegendPosition legend = LegendPosition.TopRight;
+    pub Option<Hover> hover = Option<Hover>.None;
+    /// How far, in cells, the pointer may be from a point and still snap to it.
+    pub int hover_radius = 4;
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style hover_style = TUI_style.Style(attrs: TUI_style.REVERSE | TUI_style.BOLD);
+    pub TUI_style.Style legend_style = TUI_style.Style();
+}
+
+// The extent of all the usable values: x if `is_x`, else y. 0..1 if there are none.
+TUI_scale.Ticks Chart.axis_ticks(bool is_x, int target) {
+    Axis axis = y_axis;
+    if (is_x) {
+        axis = x_axis;
+    }
+    float low = 1000000000000000019884624838656.0;
+    float high = -1000000000000000019884624838656.0;
+    bool has_data = false;
+    for (Dataset set in datasets) {
+        for (Point point in set.points) {
+            if (is_usable(point.x) && is_usable(point.y)) {
+                float value = point.y;
+                if (is_x) {
+                    value = point.x;
+                }
+                has_data = true;
+                if (value < low) {
+                    low = value;
+                }
+                if (value > high) {
+                    high = value;
+                }
+            }
+        }
+    }
+    if (!has_data) {
+        low = 0.0;
+        high = 1.0;
+    }
+    float lower = choose(axis.min, low);
+    float upper = choose(axis.max, high);
+    if (upper < lower) {
+        upper = lower;
+    }
+    int wanted = target;
+    if (axis.ticks > 0) {
+        wanted = axis.ticks;
+    }
+    bool should_expand = !is_pinned(axis.min) && !is_pinned(axis.max);
+    return TUI_scale.nice_ticks(lower, upper, wanted, should_expand);
+}
+
+int Chart.dots_across() {
+    match (marker) {
+        case Braille: {
+            return 2;
+        }
+        case HalfBlock: {
+            return 1;
+        }
+        case Dot: {
+            return 1;
+        }
+    }
+}
+
+int Chart.dots_down() {
+    match (marker) {
+        case Braille: {
+            return 4;
+        }
+        case HalfBlock: {
+            return 2;
+        }
+        case Dot: {
+            return 1;
+        }
+    }
+}
+
+Frame Chart.frame(TUI_geometry.Rect area) {
+    int top_rows = 0;
+    if (y_axis.title != "") {
+        top_rows = 1;
+    }
+    int bottom_rows = 2;
+    if (x_axis.title != "") {
+        bottom_rows = 3;
+    }
+    int plot_height = area.height - top_rows - bottom_rows;
+    int y_target = clamp_int(plot_height / 3 + 1, 2, 8);
+    TUI_scale.Ticks y_ticks = axis_ticks(false, y_target);
+    int label_width = 0;
+    for (float value in y_ticks.values) {
+        int width = TUI_text.width(tick_text(y_ticks, value));
+        if (width > label_width) {
+            label_width = width;
+        }
+    }
+    int plot_width = area.width - label_width - 1;
+    int x_target = clamp_int(plot_width / 10, 2, 10);
+    TUI_scale.Ticks x_ticks = axis_ticks(true, x_target);
+    bool has_axes = plot_height >= 3 && plot_width >= 4;
+    TUI_geometry.Rect plot = area;
+    if (has_axes) {
+        plot = TUI_geometry.Rect(area.x + label_width + 1, area.y + top_rows, plot_width, plot_height);
+    }
+    TUI_scale.Scale x_scale = TUI_scale.Scale(x_ticks.lower, x_ticks.upper, plot.width, per_cell: dots_across());
+    TUI_scale.Scale y_scale = TUI_scale.Scale(y_ticks.lower, y_ticks.upper, plot.height, per_cell: dots_down());
+    return Frame(plot, x_ticks, y_ticks, x_scale, y_scale, label_width, has_axes);
+}
+
+/// The rectangle the data is drawn in, for an area.
+pub TUI_geometry.Rect Chart.plot_rect(TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return area;
+    }
+    return frame(area).plot;
+}
+
+bool Chart.is_inside(Frame frame, Point point) {
+    return is_usable(point.x) && is_usable(point.y) && frame.x_scale.is_inside(point.x) && frame.y_scale.is_inside(point.y);
+}
+
+Canvas Chart.draw_marks(Frame frame) {
+    Canvas canvas = new_canvas(frame.plot.width, frame.plot.height, dots_across(), dots_down());
+    for (int number in 0 .. datasets.size()) {
+        Dataset set = datasets[number];
+        match (set.kind) {
+            case Scatter: {
+                for (Point point in set.points) {
+                    if (is_inside(frame, point)) {
+                        canvas.plot(marker, frame.x_scale.sub(point.x), frame.y_scale.sub(point.y), number);
+                    }
+                }
+            }
+            case Line: {
+                draw_line(canvas, frame, set, number);
+            }
+        }
+    }
+    return canvas;
+}
+
+void Chart.draw_line(Canvas canvas, Frame frame, Dataset set, int number) {
+    for (int index in 0 .. set.points.size()) {
+        Point point = set.points[index];
+        if (!is_usable(point.x) || !is_usable(point.y)) {
+            continue;
+        }
+        if (index == 0 || !is_usable(set.points[index - 1].x) || !is_usable(set.points[index - 1].y)) {
+            // A run starts here: a lone point is still a dot.
+            if (is_inside(frame, point)) {
+                canvas.plot(marker, frame.x_scale.sub(point.x), frame.y_scale.sub(point.y), number);
+            }
+            continue;
+        }
+        Point before = set.points[index - 1];
+        match (clip_segment(before.x, before.y, point.x, point.y, frame.x_scale.lower, frame.x_scale.upper, frame.y_scale.lower, frame.y_scale.upper)) {
+            case Some(List<float> piece): {
+                canvas.line(marker, frame.x_scale.sub(piece[0]), frame.y_scale.sub(piece[1]), frame.x_scale.sub(piece[2]), frame.y_scale.sub(piece[3]), number);
+            }
+            case None: {
+            }
+        }
+    }
+}
+
+/// Draw the chart in `area`.
+pub void Chart.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    TUI_clip.paint(buffer, area, area, " ", style);
+    Frame frame = frame(area);
+    if (frame.has_axes) {
+        draw_axes(buffer, area, frame);
+    }
+    Canvas canvas = draw_marks(frame);
+    for (int cell_row in 0 .. canvas.height) {
+        for (int cell_column in 0 .. canvas.width) {
+            int slot = cell_row * canvas.width + cell_column;
+            if (canvas.masks[slot] != 0) {
+                TUI_style.Style mark_style = style;
+                if (canvas.owners[slot] >= 0) {
+                    mark_style = style.merged(datasets[canvas.owners[slot]].style);
+                }
+                TUI_clip.put_str(buffer, area, frame.plot.x + cell_column, frame.plot.y + cell_row, glyph_for(marker, canvas.masks[slot]), mark_style);
+            }
+        }
+    }
+    draw_legend(buffer, frame.plot);
+    draw_hover(buffer, frame);
+}
+
+void Chart.draw_axes(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, Frame frame) {
+    TUI_geometry.Rect plot = frame.plot;
+    TUI_style.Style axis_style = style.merged(y_axis.style);
+    TUI_style.Style x_style = style.merged(x_axis.style);
+    int axis_x = plot.x - 1;
+    for (int y in plot.y .. plot.bottom()) {
+        TUI_clip.put_str(buffer, area, axis_x, y, "\u{2502}", axis_style);
+    }
+    TUI_clip.put_str(buffer, area, axis_x, plot.bottom(), "\u{2514}", axis_style);
+    for (int x in plot.x .. plot.right()) {
+        TUI_clip.put_str(buffer, area, x, plot.bottom(), "\u{2500}", x_style);
+    }
+    // y ticks: the label right-aligned against the axis, on the row of the mark.
+    for (float value in frame.y_ticks.values) {
+        int y = plot.y + plot.height - 1 - frame.y_scale.cell(value);
+        TUI_clip.put_str(buffer, area, axis_x, y, "\u{2524}", axis_style);
+        str label = TUI_text.pad(tick_text(frame.y_ticks, value), frame.label_width, TUI_text.Align.Right);
+        TUI_clip.put_str(buffer, area, area.x, y, label, axis_style);
+    }
+    // x ticks: the label centred under the column of the mark, skipped if it
+    // would touch the previous one.
+    int next_free = area.x;
+    for (float value in frame.x_ticks.values) {
+        int cell = plot.x + frame.x_scale.cell(value);
+        TUI_clip.put_str(buffer, area, cell, plot.bottom(), "\u{252C}", x_style);
+        str label = tick_text(frame.x_ticks, value);
+        int label_width = TUI_text.width(label);
+        int start = cell - label_width / 2;
+        if (start + label_width > area.right()) {
+            start = area.right() - label_width;
+        }
+        if (start >= next_free && start >= area.x) {
+            TUI_clip.put_str(buffer, area, start, plot.bottom() + 1, label, x_style);
+            next_free = start + label_width + 1;
+        }
+    }
+    if (y_axis.title != "") {
+        TUI_clip.put_str(buffer, area, area.x, area.y, y_axis.title, axis_style);
+    }
+    if (x_axis.title != "") {
+        int title_width = TUI_text.width(x_axis.title);
+        int start = plot.x + (plot.width - title_width) / 2;
+        if (start < area.x) {
+            start = area.x;
+        }
+        TUI_clip.put_str(buffer, area, start, plot.bottom() + 2, x_axis.title, x_style);
+    }
+}
+
+void Chart.draw_legend(TUI_buffer.Buffer buffer, TUI_geometry.Rect plot) {
+    List<int> named = [];
+    int widest = 0;
+    for (int number in 0 .. datasets.size()) {
+        if (datasets[number].name != "") {
+            named.push(number);
+            int width = TUI_text.width(datasets[number].name);
+            if (width > widest) {
+                widest = width;
+            }
+        }
+    }
+    int box_width = widest + 3;
+    if (named.size() == 0 || box_width + 2 > plot.width || named.size() > plot.height) {
+        return;
+    }
+    int x = plot.x + 1;
+    int y = plot.y;
+    match (legend) {
+        case Hidden: {
+            return;
+        }
+        case TopRight: {
+            x = plot.right() - box_width - 1;
+        }
+        case TopLeft: {
+        }
+        case BottomRight: {
+            x = plot.right() - box_width - 1;
+            y = plot.bottom() - named.size();
+        }
+        case BottomLeft: {
+            y = plot.bottom() - named.size();
+        }
+    }
+    for (int row in 0 .. named.size()) {
+        Dataset set = datasets[named[row]];
+        TUI_geometry.Rect line_rect = TUI_geometry.Rect(x, y + row, box_width, 1);
+        TUI_clip.paint(buffer, plot, line_rect, " ", style);
+        TUI_clip.put_str(buffer, plot, x, y + row, "\u{25CF}", style.merged(set.style));
+        TUI_clip.put_str(buffer, plot, x + 2, y + row, set.name, style.merged(legend_style));
+    }
+}
+
+void Chart.draw_hover(TUI_buffer.Buffer buffer, Frame frame) {
+    match (hover) {
+        case Some(Hover found): {
+            if (found.dataset < 0 || found.dataset >= datasets.size()) {
+                return;
+            }
+            TUI_geometry.Rect plot = frame.plot;
+            int cell_x = plot.x + frame.x_scale.cell(found.x);
+            int cell_y = plot.y + plot.height - 1 - frame.y_scale.cell(found.y);
+            if (!plot.has_point(cell_x, cell_y)) {
+                return;
+            }
+            TUI_style.Style under = buffer.get(cell_x, cell_y).style;
+            if (buffer.get(cell_x, cell_y).symbol == " ") {
+                TUI_clip.put_str(buffer, plot, cell_x, cell_y, "\u{25CF}", under.merged(hover_style));
+            } else {
+                buffer.set_style(cell_x, cell_y, under.merged(hover_style));
+            }
+            str name = datasets[found.dataset].name;
+            str tip = " " + TUI_scale.format_short(found.x) + ", " + TUI_scale.format_short(found.y) + " ";
+            if (name != "") {
+                tip = " " + name + ": " + TUI_scale.format_short(found.x) + ", " + TUI_scale.format_short(found.y) + " ";
+            }
+            int tip_width = TUI_text.width(tip);
+            int tip_y = cell_y - 1;
+            if (tip_y < plot.y) {
+                tip_y = cell_y + 1;
+            }
+            int tip_x = cell_x;
+            if (tip_x + tip_width > plot.right()) {
+                tip_x = plot.right() - tip_width;
+            }
+            if (tip_x < plot.x) {
+                tip_x = plot.x;
+            }
+            TUI_clip.put_str(buffer, plot, tip_x, tip_y, tip, style.merged(hover_style));
+        }
+        case None: {
+        }
+    }
+}
+
+/// The data coordinates at the middle of screen cell `x`, `y`, or `None` when
+/// that cell is outside the plot.
+pub Option<Point> Chart.value_at(TUI_geometry.Rect area, int x, int y) {
+    if (area.is_empty()) {
+        return Option<Point>.None;
+    }
+    Frame frame = frame(area);
+    if (!frame.plot.has_point(x, y)) {
+        return Option<Point>.None;
+    }
+    float value_x = frame.x_scale.value_at_cell(x - frame.plot.x);
+    float value_y = frame.y_scale.value_at_cell(frame.plot.height - 1 - (y - frame.plot.y));
+    return Option<Point>.Some(Point(value_x, value_y));
+}
+
+/// The data point nearest screen cell `x`, `y`, if one is within
+/// `hover_radius` cells (rows count double, since a cell is about twice as
+/// tall as wide). The first of equally near points wins.
+pub Option<Hover> Chart.nearest(TUI_geometry.Rect area, int x, int y) {
+    if (area.is_empty()) {
+        return Option<Hover>.None;
+    }
+    Frame frame = frame(area);
+    if (!frame.plot.has_point(x, y)) {
+        return Option<Hover>.None;
+    }
+    int best = hover_radius * hover_radius + 1;
+    Option<Hover> found = Option<Hover>.None;
+    for (int number in 0 .. datasets.size()) {
+        Dataset set = datasets[number];
+        for (int index in 0 .. set.points.size()) {
+            Point point = set.points[index];
+            if (!is_inside(frame, point)) {
+                continue;
+            }
+            int cell_x = frame.plot.x + frame.x_scale.cell(point.x);
+            int cell_y = frame.plot.y + frame.plot.height - 1 - frame.y_scale.cell(point.y);
+            int across = cell_x - x;
+            int down = 2 * (cell_y - y);
+            int distance = across * across + down * down;
+            if (distance < best) {
+                best = distance;
+                found = Option<Hover>.Some(Hover(number, index, point.x, point.y));
+            }
+        }
+    }
+    return found;
+}
+
+/// Hover, Drag and Press inside the plot snap `hover` to the nearest point;
+/// Leave, or a cell outside the plot, clears it. `Changed` only when `hover`
+/// did.
+pub TUI_mouse.Response Chart.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
+    Option<Hover> next = Option<Hover>.None;
+    match (gesture.kind) {
+        case Hover: {
+            next = nearest(area, gesture.x, gesture.y);
+        }
+        case Drag: {
+            next = nearest(area, gesture.x, gesture.y);
+        }
+        case Press: {
+            next = nearest(area, gesture.x, gesture.y);
+        }
+        case Leave: {
+        }
+        case Release: {
+            next = hover;
+        }
+        case Click: {
+            next = hover;
+        }
+        case ScrollUp: {
+            next = hover;
+        }
+        case ScrollDown: {
+            next = hover;
+        }
+        case ScrollLeft: {
+            next = hover;
+        }
+        case ScrollRight: {
+            next = hover;
+        }
+    }
+    if (is_same_hover(hover, next)) {
+        return TUI_mouse.Response.Ignored;
+    }
+    hover = next;
+    return TUI_mouse.Response.Changed;
+}
+
+// --- layout: the one place bounds, ticks and rectangles are decided ---------
+
+// Everything a draw or a hit test needs.
+type Frame {
+    TUI_geometry.Rect plot;
+    TUI_scale.Ticks x_ticks;
+    TUI_scale.Ticks y_ticks;
+    TUI_scale.Scale x_scale;
+    TUI_scale.Scale y_scale;
+    int label_width;
+    bool has_axes;
+}
+
+bool is_usable(float value) {
+    return !math.is_nan(value) && math.is_finite(value);
+}
+
+float choose(Option<float> pinned, float fallback) {
+    match (pinned) {
+        case Some(float value): {
+            return value;
+        }
+        case None: {
+            return fallback;
+        }
+    }
+}
+
+bool is_pinned(Option<float> pinned) {
+    match (pinned) {
+        case Some(float value): {
+            return true;
+        }
+        case None: {
+            return false;
+        }
+    }
+}
+
+int clamp_int(int value, int low, int high) {
+    if (value < low) {
+        return low;
+    }
+    if (value > high) {
+        return high;
+    }
+    return value;
+}
+
+str tick_text(TUI_scale.Ticks ticks, float value) {
+    return TUI_scale.format_fixed(value, ticks.decimals);
+}
+
+// --- the canvas: dots, and which dataset drew each cell ---------------------
+
+type Canvas {
+    int width;
+    int height;
+    int dots_across;
+    int dots_down;
+    List<int> masks;
+    List<int> owners;
+}
+
+// Light one dot. `sub_x` counts dots from the left, `sub_y` from the BOTTOM
+// (the direction values grow in), both as the scales give them.
+void Canvas.plot(Marker kind, int sub_x, int sub_y, int owner) {
+    int total_down = height * dots_down;
+    if (sub_x < 0 || sub_y < 0 || sub_x >= width * dots_across || sub_y >= total_down) {
+        return;
+    }
+    int from_top = total_down - 1 - sub_y;
+    int cell = (from_top / dots_down) * width + sub_x / dots_across;
+    int across = sub_x % dots_across;
+    int down = from_top % dots_down;
+    int bit = 1;
+    match (kind) {
+        case Braille: {
+            bit = braille_bit(across, down);
+        }
+        case HalfBlock: {
+            if (down == 1) {
+                bit = 2;
+            }
+        }
+        case Dot: {
+        }
+    }
+    masks[cell] = masks[cell] | bit;
+    owners[cell] = owner;
+}
+
+// A straight run of dots between two dots, Bresenham's way.
+void Canvas.line(Marker kind, int from_x, int from_y, int to_x, int to_y, int owner) {
+    int delta_x = to_x - from_x;
+    if (delta_x < 0) {
+        delta_x = -delta_x;
+    }
+    int delta_y = to_y - from_y;
+    if (delta_y < 0) {
+        delta_y = -delta_y;
+    }
+    int step_x = 1;
+    if (from_x > to_x) {
+        step_x = -1;
+    }
+    int step_y = 1;
+    if (from_y > to_y) {
+        step_y = -1;
+    }
+    int x = from_x;
+    int y = from_y;
+    int error = delta_x - delta_y;
+    while (true) {
+        plot(kind, x, y, owner);
+        if (x == to_x && y == to_y) {
+            break;
+        }
+        int doubled = 2 * error;
+        if (doubled > -delta_y) {
+            error = error - delta_y;
+            x = x + step_x;
+        }
+        if (doubled < delta_x) {
+            error = error + delta_x;
+            y = y + step_y;
+        }
+    }
+}
+
+Canvas new_canvas(int width, int height, int dots_across, int dots_down) {
+    List<int> masks = [];
+    List<int> owners = [];
+    for (int cell in 0 .. width * height) {
+        masks.push(0);
+        owners.push(-1);
+    }
+    return Canvas(width, height, dots_across, dots_down, masks, owners);
+}
+
+// The bit for the dot `across`, `down` inside a braille cell: the Unicode
+// braille block numbers them column by column, with the two bottom dots last.
+int braille_bit(int across, int down) {
+    if (across == 0) {
+        if (down == 0) {
+            return 1;
+        }
+        if (down == 1) {
+            return 2;
+        }
+        if (down == 2) {
+            return 4;
+        }
+        return 64;
+    }
+    if (down == 0) {
+        return 8;
+    }
+    if (down == 1) {
+        return 16;
+    }
+    if (down == 2) {
+        return 32;
+    }
+    return 128;
+}
+
+str glyph_for(Marker kind, int mask) {
+    match (kind) {
+        case Braille: {
+            return str.from_chars([10240 + mask]);
+        }
+        case HalfBlock: {
+            if (mask == 1) {
+                return "\u{2580}";
+            }
+            if (mask == 2) {
+                return "\u{2584}";
+            }
+            return "\u{2588}";
+        }
+        case Dot: {
+            return "\u{2022}";
+        }
+    }
+}
+
+// --- clipping a segment to the axes -------------------------------------------
+
+// Liang-Barsky: the part of the segment inside the box, as [start_x, start_y, end_x, end_y],
+// or None when none of it is.
+Option<List<float>> clip_segment(float start_x, float start_y, float end_x, float end_y, float x_low, float x_high, float y_low, float y_high) {
+    float enter_at = 0.0;
+    float leave_at = 1.0;
+    float span_x = end_x - start_x;
+    float span_y = end_y - start_y;
+    List<float> pulls = [-span_x, span_x, -span_y, span_y];
+    List<float> room = [start_x - x_low, x_high - start_x, start_y - y_low, y_high - start_y];
+    for (int edge in 0 .. 4) {
+        if (pulls[edge] == 0.0) {
+            if (room[edge] < 0.0) {
+                return Option<List<float>>.None;
+            }
+        } else {
+            float ratio = room[edge] / pulls[edge];
+            if (pulls[edge] < 0.0) {
+                if (ratio > leave_at) {
+                    return Option<List<float>>.None;
+                }
+                if (ratio > enter_at) {
+                    enter_at = ratio;
+                }
+            } else {
+                if (ratio < enter_at) {
+                    return Option<List<float>>.None;
+                }
+                if (ratio < leave_at) {
+                    leave_at = ratio;
+                }
+            }
+        }
+    }
+    return Option<List<float>>.Some([start_x + enter_at * span_x, start_y + enter_at * span_y, start_x + leave_at * span_x, start_y + leave_at * span_y]);
+}
+
+// --- drawing ----------------------------------------------------------------
+
+// --- hover and hit testing ----------------------------------------------------
+
+bool is_same_hover(Option<Hover> first, Option<Hover> second) {
+    match (first) {
+        case Some(Hover first_hover): {
+            match (second) {
+                case Some(Hover second_hover): {
+                    return first_hover.dataset == second_hover.dataset && first_hover.index == second_hover.index;
+                }
+                case None: {
+                    return false;
+                }
+            }
+        }
+        case None: {
+            match (second) {
+                case Some(Hover second_hover): {
+                    return false;
+                }
+                case None: {
+                    return true;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,320 @@
+// Bars, grouped, standing up or lying down, with labels and value text.
+//
+// API
+// ---
+//   TUI_barchart.Bar(value, label:, text:, style:)         one bar
+//   TUI_barchart.BarGroup(label, bars)                     bars that belong together
+//   TUI_barchart.BarChart(groups, direction:, bar_width:, ...)   a Widget
+//   TUI_barchart.BarChart.of_bars(bars)                    one unlabelled group
+//   chart.bounds()                                         the range the bars are scaled against
+//
+// Every bar is scaled against ONE range (`min_value` .. `max_value`, pinned
+// or taken from all the data -- TUI_eighths.bounds_of has the rule), so bars
+// in different groups are comparable. Bars are exact to an eighth of a cell.
+// A bar whose value is above the bottom of the range is at least one eighth
+// long, so a small value does not disappear; its value text still says what it
+// is.
+//
+// --- vertical (the default) --------------------------------------------------
+//
+//     value text      one row, directly above each bar (if `should_show_values`)
+//     the bars        grow from the bottom of the plot
+//     bar labels      one row under the bars, if any bar has a label
+//     group labels    one row under that, centred under the group, if any has one
+//
+//   groups are `group_gap` columns apart and bars within one `bar_gap` apart,
+//   each bar `bar_width` columns wide. Bars that do not fit on the right are cut
+//   off, not squeezed: the chart never changes a size it was told.
+//
+// --- horizontal ----------------------------------------------------------------
+//
+//   Each bar is `bar_height` rows, drawn left to right from the label column.
+//   A group with a label gets a row of its own above its bars. The bar labels
+//   are right-aligned to the axis in a column as wide as the longest of them
+//   (at most a third of the width, the rest truncated with an ellipsis), and
+//   the value text follows the end of each bar.
+//
+// Value text is `Bar.text` if given, else the value written as shortly as it
+// can be (TUI_scale.format_short). Text that is wider than a vertical bar is
+// truncated with an ellipsis rather than overlapping its neighbour.
+//
+// Nothing here draws outside the rectangle it was given, and a rectangle too
+// small for a plot (no rows left after the labels, or no columns) draws
+// nothing.
+
+import TUI_buffer;
+import TUI_clip;
+import TUI_eighths;
+import TUI_geometry;
+import TUI_scale;
+import TUI_style;
+import TUI_text;
+
+/// One bar.
+pub type Bar {
+    pub float value;
+    /// Written under a vertical bar, or left of a horizontal one.
+    pub str label = "";
+    /// The value text, when it should not just be the number.
+    pub str text = "";
+    /// Merged over the chart's `bar_style`.
+    pub TUI_style.Style style = TUI_style.Style();
+}
+
+str Bar.shown_text() {
+    if (text != "") {
+        return text;
+    }
+    return TUI_scale.format_short(value);
+}
+
+/// Bars that belong together. `label` may be empty.
+pub type BarGroup {
+    pub str label;
+    pub List<Bar> bars;
+}
+
+/// A bar chart.
+pub type BarChart {
+    pub List<BarGroup> groups;
+    /// `Vertical` bars stand up; `Horizontal` bars lie down.
+    pub TUI_geometry.Direction direction = TUI_geometry.Direction.Vertical;
+    /// Columns a vertical bar takes.
+    pub int bar_width = 3;
+    /// Rows a horizontal bar takes.
+    pub int bar_height = 1;
+    /// Empty columns (vertical) or rows (horizontal) between bars of a group.
+    pub int bar_gap = 1;
+    /// ... and between groups.
+    pub int group_gap = 2;
+    pub Option<float> min_value = Option<float>.None;
+    pub Option<float> max_value = Option<float>.None;
+    pub bool should_show_values = true;
+    pub TUI_style.Style bar_style = TUI_style.Style();
+    pub TUI_style.Style value_style = TUI_style.Style();
+    pub TUI_style.Style label_style = TUI_style.Style();
+    pub TUI_style.Style group_style = TUI_style.Style(attrs: TUI_style.BOLD);
+}
+
+/// A chart of bars in one group with no label.
+pub static BarChart BarChart.of_bars(List<Bar> bars) {
+    return BarChart([BarGroup("", bars)]);
+}
+
+/// Every value in every group, in order.
+pub List<float> BarChart.values() {
+    List<float> out = [];
+    for (BarGroup group in groups) {
+        for (Bar bar in group.bars) {
+            out.push(bar.value);
+        }
+    }
+    return out;
+}
+
+/// The range the bars are scaled against.
+pub TUI_eighths.Bounds BarChart.bounds() {
+    return TUI_eighths.bounds_of(values(), min_value, max_value);
+}
+
+bool BarChart.has_bar_labels() {
+    for (BarGroup group in groups) {
+        for (Bar bar in group.bars) {
+            if (bar.label != "") {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool BarChart.has_group_labels() {
+    for (BarGroup group in groups) {
+        if (group.label != "") {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub void BarChart.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    TUI_eighths.Bounds range = bounds();
+    match (direction) {
+        case Vertical: {
+            render_standing(buffer, area, range);
+        }
+        case Horizontal: {
+            render_lying(buffer, area, range);
+        }
+    }
+}
+
+void BarChart.render_standing(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, TUI_eighths.Bounds range) {
+    int footer = 0;
+    if (has_bar_labels()) {
+        footer = footer + 1;
+    }
+    if (has_group_labels()) {
+        footer = footer + 1;
+    }
+    int header = 0;
+    if (should_show_values) {
+        header = 1;
+    }
+    int plot_rows = area.height - footer - header;
+    int width = bar_width;
+    if (plot_rows < 1 || width < 1) {
+        return;
+    }
+    int plot_top = area.y + header;
+    int plot_bottom = plot_top + plot_rows;
+    int label_row = plot_bottom;
+    int group_row = plot_bottom;
+    if (has_bar_labels()) {
+        group_row = group_row + 1;
+    }
+    int x = area.x;
+    for (BarGroup group in groups) {
+        if (x >= area.right()) {
+            return;
+        }
+        int group_start = x;
+        int last = group.bars.size() - 1;
+        for (int index in 0 .. group.bars.size()) {
+            Bar bar = group.bars[index];
+            int eighths = eighths_for(bar.value, range, plot_rows * 8);
+            int full = eighths / 8;
+            int remainder = eighths - full * 8;
+            TUI_style.Style style = bar_style.merged(bar.style);
+            if (full > 0) {
+                TUI_clip.paint(buffer, area, TUI_geometry.Rect(x, plot_bottom - full, width, full), TUI_eighths.vertical(8), style);
+            }
+            if (remainder > 0) {
+                TUI_clip.paint(buffer, area, TUI_geometry.Rect(x, plot_bottom - full - 1, width, 1), TUI_eighths.vertical(remainder), style);
+            }
+            if (should_show_values) {
+                int rows_used = full;
+                if (remainder > 0) {
+                    rows_used = rows_used + 1;
+                }
+                str value_text = TUI_text.truncate(bar.shown_text(), width);
+                int offset = TUI_text.offset(value_text, width, TUI_text.Align.Center);
+                TUI_clip.put_str(buffer, area, x + offset, plot_bottom - rows_used - 1, value_text, value_style);
+            }
+            if (bar.label != "") {
+                str name = TUI_text.truncate(bar.label, width, ellipsis: "");
+                int name_offset = TUI_text.offset(name, width, TUI_text.Align.Center);
+                TUI_clip.put_str(buffer, area, x + name_offset, label_row, name, label_style);
+            }
+            x = x + width;
+            if (index < last) {
+                x = x + bar_gap;
+            }
+        }
+        if (group.label != "") {
+            int span = x - group_start;
+            str title = TUI_text.truncate(group.label, span);
+            int title_offset = TUI_text.offset(title, span, TUI_text.Align.Center);
+            TUI_clip.put_str(buffer, area, group_start + title_offset, group_row, title, group_style);
+        }
+        x = x + group_gap;
+    }
+}
+
+void BarChart.render_lying(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, TUI_eighths.Bounds range) {
+    int label_width = 0;
+    int value_width = 0;
+    for (BarGroup group in groups) {
+        for (Bar bar in group.bars) {
+            int name_width = TUI_text.width(bar.label);
+            if (name_width > label_width) {
+                label_width = name_width;
+            }
+            if (should_show_values) {
+                int text_width = TUI_text.width(bar.shown_text());
+                if (text_width > value_width) {
+                    value_width = text_width;
+                }
+            }
+        }
+    }
+    if (label_width > area.width / 3) {
+        label_width = area.width / 3;
+    }
+    if (value_width > area.width / 3) {
+        value_width = area.width / 3;
+    }
+    int label_columns = 0;
+    if (label_width > 0) {
+        label_columns = label_width + 1;
+    }
+    int value_columns = 0;
+    if (value_width > 0) {
+        value_columns = value_width + 1;
+    }
+    int plot_columns = area.width - label_columns - value_columns;
+    int thickness = bar_height;
+    if (plot_columns < 1 || thickness < 1) {
+        return;
+    }
+    int plot_x = area.x + label_columns;
+    int y = area.y;
+    for (BarGroup group in groups) {
+        if (y >= area.bottom()) {
+            return;
+        }
+        if (group.label != "") {
+            TUI_clip.put_str(buffer, area, area.x, y, TUI_text.truncate(group.label, area.width), group_style);
+            y = y + 1;
+        }
+        int last = group.bars.size() - 1;
+        for (int index in 0 .. group.bars.size()) {
+            if (y >= area.bottom()) {
+                return;
+            }
+            Bar bar = group.bars[index];
+            int eighths = eighths_for(bar.value, range, plot_columns * 8);
+            int full = eighths / 8;
+            int remainder = eighths - full * 8;
+            TUI_style.Style style = bar_style.merged(bar.style);
+            for (int row in y .. y + thickness) {
+                if (full > 0) {
+                    TUI_clip.paint(buffer, area, TUI_geometry.Rect(plot_x, row, full, 1), TUI_eighths.horizontal(8), style);
+                }
+                if (remainder > 0) {
+                    TUI_clip.paint(buffer, area, TUI_geometry.Rect(plot_x + full, row, 1, 1), TUI_eighths.horizontal(remainder), style);
+                }
+            }
+            int middle = y + (thickness - 1) / 2;
+            if (label_width > 0 && bar.label != "") {
+                str name = TUI_text.truncate(bar.label, label_width);
+                TUI_clip.put_str(buffer, area, area.x + label_width - TUI_text.width(name), middle, name, label_style);
+            }
+            if (value_width > 0) {
+                int cells_used = full;
+                if (remainder > 0) {
+                    cells_used = cells_used + 1;
+                }
+                TUI_clip.put_str(buffer, area, plot_x + cells_used + 1, middle, TUI_text.truncate(bar.shown_text(), value_width), value_style);
+            }
+            y = y + thickness;
+            if (index < last) {
+                y = y + bar_gap;
+            }
+        }
+        y = y + group_gap;
+    }
+}
+
+// How many eighths of `total` a bar of this value fills: never zero for a
+// value above the bottom of the range.
+int eighths_for(float value, TUI_eighths.Bounds range, int total) {
+    int eighths = TUI_eighths.scaled(value, range.lower, range.upper, total);
+    if (eighths == 0 && total > 0 && value > range.lower && value == value) {
+        return 1;
+    }
+    return eighths;
+}

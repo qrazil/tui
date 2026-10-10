@@ -707,3 +707,115 @@ went looking for speed (§10).
    frame.
 5. **Let a `case` arm omit its bindings** (§6). The cheapest possible
    improvement to the noisiest thing in the source.
+
+---
+
+# Stage 4: widgets, a timer and the mouse (v0.3.0)
+
+Thirteen modules were added against m31 v0.3.2: the
+dashboard widgets, `Spinner`, `TextInput`, `TextArea`, `Tabs`, a mouse router,
+and a timer and mouse mode on `TUI_app.Loop`. Nothing in it needed a
+workaround in another language, and nothing was a stop-and-ask. The sections
+that follow are the things that cost something, in the same order as above.
+
+## 22. There is no monotonic clock
+
+An animation wants "milliseconds since the last tick", and the only clock
+`date` offers is wall time (`date.now_ns`). A wall clock can step: an NTP
+correction, a suspended laptop, a person changing the time. An animation
+driven by it leaps forward or freezes.
+
+What `TUI_app` does instead: it measures elapsed time from the wall clock,
+**clamps** it to `MAX_ELAPSED_MS` (one second) so a forward step is one big
+tick and not a leap, counts a backwards step as zero, and **resynchronises**
+the next due time from now. That is correct enough for a spinner and a clock
+and it is not what a timer should have to do. A monotonic `date.mono_ns()`
+(or `time.monotonic`) would delete `clamp_elapsed` and its tests.
+
+## 23. A trap, `os.exit` or a signal restores termios and nothing else
+
+`term.raw()` hands back a `Session` whose destructor restores the terminal,
+and the header of `lib/term.m31` is right that this covers a trap. What it
+restores is the termios state. Stage 4 turns on three more things that need
+undoing: the alternate screen, mouse reporting (`term.MOUSE_ON`) and bracketed paste
+(`term.PASTE_ON`). `Loop.run_with` writes `leave_sequence()` on a normal
+exit, a `Quit`, so those are fine. On a trap, `os.exit` or SIGINT/SIGTERM the
+destructor runs only the termios part, so the shell is left with mouse
+reporting on and every click prints `^[[<0;12;5M`.
+
+The fix belongs in `term`, not here: `Session` needs an `on_exit` string (or
+a registered cleanup) that the trap and signal paths also write. This library
+cannot do it from m31, because there is no way to register code for a trap,
+and writing it in Rust was never an option. It is documented in the README
+and `Loop` writes the sequence on every path it controls.
+
+## 24. Small standard library holes
+
+  - **No `str.replace`.** Changing "1.5" to "1,5", or stripping a trailing
+    zero, is a loop over clusters. `TUI_scale.format_fixed` and
+    `format_short` build their strings by hand.
+  - **No `math.sin`.** A chart demo wants a smooth curve; the example uses
+    a small linear congruential generator for its load samples instead. A
+    chart widget does not need `sin`, a demo does.
+  - **`Option` has no `unwrap`** and no `or_else`. A `match` with `case Some`
+    and `case None` is the only way in, which is the right default and
+    verbose for "I just checked". This is a repeat of §6.
+  - **`List.remove` is `remove_at(i)`.** A name, not a gap, but it cost a
+    failed build because `remove` is what every other language calls the
+    by-value version.
+  - **A float literal `1e30` is not accepted.** `TUI_chart` starts its
+    running minimum and maximum from `1000000000000000019884624838656.0`,
+    which is 1e30 written out. A literal with an exponent would read better.
+
+## 25. The lint's naming rules and natural API names
+
+`m31c lint` requires boolean-returning names to start with `is_`, `has_`,
+`can_`, `should_`, `did_`, `was_`, `needs_` or `will_`, and names to be at
+least three characters. Both are good rules and both changed public API:
+`Spinner.did_tick` and `did_advance`, `Tabs.did_select`, `Gesture.has_mods`,
+`Scale.is_inside`. Most read fine. `did_` is the awkward one: it is
+past-tense for a query ("did the spinner advance on this tick") and it
+silently asks the caller to know whether the answer is about this call or
+about the object's history. A convention in the docs that `did_` means "the
+last call changed something" would remove the doubt, and this library
+follows it: `Outcome.Ignored` means no state changed, and `did_*` is true
+otherwise.
+
+## 26. A match must name every variant, and the order is not free
+
+An enum `match` has no `default:`, so adding `Hover` and `Leave` to
+`TUI_mouse.Kind` made every `match` on it in the library fail to compile
+until it was extended, and most of the extensions were "this does
+nothing here". That is exactly what the rule is for (a widget that
+ignores a hover now says so), and it is why none of the eleven is wrong. The
+cost is that an additive change to an enum is not additive for callers:
+`Kind` having ten variants is part of this library's API, and a program with
+its own `match (gesture.kind)` breaks on the next release that adds one. The
+`deps` bump is 0.2.0 to 0.3.0 for this reason as well as the new modules.
+
+A `default` that is only allowed on `match` over an enum from another module
+would give a library room to grow. This is a suggestion, not a request: the
+exhaustiveness rule is the reason a widget that ignores a gesture says so.
+
+## 27. What was good, again
+
+**Structural one-method interfaces.** `Ticker`, `MouseHandler`, `Validator`
+and `Widget` are all one method, so the demo passes lambdas that close over a
+single state object (there is no mutable module state, §14, and it did not
+matter). No registration, no base class.
+
+**The golden test shape.** A widget renders into a `Buffer`, `frame()` rules
+it, and the expectation is the picture. 419 assertions in the widget test
+program, many of them pictures, and a wrong picture shows where.
+`Router` and `Pointer` are the same: a report and a clock value in, gestures
+out, and no terminal.
+
+**`__rc_live=0` as a test result.** Gesture lists, snapshots for undo and
+the router's regions are allocated and dropped all over, and the check that
+nothing leaked is free.
+
+**One real bug that the tests found, not review.** A drag ending in a Release
+left the router's capture set, so the next click in another region went to
+the old one. The fix was small (`Gesture.is_press_end`); it was found by a test that
+drove the whole router through a sequence, which a test of one gesture at a
+time would not have done.

@@ -12,6 +12,12 @@
 //   TUI_app.Loop(...)              tick, colour depth, enter/leave sequences
 //   loop.run(view, on_event)      raw mode, then read-dispatch-render until
 //                                 `on_event` says stop
+//   loop.run_with(view, on_event, on_tick, on_mouse)
+//                                 the same, with a timer and routed mouse gestures
+//   interface TUI_app.Ticker { Action tick(int elapsed_ms); }
+//   interface TUI_app.MouseHandler { Action handle_mouse(TUI_mouse.Routed routed); }
+//   loop.enter_sequence() / loop.leave_sequence()   the exact bytes written in / out
+//   TUI_app.read_timeout_ms(...)  how long a read may wait; TUI_app.clamp_elapsed(...)
 //   TUI_app.has_resized(a, b)     whether two window sizes differ -- pulled
 //                                 out so it can be checked with no terminal
 //
@@ -44,10 +50,52 @@
 // `examples/keys.m31` hand-writes, pulled out here so nothing built on this
 // library has to write it twice.
 
+// --- the timer and the mouse (v0.3.0) ------------------------------------------
+//
+// Both are opt-in, and a `Loop()` with none of them set is exactly the loop it
+// was: no mouse reporting is asked for, no timer runs, `run` is `run_with`
+// given a handler that ignores both.
+//
+// **Timer.** `animate_ms > 0` makes the loop call `on_tick.tick(elapsed_ms)`
+// about that often (a spinner's `did_advance`, a clock's seconds). It does not
+// poll: the read's timeout is the smaller of `tick_ms` and the time left until
+// the next tick, never under one millisecond (`read_timeout_ms`), so an idle
+// animated program wakes exactly when a tick is due and sleeps in the kernel
+// otherwise, and a stream of key or mouse reports cannot starve the timer,
+// because it is checked after every read, not only after a timeout. The clock
+// is the wall clock (`date.now_ns`): m31 has no monotonic one (docs/FRICTION.md
+// section 22), so an `elapsed_ms` is clamped to `MAX_ELAPSED_MS` and a clock
+// that went backwards counts as zero and the timer resynchronises, instead of
+// a clock change making an animation leap or freeze.
+//
+// **Mouse.** `should_report_mouse` writes `term.MOUSE_ON` on entry (and
+// `MOUSE_OFF` on the way out); `should_report_hover` adds motion with no button
+// down; `should_report_paste` adds bracketed paste, so a paste arrives as one
+// `Event.Paste` instead of keystrokes. With mouse reporting on, each
+// `Event.Mouse` goes to `router` (`TUI_mouse.Router`), which turns it into
+// gestures and finds the region of the LAST frame under the pointer; each routed
+// gesture is handed to `on_mouse`, and the answers are folded (Quit wins, then
+// Redraw). `on_event` does not see mouse events then. The view registers its
+// regions on the same router, in `render`:
+//
+//     router.begin_frame(); router.add("files", files_area); ...
+//
+// **Leaving.** The leave sequence, mouse and paste modes off first, goes to
+// `Session.on_exit` BEFORE the enter sequence is written, so there is no window
+// in which the modes are on and nothing will turn them off. It runs from the
+// Session's destructor: a normal return, an error return, and the program
+// ending all take it. `term` restores only the termios settings if the process
+// is trapped (a panic, `os.exit`) or killed by a signal, and does not write
+// `on_exit`: the mouse and alternate screen then stay on until the shell resets
+// them. That is a gap in `term`, recorded in docs/FRICTION.md section 23, not
+// something this module can close.
+
+import date;
 import io;
 import term;
 import TUI_buffer;
 import TUI_diff;
+import TUI_mouse;
 import TUI_style;
 import TUI_widget;
 
@@ -74,6 +122,39 @@ pub interface Handler {
     Action handle(term.Event event);
 }
 
+/// A timer callback: called about every `Loop.animate_ms`, with the
+/// milliseconds since it was last called (clamped, see `clamp_elapsed`).
+pub interface Ticker {
+    Action tick(int elapsed_ms);
+}
+
+/// A mouse callback: one routed gesture at a time (see `TUI_mouse`).
+pub interface MouseHandler {
+    Action handle_mouse(TUI_mouse.Routed routed);
+}
+
+/// The `Ticker` that does nothing, for a loop with no timer.
+pub type NoTicker {
+    pub int unused = 0;
+}
+
+pub Action NoTicker.tick(int elapsed_ms) {
+    return Action.Continue;
+}
+
+/// The `MouseHandler` that does nothing, for a loop with no mouse.
+pub type NoMouse {
+    pub int unused = 0;
+}
+
+pub Action NoMouse.handle_mouse(TUI_mouse.Routed routed) {
+    return Action.Continue;
+}
+
+/// The longest gap `Loop` hands a `Ticker`: a suspended process or a clock set
+/// forward is not a second-long frame.
+pub const int MAX_ELAPSED_MS = 1000;
+
 /// The loop's own knobs. Every field has a default, so `Loop()` is a
 /// reasonable full-screen program and everything else is named.
 pub type Loop {
@@ -89,6 +170,47 @@ pub type Loop {
     /// `run` -- a clean `Quit`, the input ending, a read failing, a trap --
     /// not only the first of those.
     pub str leave = term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF;
+    /// Ask the terminal for mouse reports and route them (see the header).
+    pub bool should_report_mouse = false;
+    /// Also report motion with no button down (needs `should_report_mouse`).
+    pub bool should_report_hover = false;
+    /// Ask for bracketed paste: a paste is one `Event.Paste`.
+    pub bool should_report_paste = false;
+    /// Call the `Ticker` about this often; 0 never does.
+    pub int animate_ms = 0;
+    /// Where mouse reports are routed. Share it with the view.
+    pub TUI_mouse.Router router = TUI_mouse.Router();
+}
+
+/// The bytes written on entry: `enter`, then the modes asked for.
+pub str Loop.enter_sequence() {
+    str modes = "";
+    if (should_report_mouse) {
+        modes = modes + term.MOUSE_ON;
+        if (should_report_hover) {
+            modes = modes + TUI_mouse.HOVER_ON;
+        }
+    }
+    if (should_report_paste) {
+        modes = modes + term.PASTE_ON;
+    }
+    return enter + modes;
+}
+
+/// The bytes written on the way out: the modes off (the reverse of entry), then
+/// `leave`.
+pub str Loop.leave_sequence() {
+    str modes = "";
+    if (should_report_paste) {
+        modes = modes + term.PASTE_OFF;
+    }
+    if (should_report_mouse) {
+        if (should_report_hover) {
+            modes = modes + TUI_mouse.HOVER_OFF;
+        }
+        modes = modes + term.MOUSE_OFF;
+    }
+    return modes + leave;
 }
 
 /// Raw mode, then read-dispatch-render until `on_event` answers `Quit`, the
@@ -102,6 +224,12 @@ pub type Loop {
 /// call -- `examples/keys.m31`'s own choice, because a terminal that has
 /// stopped answering has nothing left to say beyond "stopped".
 pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
+    return run_with(view, on_event, NoTicker(), NoMouse());
+}
+
+/// `run`, with a timer (`animate_ms`, `on_tick`) and routed mouse gestures
+/// (`should_report_mouse`, `on_mouse`); see the header.
+pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_event, Ticker on_tick, MouseHandler on_mouse) {
     if (!term.is_terminal(0)) {
         return Result<int, term.Error>.Err(term.Error.NotATerminal);
     }
@@ -110,9 +238,9 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
             return Result<int, term.Error>.Err(error);
         }
         case Ok(term.Session session): {
-            session.on_exit(leave);
+            session.on_exit(leave_sequence());
             term.Writer writer = term.writer(io.stdout());
-            writer.put(enter);
+            writer.put(enter_sequence());
             term.Reader reader = term.reader();
             term.Size window_size = screen_size();
             // Two buffers for the whole run, swapped each frame: the one
@@ -126,13 +254,15 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
             writer.put_bytes(TUI_diff.full(previous, depth));
             flush(writer);
             bool is_running = true;
+            int last_tick_ms = now_ms();
             while (is_running) {
                 bool should_redraw = false;
-                match (reader.read(tick_ms)) {
+                match (reader.read(read_timeout_ms(tick_ms, animate_ms, now_ms() - last_tick_ms))) {
                     case Ok(term.Input inp): {
                         match (inp) {
                             case Got(term.Event event): {
-                                match (on_event.handle(event)) {
+                                Action answer = dispatch(event, on_event, on_mouse);
+                                match (answer) {
                                     case Continue: {
                                     }
                                     case Redraw: {
@@ -152,6 +282,26 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
                     }
                     case Err(term.Error error): {
                         is_running = false;
+                    }
+                }
+                if (is_running && animate_ms > 0) {
+                    int current_ms = now_ms();
+                    int elapsed_ms = current_ms - last_tick_ms;
+                    if (elapsed_ms < 0) {
+                        // The clock went backwards: start counting again.
+                        last_tick_ms = current_ms;
+                    } else if (elapsed_ms >= animate_ms) {
+                        last_tick_ms = current_ms;
+                        match (on_tick.tick(clamp_elapsed(elapsed_ms))) {
+                            case Continue: {
+                            }
+                            case Redraw: {
+                                should_redraw = true;
+                            }
+                            case Quit: {
+                                is_running = false;
+                            }
+                        }
                     }
                 }
                 if (is_running) {
@@ -183,6 +333,90 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
         }
     }
     return Result<int, term.Error>.Ok(0);
+}
+
+// One decoded event to the right callback: a mouse report to the router (when
+// mouse reporting is on), everything else to `on_event`.
+Action Loop.dispatch(term.Event event, Handler on_event, MouseHandler on_mouse) {
+    match (event) {
+        case Mouse(term.Mouse report): {
+            if (should_report_mouse) {
+                Action answer = Action.Continue;
+                for (TUI_mouse.Routed routed in router.route(report, now_ms())) {
+                    answer = fold(answer, on_mouse.handle_mouse(routed));
+                }
+                return answer;
+            }
+            return on_event.handle(event);
+        }
+        case Key(term.Key key): {
+            return on_event.handle(event);
+        }
+        case Paste(str text): {
+            return on_event.handle(event);
+        }
+        case Unknown(bytes raw): {
+            return on_event.handle(event);
+        }
+    }
+}
+
+/// How long a read may wait, in milliseconds: `tick_ms`, or less when a timer
+/// tick is due sooner (`animate_ms` > 0, `since_tick_ms` since the last one),
+/// and never under 1, so a tick that is already late is a poll, not a hang.
+pub int read_timeout_ms(int tick_ms, int animate_ms, int since_tick_ms) {
+    int wait = tick_ms;
+    if (animate_ms > 0) {
+        int until_tick = animate_ms - since_tick_ms;
+        if (until_tick < wait) {
+            wait = until_tick;
+        }
+    }
+    if (wait < 1) {
+        return 1;
+    }
+    return wait;
+}
+
+/// An elapsed time made safe to hand on: a clock that went backwards is 0, and
+/// a jump forward is cut to `MAX_ELAPSED_MS`.
+pub int clamp_elapsed(int elapsed_ms) {
+    if (elapsed_ms < 0) {
+        return 0;
+    }
+    if (elapsed_ms > MAX_ELAPSED_MS) {
+        return MAX_ELAPSED_MS;
+    }
+    return elapsed_ms;
+}
+
+int now_ms() {
+    return date.now_ns() / 1000000;
+}
+
+/// Two answers as one: Quit wins, then Redraw, then Continue.
+pub Action fold(Action first, Action second) {
+    match (first) {
+        case Quit: {
+            return Action.Quit;
+        }
+        case Redraw: {
+            match (second) {
+                case Quit: {
+                    return Action.Quit;
+                }
+                case Redraw: {
+                    return Action.Redraw;
+                }
+                case Continue: {
+                    return Action.Redraw;
+                }
+            }
+        }
+        case Continue: {
+            return second;
+        }
+    }
 }
 
 /// The window's size, falling back to 80x24 when the terminal does not know

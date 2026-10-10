@@ -1,0 +1,126 @@
+// Where words begin and end, in a line of grapheme clusters.
+//
+// API
+// ---
+//   TUI_word.is_space(cluster)                 is it blank?
+//   TUI_word.is_word(cluster)                  is it part of a word?
+//   TUI_word.previous_word(glyphs, index)      the start of the word at or before `index`
+//   TUI_word.next_word(glyphs, index)          the end of the word at or after `index`
+//   TUI_word.previous_blank_word(glyphs, index)  the same, with only blanks as separators
+//
+// The text editors (TextInput, TextArea) and anything else that wants a word
+// motion share these, so Alt+F means the same thing in both.
+//
+// --- what a word is ---------------------------------------------------------
+//
+// Readline's: a run of letters, digits and the underscore. Everything else --
+// punctuation, blanks, symbols -- separates words. A cluster is classified
+// by its FIRST code point (a combining mark or a joiner after it does not
+// change what it is):
+//
+//   - blank:    space, tab, the Unicode spaces (U+00A0, U+2000 .. U+200A,
+//               U+202F, U+205F, U+3000) and the line separators;
+//   - word:     ASCII letters and digits, `_`, and every code point from
+//               U+0080 up that is not blank -- so accented letters, CJK
+//               ideographs and emoji are word characters, which is what a
+//               user who types in those scripts expects; a run of CJK is one
+//               word because the language has no spaces to say otherwise;
+//   - otherwise a separator: ASCII punctuation and symbols.
+//
+// Unicode's full word-break algorithm (UAX #29 word boundaries) would split
+// CJK and treat apostrophes inside words; it needs data tables this library
+// does not carry and the standard library does not expose, and an editor's
+// Alt+F is better served by a rule a user can predict.
+//
+// --- the motions ------------------------------------------------------------
+//
+// `index` is a position BETWEEN clusters: 0 is before the first and
+// `glyphs.size()` after the last. `previous_word` skips separators backwards
+// and then the word before them, and answers where that word starts (0 if there
+// is none); `next_word` skips separators forwards and then the word, and
+// answers where it ends (`glyphs.size()` if there is none).
+// `previous_blank_word` is bash's unix-word-rubout: it skips blanks, then
+// everything up to the next blank, so `/usr/local/bin` is one word.
+
+/// Is `cluster` blank?
+pub bool is_space(str cluster) {
+    List<int> codes = cluster.chars();
+    if (codes.size() == 0) {
+        return true;
+    }
+    int first = codes[0];
+    if (first == 32 || first == 9 || first == 10 || first == 13 || first == 11 || first == 12) {
+        return true;
+    }
+    if (first == 160 || first == 8239 || first == 8287 || first == 12288 || first == 8232 || first == 8233) {
+        return true;
+    }
+    return first >= 8192 && first <= 8202;
+}
+
+/// Is `cluster` part of a word?
+pub bool is_word(str cluster) {
+    List<int> codes = cluster.chars();
+    if (codes.size() == 0) {
+        return false;
+    }
+    int first = codes[0];
+    if (first >= 128) {
+        return !is_space(cluster);
+    }
+    if (first >= 'a' && first <= 'z') {
+        return true;
+    }
+    if (first >= 'A' && first <= 'Z') {
+        return true;
+    }
+    if (first >= '0' && first <= '9') {
+        return true;
+    }
+    return first == '_';
+}
+
+/// Where the word at or before `index` starts.
+pub int previous_word(List<str> glyphs, int index) {
+    int position = index;
+    if (position > glyphs.size()) {
+        position = glyphs.size();
+    }
+    while (position > 0 && !is_word(glyphs[position - 1])) {
+        position = position - 1;
+    }
+    while (position > 0 && is_word(glyphs[position - 1])) {
+        position = position - 1;
+    }
+    return position;
+}
+
+/// Where the word at or after `index` ends.
+pub int next_word(List<str> glyphs, int index) {
+    int position = index;
+    if (position < 0) {
+        position = 0;
+    }
+    while (position < glyphs.size() && !is_word(glyphs[position])) {
+        position = position + 1;
+    }
+    while (position < glyphs.size() && is_word(glyphs[position])) {
+        position = position + 1;
+    }
+    return position;
+}
+
+/// Where the blank-delimited word at or before `index` starts.
+pub int previous_blank_word(List<str> glyphs, int index) {
+    int position = index;
+    if (position > glyphs.size()) {
+        position = glyphs.size();
+    }
+    while (position > 0 && is_space(glyphs[position - 1])) {
+        position = position - 1;
+    }
+    while (position > 0 && !is_space(glyphs[position - 1])) {
+        position = position - 1;
+    }
+    return position;
+}

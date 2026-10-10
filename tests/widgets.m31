@@ -1,0 +1,1248 @@
+// The test corpus for the v0.3.0 widgets: the text input and area, tabs, the
+// gauge, sparkline, bar chart, chart and spinner, the mouse router, and the
+// timer and mouse parts of the app loop.
+//
+// Like tests/tests.m31, everything runs against an in-memory `Buffer`; nothing
+// needs a terminal. A `check` line prints `ok` or `FAIL`; the pictures printed
+// below them are compared against tests/widgets.out, which is how a golden
+// render is tested. Each widget is drawn at several sizes: wide, narrow, one
+// cell, zero, and with wide, combining and emoji text where text is involved.
+
+import os;
+import term;
+import TUI_app;
+import TUI_barchart;
+import TUI_buffer;
+import TUI_chart;
+import TUI_eighths;
+import TUI_gauge;
+import TUI_geometry;
+import TUI_input;
+import TUI_mouse;
+import TUI_outline;
+import TUI_diff_view;
+import TUI_scale;
+import TUI_sparkline;
+import TUI_spinner;
+import TUI_style;
+import TUI_text;
+import TUI_tabs;
+import TUI_textarea;
+import TUI_widget;
+import TUI_word;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void check_int(Tally tally, str name, int got, int want) {
+    check(tally, name, str(got), str(want));
+}
+
+void ok(Tally tally, str name, bool is_condition_true) {
+    check(tally, name, str(is_condition_true), "true");
+}
+
+void head(str text) {
+    print("");
+    print("== " + text + " " + "=".repeat(60 - text.size()));
+}
+
+// --- helpers ------------------------------------------------------------------
+
+term.Event key(term.Code code, int mods = 0) {
+    return term.Event.Key(term.Key(code, mods));
+}
+
+term.Event char_key(str text) {
+    return key(term.Code.Char(text.chars()[0]));
+}
+
+term.Event ctrl(str text) {
+    return key(term.Code.Char(text.chars()[0]), mods: term.CTRL);
+}
+
+term.Event alt(str text) {
+    return key(term.Code.Char(text.chars()[0]), mods: term.ALT);
+}
+
+void type_into(TUI_input.TextInput input, str text) {
+    for (int code in text.chars()) {
+        input.handle(key(term.Code.Char(code)));
+    }
+}
+
+term.Mouse report(term.MouseKind kind, int col, int row, int mods = 0) {
+    return term.Mouse(kind, col, row, mods);
+}
+
+// A widget drawn into a fresh buffer, as a ruled picture.
+str picture(TUI_widget.Widget widget, int width, int height) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(width, height);
+    widget.render(buffer, buffer.area());
+    return buffer.frame();
+}
+
+// The same, drawn into `area` of a bigger buffer, so a clip bug shows.
+str picture_in(TUI_widget.Widget widget, int width, int height, TUI_geometry.Rect area) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(width, height);
+    buffer.fill(buffer.area(), ".", TUI_style.Style());
+    widget.render(buffer, area);
+    return buffer.frame();
+}
+
+void show(str title, str frame) {
+    print(title);
+    print(frame);
+}
+
+// --- 1. scales and ticks --------------------------------------------------------
+
+void scale_tests(Tally tally) {
+    head("scale");
+    check(tally, "nice number 0.7 rounded", str(TUI_scale.nice_number(0.7, true)), "1");
+    check(tally, "nice number 23 rounded", str(TUI_scale.nice_number(23.0, true)), "20");
+    check(tally, "nice number 4.2 not rounded", str(TUI_scale.nice_number(4.2, false)), "5");
+    TUI_scale.Ticks ticks = TUI_scale.nice_ticks(0.0, 97.0, 5, true);
+    check(tally, "expanded ticks", float_list(ticks.values), "0 20 40 60 80 100");
+    check(tally, "expanded upper", str(ticks.upper), "100");
+    TUI_scale.Ticks inside = TUI_scale.nice_ticks(3.0, 97.0, 5, false);
+    check(tally, "kept bounds", str(inside.lower) + " " + str(inside.upper), "3 97");
+    ok(tally, "kept-bounds ticks stay inside", inside.values[0] >= 3.0 && inside.values[inside.values.size() - 1] <= 97.0);
+    TUI_scale.Ticks small = TUI_scale.nice_ticks(0.0, 1.0, 5, true);
+    check(tally, "fractional ticks", float_list(small.values), "0 0.2 0.4 0.6 0.8 1");
+    TUI_scale.Ticks flat = TUI_scale.nice_ticks(5.0, 5.0, 5, true);
+    ok(tally, "a flat range still has a span", flat.upper > flat.lower);
+    TUI_scale.Ticks reversed = TUI_scale.nice_ticks(10.0, 0.0, 5, true);
+    ok(tally, "reversed bounds are sorted", reversed.lower <= reversed.upper);
+    check(tally, "format short integer", TUI_scale.format_short(42.0), "42");
+    check(tally, "format short fraction", TUI_scale.format_short(0.5), "0.5");
+    check(tally, "format fixed", TUI_scale.format_fixed(2.5, 2), "2.50");
+    check(tally, "format fixed negative", TUI_scale.format_fixed(-0.25, 1), "-0.3");
+    // One scale places marks and labels.
+    TUI_scale.Scale scale = TUI_scale.Scale(0.0, 100.0, 10, per_cell: 2);
+    check_int(tally, "scale length", scale.length(), 20);
+    check_int(tally, "lowest value is sub-cell 0", scale.sub(0.0), 0);
+    check_int(tally, "highest value is the last sub-cell", scale.sub(100.0), 19);
+    check_int(tally, "highest value is in the last cell", scale.cell(100.0), 9);
+    check_int(tally, "middle value cell", scale.cell(50.0), 5);
+    ok(tally, "has inside", scale.is_inside(50.0));
+    ok(tally, "has outside", !scale.is_inside(101.0));
+    for (int cell in 0 .. 10) {
+        check_int(tally, "cell " + str(cell) + " round trip", scale.cell(scale.value_at_cell(cell)), cell);
+    }
+}
+
+str float_text(float value) {
+    return TUI_scale.format_short(value);
+}
+
+str float_list(List<float> values) {
+    List<str> parts = [];
+    for (float value in values) {
+        parts.push(TUI_scale.format_short(value));
+    }
+    return parts.join(" ");
+}
+
+// --- 2. gauge, sparkline, bar chart ----------------------------------------------
+
+void gauge_tests(Tally tally) {
+    head("gauge");
+    TUI_gauge.Gauge half = TUI_gauge.Gauge(0.5);
+    check(tally, "default label is the percentage", half.shown_label(), "50%");
+    check_int(tally, "half of ten cells is forty eighths", half.eighths(10), 40);
+    check_int(tally, "41.25 percent is 33 eighths of 8 cells", TUI_gauge.Gauge(0.4125).eighths(10), 33);
+    check_int(tally, "ratio above one is full", TUI_gauge.Gauge(3.0).eighths(10), 80);
+    check_int(tally, "negative ratio is empty", TUI_gauge.Gauge(-1.0).eighths(10), 0);
+    check_int(tally, "NaN ratio is empty", TUI_gauge.Gauge(0.0 / 0.0).eighths(10), 0);
+    check(tally, "of_percent", TUI_gauge.Gauge.of_percent(25).shown_label(), "25%");
+    check(tally, "custom label", TUI_gauge.Gauge(0.5, label: "disk").shown_label(), "disk");
+    TUI_gauge.Gauge plain = TUI_gauge.Gauge(0.4125, should_show_label: false);
+    show("horizontal 41.25% in 10x1:", picture(plain, 10, 1));
+    show("horizontal 41.25% with label in 12x1:", picture(TUI_gauge.Gauge(0.4125), 12, 1));
+    show("full, labelled 'done', 9x1:", picture(TUI_gauge.Gauge(1.0, label: "done"), 9, 1));
+    show("empty, 8x1:", picture(TUI_gauge.Gauge(0.0), 8, 1));
+    show("thick bar 8x3 at 62%:", picture(TUI_gauge.Gauge(0.62, should_show_label: false), 8, 3));
+    show("vertical 5x6 at 70%:", picture(TUI_gauge.Gauge(0.7, direction: TUI_geometry.Direction.Vertical, should_show_label: false), 5, 6));
+    show("label wider than the bar, 4x1:", picture(TUI_gauge.Gauge(0.5, label: "download"), 4, 1));
+    show("wide label, 8x1:", picture(TUI_gauge.Gauge(0.5, label: "\u{6F22}\u{5B57}"), 8, 1));
+    show("in a sub-rectangle:", picture_in(TUI_gauge.Gauge(0.5, should_show_label: false), 10, 3, TUI_geometry.Rect(2, 1, 6, 1)));
+    show("zero width:", picture(TUI_gauge.Gauge(0.5), 0, 1));
+    show("zero height:", picture(TUI_gauge.Gauge(0.5), 5, 0));
+    show("one cell:", picture(TUI_gauge.Gauge(0.5, should_show_label: false), 1, 1));
+}
+
+void sparkline_tests(Tally tally) {
+    head("sparkline");
+    TUI_sparkline.Sparkline line = TUI_sparkline.Sparkline.of_ints([1, 3, 2, 8, 5, 7, 4, 6]);
+    show("eight values in 8x1:", picture(line, 8, 1));
+    show("eight values in 8x2 (finer):", picture(line, 8, 2));
+    show("more values than columns keep the latest, 4x1:", picture(line, 4, 1));
+    show("fewer values than columns, 12x1:", picture(line, 12, 1));
+    check_int(tally, "visible keeps the newest", TUI_sparkline.Sparkline.of_ints([1, 2, 3, 4, 5]).visible(3).size(), 3);
+    TUI_sparkline.Sparkline pinned = TUI_sparkline.Sparkline([1.0, 2.0, 3.0], min_value: Option<float>.Some(0.0), max_value: Option<float>.Some(12.0));
+    show("pinned 0..12:", picture(pinned, 3, 1));
+    show("flat data, 5x1:", picture(TUI_sparkline.Sparkline.of_ints([4, 4, 4, 4, 4]), 5, 1));
+    show("negative values, 5x1:", picture(TUI_sparkline.Sparkline.of_ints([-3, -1, 0, 2, 5]), 5, 1));
+    show("empty data, 5x1:", picture(TUI_sparkline.Sparkline.of_ints([]), 5, 1));
+    show("a NaN gap, 5x1:", picture(TUI_sparkline.Sparkline([1.0, 2.0, 0.0 / 0.0, 4.0, 5.0]), 5, 1));
+    show("zero size:", picture(line, 0, 0));
+    show("in a sub-rectangle:", picture_in(line, 12, 3, TUI_geometry.Rect(2, 1, 8, 1)));
+}
+
+void barchart_tests(Tally tally) {
+    head("bar chart");
+    TUI_barchart.BarChart chart = TUI_barchart.BarChart.of_bars([TUI_barchart.Bar(3.0, label: "a"), TUI_barchart.Bar(7.0, label: "b"), TUI_barchart.Bar(5.0, label: "c"), TUI_barchart.Bar(10.0, label: "d")]);
+    show("vertical, 20x8:", picture(chart, 20, 8));
+    show("vertical, 20x4:", picture(chart, 20, 4));
+    show("vertical, narrow 9x6 (clips the last bars):", picture(chart, 9, 6));
+    chart.should_show_values = false;
+    show("vertical, no values, 20x6:", picture(chart, 20, 6));
+    chart.direction = TUI_geometry.Direction.Horizontal;
+    chart.should_show_values = true;
+    show("horizontal, 24x8:", picture(chart, 24, 8));
+    TUI_barchart.BarChart groups = TUI_barchart.BarChart([TUI_barchart.BarGroup("Q1", [TUI_barchart.Bar(2.0, label: "x"), TUI_barchart.Bar(4.0, label: "y")]), TUI_barchart.BarGroup("Q2", [TUI_barchart.Bar(6.0, label: "x"), TUI_barchart.Bar(1.0, label: "y")])], bar_width: 2);
+    show("two groups, 16x8:", picture(groups, 16, 8));
+    TUI_barchart.BarChart cjk = TUI_barchart.BarChart.of_bars([TUI_barchart.Bar(4.0, label: "\u{6F22}"), TUI_barchart.Bar(2.0, label: "e\u{301}")]);
+    show("wide and combining labels, 12x5:", picture(cjk, 12, 5));
+    show("empty chart:", picture(TUI_barchart.BarChart.of_bars([]), 8, 3));
+    show("zero size:", picture(chart, 0, 4));
+    show("height one:", picture(chart, 20, 1));
+    TUI_barchart.BarChart negative = TUI_barchart.BarChart.of_bars([TUI_barchart.Bar(-2.0, label: "n"), TUI_barchart.Bar(4.0, label: "p")]);
+    show("negative values, 10x5:", picture(negative, 10, 5));
+    check_int(tally, "values are listed in order", chart.values().size(), 4);
+}
+
+// A picture with a second grid under it: `^` where a cell is reversed (the
+// cursor), `_` where it is underlined (a selection, in these tests), `d` where dim, `.` elsewhere, so a cursor is visible in a golden.
+str reverse_map(TUI_buffer.Buffer buffer) {
+    List<str> rows = [];
+    for (int y in 0 .. buffer.area().height) {
+        str row = "";
+        for (int x in 0 .. buffer.area().width) {
+            if ((buffer.get(x, y).style.attrs & TUI_style.REVERSE) != 0) {
+                row = row + "^";
+            } else if ((buffer.get(x, y).style.attrs & TUI_style.UNDERLINE) != 0) {
+                row = row + "_";
+            } else if ((buffer.get(x, y).style.attrs & TUI_style.DIM) != 0) {
+                row = row + "d";
+            } else {
+                row = row + ".";
+            }
+        }
+        rows.push("|" + row + "|");
+    }
+    return rows.join("\n");
+}
+
+str marked(TUI_widget.Widget widget, int width, int height) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(width, height);
+    widget.render(buffer, buffer.area());
+    return buffer.frame() + "\n" + reverse_map(buffer);
+}
+
+str out_text(TUI_input.Outcome outcome) {
+    return outcome.to_str();
+}
+
+TUI_input.TextInput field(str text, int cursor = -1) {
+    TUI_input.TextInput input = TUI_input.TextInput.of(text);
+    if (cursor >= 0) {
+        input.cursor = cursor;
+    }
+    return input;
+}
+
+Option<str> forbid_digits(str text) {
+    for (int code in text.chars()) {
+        if (code >= '0' && code <= '9') {
+            return Option<str>.Some("no digits");
+        }
+    }
+    return Option<str>.None;
+}
+
+void input_tests(Tally tally) {
+    head("text input: editing");
+    TUI_input.TextInput input = TUI_input.TextInput.of("");
+    type_into(input, "hello world");
+    check(tally, "typing", input.text(), "hello world");
+    check_int(tally, "cursor after typing", input.cursor, 11);
+    check(tally, "left changes", out_text(input.handle(key(term.Code.Left))), "changed");
+    check(tally, "home", out_text(input.handle(key(term.Code.Home))), "changed");
+    check(tally, "left at the start is ignored", out_text(input.handle(key(term.Code.Left))), "ignored");
+    check(tally, "backspace at the start is ignored", out_text(input.handle(key(term.Code.Backspace))), "ignored");
+    check_int(tally, "cursor at the start", input.cursor, 0);
+    input.handle(ctrl("e"));
+    check_int(tally, "ctrl-e goes to the end", input.cursor, 11);
+    check(tally, "right at the end is ignored", out_text(input.handle(key(term.Code.Right))), "ignored");
+    input.handle(ctrl("w"));
+    check(tally, "ctrl-w kills a word", input.text(), "hello ");
+    input.handle(ctrl("y"));
+    check(tally, "ctrl-y yanks it back", input.text(), "hello world");
+    input.handle(key(term.Code.Left, mods: term.CTRL));
+    check_int(tally, "ctrl-left is a word back", input.cursor, 6);
+    input.handle(key(term.Code.Left, mods: term.CTRL));
+    check_int(tally, "again", input.cursor, 0);
+    input.handle(key(term.Code.Right, mods: term.CTRL));
+    check_int(tally, "ctrl-right is a word forward", input.cursor, 5);
+    input.handle(alt("f"));
+    check_int(tally, "alt-f too", input.cursor, 11);
+    input.handle(alt("b"));
+    check_int(tally, "alt-b", input.cursor, 6);
+    input.handle(ctrl("k"));
+    check(tally, "ctrl-k kills to the end", input.text(), "hello ");
+    input.handle(ctrl("u"));
+    check(tally, "ctrl-u kills to the start", input.text(), "");
+    input.handle(ctrl("y"));
+    check(tally, "consecutive kills are one ring entry, joined in order", input.text(), "hello world");
+    input.handle(ctrl("z"));
+    check(tally, "undo the yank", input.text(), "");
+    input.handle(ctrl("z"));
+    check(tally, "undo both kills at once", input.text(), "hello world");
+    input.handle(alt("_"));
+    check(tally, "redo", input.text(), "");
+    input.handle(ctrl("z"));
+    check(tally, "undo with no history is ignored", out_text(field("").undo()), "ignored");
+    TUI_input.TextInput typed = TUI_input.TextInput.of("");
+    type_into(typed, "one two");
+    typed.undo();
+    check(tally, "typing undoes a word at a time", typed.text(), "one ");
+    typed.undo();
+    check(tally, "and the next", typed.text(), "");
+    TUI_input.TextInput swap = field("abc", cursor: 2);
+    swap.handle(ctrl("t"));
+    check(tally, "ctrl-t transposes", swap.text(), "acb");
+    TUI_input.TextInput deleting = field("abcd", cursor: 1);
+    deleting.handle(key(term.Code.Delete));
+    check(tally, "delete", deleting.text(), "acd");
+    deleting.handle(ctrl("d"));
+    check(tally, "ctrl-d", deleting.text(), "ad");
+    deleting.handle(key(term.Code.Backspace));
+    check(tally, "backspace", deleting.text(), "d");
+    TUI_input.TextInput words = field("foo bar baz");
+    words.handle(key(term.Code.Backspace, mods: term.ALT));
+    check(tally, "alt-backspace kills a word", words.text(), "foo bar ");
+    words.cursor = 0;
+    words.handle(alt("d"));
+    check(tally, "alt-d kills a word forward", words.text(), " bar ");
+    check(tally, "an unused key is ignored", out_text(words.handle(key(term.Code.F(5)))), "ignored");
+    check(tally, "a mouse event is ignored", out_text(words.handle(term.Event.Mouse(report(term.MouseKind.Moved, 1, 1)))), "ignored");
+    check(tally, "ctrl-c cancels", out_text(words.handle(ctrl("c"))), "cancelled");
+    check(tally, "escape cancels", out_text(words.handle(key(term.Code.Escape))), "cancelled");
+    check(tally, "enter submits", out_text(words.handle(key(term.Code.Enter))), "submitted");
+    head("text input: clusters");
+    TUI_input.TextInput clusters = TUI_input.TextInput.of("");
+    type_into(clusters, "e");
+    clusters.handle(key(term.Code.Char(769)));
+    check_int(tally, "a combining mark joins the letter", clusters.length(), 1);
+    type_into(clusters, "\u{1F44D}\u{1F3FD}");
+    check_int(tally, "an emoji with a skin tone is one cluster", clusters.length(), 2);
+    clusters.handle(key(term.Code.Backspace));
+    check(tally, "one backspace deletes it whole", clusters.text(), "e\u{301}");
+    TUI_input.TextInput cjk = TUI_input.TextInput.of("\u{6F22}\u{5B57}x");
+    check_int(tally, "wide clusters: cursor column at the end", cjk.cursor_column(), 5);
+    cjk.cursor = 1;
+    check_int(tally, "cursor column after one wide cluster", cjk.cursor_column(), 2);
+    check_int(tally, "index at a column inside a wide cluster", cjk.index_at_column(1), 0);
+    check_int(tally, "index at the next column", cjk.index_at_column(2), 1);
+    check_int(tally, "index past the end", cjk.index_at_column(40), 3);
+    head("text input: paste, limits, validation, history");
+    TUI_input.TextInput paste = TUI_input.TextInput.of("ab");
+    paste.cursor = 1;
+    check(tally, "a paste changes", out_text(paste.handle(term.Event.Paste("X\nY\tZ\u{7}"))), "changed");
+    check(tally, "newlines and tabs become spaces", paste.text(), "aX Y Zb");
+    paste.undo();
+    check(tally, "a paste is one undo step", paste.text(), "ab");
+    check(tally, "an empty paste is ignored", out_text(paste.paste("\u{7}")), "ignored");
+    TUI_input.TextInput limited = TUI_input.TextInput.of("");
+    limited.max_glyphs = 3;
+    type_into(limited, "abcdef");
+    check(tally, "max_glyphs", limited.text(), "abc");
+    limited.paste("xyz");
+    check(tally, "a paste is cut at the limit too", limited.text(), "abc");
+    TUI_input.TextInput checked = TUI_input.TextInput.of("a1");
+    checked.validator = forbid_digits;
+    check(tally, "validator rejects", out_text(checked.handle(key(term.Code.Enter))), "rejected: no digits");
+    check(tally, "error is kept", checked.error, "no digits");
+    show("rejected field in 8x1 (error style):", marked(checked, 8, 1));
+    checked.handle(key(term.Code.Backspace));
+    check(tally, "editing clears the error", checked.error, "");
+    check(tally, "then it submits", out_text(checked.handle(key(term.Code.Enter))), "submitted");
+    TUI_input.TextInput history = TUI_input.TextInput.of("");
+    history.history = ["first", "second"];
+    type_into(history, "dra");
+    history.handle(key(term.Code.Up));
+    check(tally, "up shows the newest", history.text(), "second");
+    history.handle(key(term.Code.Up));
+    check(tally, "up again", history.text(), "first");
+    check(tally, "up at the oldest is ignored", out_text(history.handle(key(term.Code.Up))), "ignored");
+    history.handle(key(term.Code.Down));
+    history.handle(key(term.Code.Down));
+    check(tally, "down returns to the draft", history.text(), "dra");
+    check(tally, "down past the draft is ignored", out_text(history.handle(key(term.Code.Down))), "ignored");
+    history.handle(key(term.Code.Enter));
+    check_int(tally, "submitting appends", history.history.size(), 3);
+    check(tally, "the appended entry", history.history[2], "dra");
+    history.handle(key(term.Code.Enter));
+    check_int(tally, "a repeat is not appended", history.history.size(), 3);
+    TUI_input.TextInput secret = TUI_input.TextInput.of("");
+    secret.mask = "*";
+    type_into(secret, "pa\u{6F22}");
+    secret.handle(key(term.Code.Enter));
+    check_int(tally, "a masked field records no history", secret.history.size(), 0);
+    check(tally, "but keeps the text", secret.text(), "pa\u{6F22}");
+    head("text input: drawing");
+    TUI_input.TextInput shown = TUI_input.TextInput.of("hello world");
+    show("cursor at the end, 14x1:", marked(shown, 14, 1));
+    shown.cursor = 0;
+    show("cursor at the start, 14x1:", marked(shown, 14, 1));
+    TUI_input.TextInput scrolled = TUI_input.TextInput.of("hello world");
+    show("scrolled to the end, 6x1:", marked(scrolled, 6, 1));
+    scrolled.cursor = 3;
+    show("cursor moves left inside the window, 6x1:", marked(scrolled, 6, 1));
+    scrolled.cursor = 0;
+    show("back to the start, 6x1:", marked(scrolled, 6, 1));
+    TUI_input.TextInput placeholder = TUI_input.TextInput.of("");
+    placeholder.placeholder = "name";
+    show("placeholder, 8x1:", marked(placeholder, 8, 1));
+    show("placeholder cut, 3x1:", marked(placeholder, 3, 1));
+    secret.cursor = 1;
+    show("password mask, 6x1:", marked(secret, 6, 1));
+    TUI_input.TextInput wide = TUI_input.TextInput.of("a\u{6F22}\u{5B57}b\u{1F44D}");
+    wide.cursor = 2;
+    show("wide text, cursor on a wide cluster, 9x1:", marked(wide, 9, 1));
+    show("wide text scrolled to the end, 4x1:", marked(TUI_input.TextInput.of("a\u{6F22}\u{5B57}b\u{1F44D}"), 4, 1));
+    TUI_input.TextInput scroll_half = TUI_input.TextInput.of("\u{6F22}\u{5B57}\u{6F22}\u{5B57}");
+    show("a wide cluster cut by the left edge, 5x1:", marked(scroll_half, 5, 1));
+    show("the same cut in 2 columns:", marked(TUI_input.TextInput.of("a\u{6F22}\u{5B57}"), 2, 1));
+    TUI_input.TextInput combining = TUI_input.TextInput.of("e\u{301}a\u{308}z");
+    show("combining marks, 5x1:", marked(combining, 5, 1));
+    show("zero width:", picture(shown, 0, 1));
+    show("zero height:", picture(shown, 5, 0));
+    show("one column, 1x1:", marked(TUI_input.TextInput.of("abc"), 1, 1));
+    show("a tall area draws one row, 6x3:", marked(TUI_input.TextInput.of("abc"), 6, 3));
+    show("in a sub-rectangle:", picture_in(TUI_input.TextInput.of("hello"), 12, 3, TUI_geometry.Rect(2, 1, 6, 1)));
+    TUI_input.TextInput unfocused = TUI_input.TextInput.of("abc");
+    unfocused.is_focused = false;
+    show("unfocused has no cursor, 5x1:", marked(unfocused, 5, 1));
+    TUI_geometry.Point point = TUI_input.TextInput.of("abc").cursor_position(TUI_geometry.Rect(4, 2, 10, 1));
+    check(tally, "terminal cursor position", str(point.x) + "," + str(point.y), "7,2");
+    head("text input: mouse");
+    TUI_input.TextInput clickable = TUI_input.TextInput.of("hello");
+    TUI_geometry.Rect where = TUI_geometry.Rect(3, 0, 10, 1);
+    check(tally, "a press moves the cursor", clickable.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 6, 0), where).to_str(), "changed");
+    check_int(tally, "to the clicked cluster", clickable.cursor, 3);
+    clickable.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Drag, 40, 0), where);
+    check_int(tally, "past the text is the end", clickable.cursor, 5);
+    check(tally, "the same place is ignored", clickable.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 40, 0), where).to_str(), "ignored");
+    check(tally, "a right-button press is ignored", clickable.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 4, 0, button: 2), where).to_str(), "ignored");
+    check(tally, "hover is ignored", clickable.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, 4, 0), where).to_str(), "ignored");
+}
+
+TUI_textarea.TextArea box(str text) {
+    TUI_textarea.TextArea made = TUI_textarea.TextArea.of(text);
+    made.selection_style = TUI_style.Style(attrs: TUI_style.UNDERLINE);
+    made.set_cursor(TUI_textarea.Position(0, 0));
+    return made;
+}
+
+str at_text(TUI_textarea.TextArea target) {
+    return target.cursor().to_str();
+}
+
+void textarea_tests(Tally tally) {
+    head("text area: model and editing");
+    TUI_textarea.TextArea made = box("");
+    check_int(tally, "an empty text has one line", made.line_count(), 1);
+    check_int(tally, "a trailing newline is an empty last line", box("a\n").line_count(), 2);
+    check(tally, "text round trips", box("a\nb\n\nc").text(), "a\nb\n\nc");
+    TUI_textarea.TextArea typing = box("");
+    for (int code in "hi".chars()) {
+        typing.handle(key(term.Code.Char(code)));
+    }
+    typing.handle(key(term.Code.Enter));
+    typing.handle(char_key("x"));
+    check(tally, "typing and enter", typing.text(), "hi\nx");
+    check(tally, "cursor after typing", at_text(typing), "1:1");
+    check(tally, "backspace at the line start joins lines", str(typing.handle(key(term.Code.Left)).to_str()) + " " + typing.handle(key(term.Code.Backspace)).to_str(), "changed changed");
+    check(tally, "joined", typing.text(), "hix");
+    check(tally, "cursor where the join was", at_text(typing), "0:2");
+    check(tally, "alt-enter submits", typing.handle(key(term.Code.Enter, mods: term.ALT)).to_str(), "submitted");
+    check(tally, "escape with no selection cancels", typing.handle(key(term.Code.Escape)).to_str(), "cancelled");
+    check(tally, "an unused key is ignored", typing.handle(key(term.Code.F(2))).to_str(), "ignored");
+    check(tally, "up on the first row is ignored at the line start", box("abc").handle(key(term.Code.Up)).to_str(), "ignored");
+    TUI_textarea.TextArea moving = box("one\ntwo three\nx");
+    moving.handle(key(term.Code.Down));
+    moving.handle(key(term.Code.End));
+    check(tally, "end of the line", at_text(moving), "1:9");
+    moving.handle(key(term.Code.Down));
+    check(tally, "down to a short line clamps the column", at_text(moving), "2:1");
+    moving.handle(key(term.Code.Up));
+    check(tally, "and the goal column is remembered", at_text(moving), "1:9");
+    moving.handle(key(term.Code.Home, mods: term.CTRL));
+    check(tally, "ctrl-home", at_text(moving), "0:0");
+    moving.handle(key(term.Code.End, mods: term.CTRL));
+    check(tally, "ctrl-end", at_text(moving), "2:1");
+    moving.handle(key(term.Code.Left));
+    moving.handle(key(term.Code.Left));
+    check(tally, "left at a line start goes to the previous line's end", at_text(moving), "1:9");
+    moving.handle(key(term.Code.Right));
+    check(tally, "right at a line end goes to the next line", at_text(moving), "2:0");
+    moving.handle(key(term.Code.Left, mods: term.CTRL));
+    check(tally, "ctrl-left at a line start goes to the previous line end", at_text(moving), "1:9");
+    head("text area: selection, clipboard, undo");
+    TUI_textarea.TextArea selecting = box("hello world\nsecond");
+    selecting.handle(key(term.Code.Right, mods: term.SHIFT));
+    selecting.handle(key(term.Code.Right, mods: term.SHIFT));
+    check(tally, "shift-right selects", selecting.selected_text(), "he");
+    selecting.handle(key(term.Code.Down, mods: term.SHIFT));
+    check(tally, "shift-down extends over lines", selecting.selected_text(), "hello world\nse");
+    selecting.handle(key(term.Code.Left));
+    check(tally, "a plain motion clears the selection", str(selecting.has_selection()), "false");
+    selecting.select_all();
+    check(tally, "select all", selecting.selected_text(), "hello world\nsecond");
+    selecting.handle(ctrl("c"));
+    check(tally, "copy puts it in the clipboard", selecting.clipboard, "hello world\nsecond");
+    selecting.handle(char_key("Z"));
+    check(tally, "typing replaces the selection", selecting.text(), "Z");
+    selecting.handle(ctrl("v"));
+    check(tally, "paste from the box's clipboard", selecting.text(), "Zhello world\nsecond");
+    selecting.undo();
+    check(tally, "undo the paste", selecting.text(), "Z");
+    selecting.undo();
+    check(tally, "undo the typing", selecting.text(), "hello world\nsecond");
+    selecting.redo();
+    check(tally, "redo", selecting.text(), "Z");
+    TUI_textarea.TextArea cutting = box("abc def");
+    cutting.handle(key(term.Code.Right, mods: term.CTRL));
+    cutting.handle(key(term.Code.Right, mods: term.CTRL | term.SHIFT));
+    check(tally, "ctrl-shift-right selects a word", cutting.selected_text(), " def");
+    cutting.handle(ctrl("x"));
+    check(tally, "cut", cutting.text(), "abc");
+    check(tally, "cut fills the clipboard", cutting.clipboard, " def");
+    cutting.handle(key(term.Code.Char(' '), mods: 0));
+    cutting.handle(ctrl("y"));
+    check(tally, "ctrl-y pastes", cutting.text(), "abc  def");
+    TUI_textarea.TextArea killing = box("one two\nthree");
+    killing.handle(key(term.Code.Right, mods: term.CTRL));
+    killing.handle(ctrl("k"));
+    check(tally, "ctrl-k kills to the end of the line", killing.text(), "one\nthree");
+    killing.handle(ctrl("u"));
+    check(tally, "ctrl-u kills to the start of the line", killing.text(), "\nthree");
+    TUI_textarea.TextArea replacing = box("abcdef\nghi");
+    replacing.replace(TUI_textarea.Position(0, 2), TUI_textarea.Position(1, 1), "X\nY");
+    check(tally, "replace across lines", replacing.text(), "abX\nYhi");
+    check(tally, "the cursor lands after the new text", at_text(replacing), "1:1");
+    replacing.replace(TUI_textarea.Position(1, 3), TUI_textarea.Position(0, 0), "");
+    check(tally, "replace orders its span", replacing.text(), "");
+    TUI_textarea.TextArea pasting = box("ab");
+    pasting.set_cursor(TUI_textarea.Position(0, 1));
+    pasting.handle(term.Event.Paste("1\r\n2\n3"));
+    check(tally, "a paste keeps its line breaks", pasting.text(), "a1\n2\n3b");
+    pasting.undo();
+    check(tally, "and is one undo step", pasting.text(), "ab");
+    TUI_textarea.TextArea tabbed = box("");
+    tabbed.handle(key(term.Code.Tab));
+    check(tally, "tab inserts spaces to the stop", tabbed.text(), "    ");
+    TUI_textarea.TextArea clusters = box("e\u{301}\u{1F44D}\u{1F3FD}x\n");
+    check_int(tally, "line length counts clusters", clusters.line_length(0), 3);
+    clusters.set_cursor(TUI_textarea.Position(0, 2));
+    clusters.handle(key(term.Code.Backspace));
+    check(tally, "backspace deletes a whole emoji", clusters.text(), "e\u{301}x\n");
+    TUI_textarea.TextArea clamped = box("ab");
+    clamped.set_cursor(TUI_textarea.Position(9, 9));
+    check(tally, "set_cursor clamps", at_text(clamped), "0:2");
+    head("text area: drawing");
+    TUI_textarea.TextArea drawn = box("first line\nsecond\n\nfourth");
+    drawn.set_cursor(TUI_textarea.Position(1, 3));
+    show("cursor on line two, 12x5:", marked(drawn, 12, 5));
+    drawn.should_show_numbers = true;
+    show("line numbers, 14x5:", marked(drawn, 14, 5));
+    drawn.set_cursor(TUI_textarea.Position(3, 6));
+    show("numbers, cursor at the end, 9x3 (scrolled both ways):", marked(drawn, 9, 3));
+    TUI_textarea.TextArea chosen = box("alpha beta\ngamma delta");
+    chosen.set_cursor(TUI_textarea.Position(0, 6));
+    chosen.handle(key(term.Code.Down, mods: term.SHIFT));
+    show("a selection over two lines, 12x2 (_ is selected):", marked(chosen, 12, 2));
+    TUI_textarea.TextArea placeholder = box("");
+    placeholder.placeholder = "message";
+    show("placeholder, 10x2:", marked(placeholder, 10, 2));
+    TUI_textarea.TextArea wrapped = box("the quick brown fox jumps over the lazy dog");
+    wrapped.should_wrap = true;
+    wrapped.set_cursor(TUI_textarea.Position(0, 20));
+    show("wrapped, 12x5:", marked(wrapped, 12, 5));
+    wrapped.should_show_numbers = true;
+    show("wrapped with numbers, 12x6:", marked(wrapped, 12, 6));
+    wrapped.handle(key(term.Code.Down));
+    check(tally, "down moves by visual row when wrapped", at_text(wrapped), "0:29");
+    TUI_textarea.TextArea wide = box("\u{6F22}\u{5B57}\u{6F22}\u{5B57}\u{6F22}\n\u{1F44D}ab\u{1F44D}");
+    wide.should_wrap = true;
+    wide.set_cursor(TUI_textarea.Position(1, 2));
+    show("wide clusters wrapped, 6x4:", marked(wide, 6, 4));
+    wide.should_wrap = false;
+    wide.set_cursor(TUI_textarea.Position(0, 5));
+    show("wide clusters, not wrapped, 7x2:", marked(wide, 7, 2));
+    TUI_textarea.TextArea combining = box("e\u{301}e\u{301}e\u{301}");
+    combining.should_wrap = true;
+    show("combining marks wrapped narrow, 3x3:", marked(combining, 3, 3));
+    show("zero width:", picture(drawn, 0, 3));
+    show("zero height:", picture(drawn, 8, 0));
+    show("one cell:", marked(drawn, 1, 1));
+    show("width 4 with numbers (no room for text):", marked(drawn, 4, 2));
+    show("in a sub-rectangle:", picture_in(box("abc\ndef\nghi"), 10, 4, TUI_geometry.Rect(2, 1, 5, 2)));
+    TUI_geometry.Point point = box("ab\ncd").cursor_position(TUI_geometry.Rect(3, 4, 8, 3));
+    check(tally, "terminal cursor position", str(point.x) + "," + str(point.y), "3,4");
+    TUI_textarea.TextArea at_end = TUI_textarea.TextArea.of("ab\ncd");
+    TUI_geometry.Point end_at = at_end.cursor_position(TUI_geometry.Rect(3, 4, 8, 3));
+    check(tally, "TextArea.of puts the cursor at the end", str(end_at.x) + "," + str(end_at.y), "5,5");
+    head("text area: mouse");
+    TUI_textarea.TextArea clicked = box("hello world\nsecond line\nthird");
+    TUI_geometry.Rect where = TUI_geometry.Rect(2, 1, 20, 3);
+    clicked.layout(where);
+    check(tally, "a press moves the cursor", clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 5, 2), where).to_str(), "changed");
+    check(tally, "to the clicked cell", at_text(clicked), "1:3");
+    clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Drag, 9, 3), where);
+    check(tally, "a drag selects", clicked.selected_text(), "ond line\nthird");
+    clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 4, 1, clicks: 2), where);
+    check(tally, "a double click selects a word", clicked.selected_text(), "hello");
+    clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 4, 1, clicks: 3), where);
+    check(tally, "a triple click selects the line", clicked.selected_text(), "hello world");
+    clicked.clear_selection();
+    clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 40, 3), where);
+    check(tally, "past the end of a line is its end", at_text(clicked), "2:5");
+    check(tally, "the wheel scrolls", clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollDown, 4, 1), where).to_str(), "changed");
+    check(tally, "without moving the cursor", at_text(clicked), "2:5");
+    check(tally, "hover is ignored", clicked.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, 4, 1), where).to_str(), "ignored");
+}
+
+str current_title(TUI_tabs.Tabs tabs) {
+    match (tabs.current()) {
+        case Some(TUI_tabs.Tab tab): {
+            return tab.title;
+        }
+        case None: {
+            return "(none)";
+        }
+    }
+}
+
+str hit_text(TUI_tabs.Tabs tabs, TUI_geometry.Rect area, int x) {
+    return tabs.hit(area, x, area.y).to_str();
+}
+
+void tabs_tests(Tally tally) {
+    head("tabs");
+    TUI_tabs.Tabs tabs = TUI_tabs.Tabs.of(["one", "two", "three"]);
+    check_int(tally, "count", tabs.count(), 3);
+    show("three tabs, 30x1:", marked(tabs, 30, 1));
+    check(tally, "next", str(tabs.did_select_next()), "true");
+    check_int(tally, "selected", tabs.selected, 1);
+    tabs.did_select_last();
+    check(tally, "next at the end does not wrap", str(tabs.did_select_next()), "false");
+    check(tally, "previous", str(tabs.did_select_previous()), "true");
+    check(tally, "select out of range", str(tabs.did_select(9)), "false");
+    check(tally, "select the same one", str(tabs.did_select(1)), "false");
+    TUI_tabs.Tabs mixed = TUI_tabs.Tabs([TUI_tabs.Tab("a"), TUI_tabs.Tab("b", is_disabled: true), TUI_tabs.Tab("c", is_closable: true), TUI_tabs.Tab("d", is_disabled: true)]);
+    show("disabled and closable, 24x1 (d is dim):", marked(mixed, 24, 1));
+    mixed.did_select_next();
+    check_int(tally, "next skips a disabled tab", mixed.selected, 2);
+    check(tally, "next with only a disabled tab left", str(mixed.did_select_next()), "false");
+    check(tally, "select a disabled tab", str(mixed.did_select(1)), "false");
+    check(tally, "key right", mixed.handle(key(term.Code.Left)).to_str(), "selected 0");
+    check(tally, "key left at the start is ignored", mixed.handle(key(term.Code.Left)).to_str(), "ignored");
+    check(tally, "key end", mixed.handle(key(term.Code.End)).to_str(), "selected 2");
+    check(tally, "key home", mixed.handle(key(term.Code.Home)).to_str(), "selected 0");
+    check(tally, "alt-3", mixed.handle(alt("3")).to_str(), "selected 2");
+    check(tally, "alt-2 is disabled", mixed.handle(alt("2")).to_str(), "ignored");
+    check(tally, "ctrl-w asks to close a closable tab", mixed.handle(ctrl("w")).to_str(), "close 2");
+    mixed.did_select(0);
+    check(tally, "ctrl-w on a tab that is not closable is ignored", mixed.handle(ctrl("w")).to_str(), "ignored");
+    check(tally, "ctrl-pagedown", mixed.handle(key(term.Code.PageDown, mods: term.CTRL)).to_str(), "selected 2");
+    check(tally, "ctrl-pageup", mixed.handle(key(term.Code.PageUp, mods: term.CTRL)).to_str(), "selected 0");
+    check(tally, "a character is ignored", mixed.handle(char_key("x")).to_str(), "ignored");
+    head("tabs: overflow");
+    TUI_tabs.Tabs many = TUI_tabs.Tabs.of(["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]);
+    show("six tabs in 20x1, first selected:", marked(many, 20, 1));
+    many.did_select(3);
+    show("fourth selected:", marked(many, 20, 1));
+    many.did_select_last();
+    show("last selected:", marked(many, 20, 1));
+    many.did_select_first();
+    show("first again:", marked(many, 20, 1));
+    show("very narrow 8x1:", marked(many, 8, 1));
+    many.did_select(4);
+    show("epsilon in 8x1 (cut with an ellipsis):", marked(many, 8, 1));
+    show("a long title in 6x1:", marked(TUI_tabs.Tabs.of(["a very long title"]), 6, 1));
+    show("zero width:", picture(many, 0, 1));
+    show("zero height:", picture(many, 10, 0));
+    show("one column:", marked(many, 1, 1));
+    show("a taller area draws one row, 12x2:", marked(TUI_tabs.Tabs.of(["a", "b"]), 12, 2));
+    show("in a sub-rectangle:", picture_in(TUI_tabs.Tabs.of(["a", "b"]), 14, 3, TUI_geometry.Rect(2, 1, 10, 1)));
+    TUI_tabs.Tabs wide = TUI_tabs.Tabs.of(["\u{6F22}\u{5B57}", "e\u{301}\u{1F44D}", "z"]);
+    wide.items[1].is_closable = true;
+    show("wide, combining and emoji titles, 24x1:", marked(wide, 24, 1));
+    show("the same in 12x1:", marked(wide, 12, 1));
+    TUI_tabs.Tabs empty = TUI_tabs.Tabs.of([]);
+    show("no tabs, 6x1:", marked(empty, 6, 1));
+    check(tally, "no tabs: current", str(empty.current().is_some()), "false");
+    check(tally, "no tabs: next", str(empty.did_select_next()), "false");
+    head("tabs: editing the list");
+    TUI_tabs.Tabs list = TUI_tabs.Tabs.of(["a", "b", "c", "d"]);
+    list.did_select(2);
+    list.close(0);
+    check_int(tally, "closing before keeps the same tab selected", list.selected, 1);
+    check(tally, "which is c", current_title(list), "c");
+    list.close(1);
+    check(tally, "closing the selected selects the next one", current_title(list), "d");
+    list.close(1);
+    check(tally, "closing the last selects the one before", current_title(list), "b");
+    list.add(TUI_tabs.Tab("e"));
+    check_int(tally, "add appends", list.count(), 2);
+    list.close(7);
+    check_int(tally, "close out of range does nothing", list.count(), 2);
+    head("tabs: mouse");
+    TUI_tabs.Tabs row = TUI_tabs.Tabs([TUI_tabs.Tab("aa"), TUI_tabs.Tab("bb", is_closable: true), TUI_tabs.Tab("cc", is_disabled: true), TUI_tabs.Tab("dd")]);
+    TUI_geometry.Rect where = TUI_geometry.Rect(2, 5, 40, 1);
+    show("the row, 40x1 (hit-test it below):", marked(row, 40, 1));
+    row.render(TUI_buffer.Buffer.sized(60, 8), where);
+    List<str> hits = [];
+    for (int x in 2 .. 30) {
+        hits.push(row.hit(where, x, 5).to_str());
+    }
+    check(tally, "hit tests along the row", hits.join(","), "body 0,body 0,body 0,body 0,nothing,body 1,body 1,body 1,body 1,close-box 1,body 1,nothing,body 2,body 2,body 2,body 2,nothing,body 3,body 3,body 3,body 3,nothing,nothing,nothing,nothing,nothing,nothing,nothing");
+    check(tally, "a cell off the row", row.hit(where, 5, 4).to_str(), "nothing");
+    check(tally, "press selects", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 8, 5), where).to_str(), "selected 1");
+    check(tally, "press on a disabled tab", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 15, 5), where).to_str(), "ignored");
+    check(tally, "click on the close box asks to close", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 11, 5), where).to_str(), "close 1");
+    check(tally, "click on a body does nothing more", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 8, 5), where).to_str(), "ignored");
+    check(tally, "middle click closes a closable tab", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 7, 5, button: 1), where).to_str(), "close 1");
+    check(tally, "middle click on one that is not closable", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 3, 5, button: 1), where).to_str(), "ignored");
+    check(tally, "wheel down moves the selection", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollDown, 3, 5), where).to_str(), "selected 3");
+    check(tally, "wheel up", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollUp, 3, 5), where).to_str(), "selected 1");
+    check(tally, "hover is ignored", row.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, 3, 5), where).to_str(), "ignored");
+    TUI_tabs.Tabs overflowing = TUI_tabs.Tabs.of(["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]);
+    TUI_geometry.Rect narrow = TUI_geometry.Rect(0, 0, 20, 1);
+    overflowing.render(TUI_buffer.Buffer.sized(20, 1), narrow);
+    check(tally, "the right mark is at the right edge", overflowing.hit(narrow, 19, 0).to_str(), "right-mark");
+    check(tally, "pressing it slides the window", overflowing.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 19, 0), narrow).to_str(), "changed");
+    check_int(tally, "and keeps the selection", overflowing.selected, 0);
+    show("after sliding one tab, 20x1 (the selection is out of view):", marked(overflowing, 20, 1));
+    check(tally, "the left mark is now at the left edge", overflowing.hit(narrow, 0, 0).to_str(), "left-mark");
+    overflowing.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 0, 0), narrow);
+    check_int(tally, "pressing the left mark slides back", overflowing.offset, 0);
+    overflowing.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 19, 0), narrow);
+    overflowing.did_select_next();
+    show("moving the selection brings the window back to it:", marked(overflowing, 20, 1));
+}
+
+TUI_chart.Chart sample_chart(TUI_chart.Marker marker) {
+    return TUI_chart.Chart([TUI_chart.Dataset.of_values("rise", [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]), TUI_chart.Dataset.of_values("dip", [9.0, 6.0, 4.0, 3.0, 2.5, 2.0, 2.5, 3.0, 4.0, 6.0], style: TUI_style.Style(attrs: TUI_style.BOLD))], x_axis: TUI_chart.Axis(title: "time"), y_axis: TUI_chart.Axis(title: "load"), marker: marker);
+}
+
+void chart_tests(Tally tally) {
+    head("chart: scales and ticks");
+    TUI_chart.Chart chart = sample_chart(TUI_chart.Marker.Braille);
+    TUI_geometry.Rect full = TUI_geometry.Rect(0, 0, 40, 12);
+    TUI_geometry.Rect plot = chart.plot_rect(full);
+    check(tally, "plot rectangle", str(plot.x) + "," + str(plot.y) + " " + str(plot.width) + "x" + str(plot.height), "3,1 37x8");
+    check(tally, "value under the plot's lower left", chart.value_at(full, plot.x, plot.bottom() - 1).is_some().to_str(), "true");
+    check(tally, "no value outside the plot", chart.value_at(full, 0, 0).is_some().to_str(), "false");
+    match (chart.value_at(full, plot.x, plot.y)) {
+        case Some(TUI_chart.Point point): {
+            ok(tally, "the top-left cell is near x 0 and y at the top", point.x < 1.0 && point.y > 9.0);
+        }
+        case None: {
+            ok(tally, "the top-left cell has a value", false);
+        }
+    }
+    TUI_chart.Chart pinned = TUI_chart.Chart([TUI_chart.Dataset.of_values("", [1.0, 2.0, 3.0])], y_axis: TUI_chart.Axis(min: Option<float>.Some(0.0), max: Option<float>.Some(10.0)));
+    show("pinned y axis 0..10, 24x8:", picture(pinned, 24, 8));
+    head("chart: drawing");
+    show("two lines, braille, 40x12:", picture(chart, 40, 12));
+    show("the same with half blocks, 40x12:", picture(sample_chart(TUI_chart.Marker.HalfBlock), 40, 12));
+    show("the same with dots, 40x12:", picture(sample_chart(TUI_chart.Marker.Dot), 40, 12));
+    show("small, 20x7:", picture(chart, 20, 7));
+    TUI_chart.Chart scatter = TUI_chart.Chart([TUI_chart.Dataset(name: "pts", points: [TUI_chart.Point(1.0, 1.0), TUI_chart.Point(2.0, 4.0), TUI_chart.Point(3.5, 2.0), TUI_chart.Point(5.0, 8.0), TUI_chart.Point(7.0, 5.0)], kind: TUI_chart.Kind.Scatter)], marker: TUI_chart.Marker.HalfBlock, legend: TUI_chart.LegendPosition.BottomRight);
+    show("scatter, half blocks, legend bottom right, 30x9:", picture(scatter, 30, 9));
+    scatter.legend = TUI_chart.LegendPosition.BottomLeft;
+    show("legend bottom left, 30x9:", picture(scatter, 30, 9));
+    scatter.legend = TUI_chart.LegendPosition.TopLeft;
+    show("legend top left, 30x9:", picture(scatter, 30, 9));
+    scatter.legend = TUI_chart.LegendPosition.Hidden;
+    show("legend hidden, 30x9:", picture(scatter, 30, 9));
+    show("narrow, 10x5 (no room for axes: the plot and legend alone):", picture(chart, 10, 5));
+    show("too small for axes, 6x3 (the plot alone):", picture(chart, 6, 3));
+    show("one cell:", picture(chart, 1, 1));
+    show("zero width:", picture(chart, 0, 5));
+    show("zero height:", picture(chart, 20, 0));
+    show("no data, 16x5:", picture(TUI_chart.Chart([]), 16, 5));
+    TUI_chart.Chart gaps = TUI_chart.Chart([TUI_chart.Dataset.of_values("g", [1.0, 2.0, 0.0 / 0.0, 4.0, 5.0, 4.0 * 100000000000000001097906362944045541740492309677311846336810682903157585404911491537163328978494688899061249669721172515611590283743140088328307009198146046031271664502933027185697489699588559043338384466165001178426897626212945177628091195786707458122783970171784415105291802893207873272974885715430223118336.0 * 10.0, 3.0, 2.0])]);
+    show("NaN and infinity are skipped, lines do not bridge them, 26x7:", picture(gaps, 26, 7));
+    TUI_chart.Chart clipped = TUI_chart.Chart([TUI_chart.Dataset.of_values("c", [0.0, 10.0, 0.0, 10.0, 0.0])], y_axis: TUI_chart.Axis(min: Option<float>.Some(2.0), max: Option<float>.Some(8.0)));
+    show("a line leaving the pinned bounds is cut where it leaves, 24x8:", picture(clipped, 24, 8));
+    TUI_chart.Chart flat = TUI_chart.Chart([TUI_chart.Dataset.of_values("f", [3.0, 3.0, 3.0, 3.0])]);
+    show("flat data still gets a scale, 20x7:", picture(flat, 20, 7));
+    TUI_chart.Chart cjk = TUI_chart.Chart([TUI_chart.Dataset.of_values("\u{6F22}\u{5B57}", [1.0, 3.0, 2.0]), TUI_chart.Dataset.of_values("e\u{301}\u{1F44D}", [3.0, 1.0, 2.0])], x_axis: TUI_chart.Axis(title: "\u{6642}\u{9593}"), y_axis: TUI_chart.Axis(title: "\u{5024}"));
+    show("wide, combining and emoji names and titles, 28x8:", picture(cjk, 28, 8));
+    show("in a sub-rectangle:", picture_in(scatter, 36, 11, TUI_geometry.Rect(3, 1, 30, 9)));
+    TUI_chart.Chart negative = TUI_chart.Chart([TUI_chart.Dataset.of_values("n", [-5.0, -2.0, 0.0, 3.0, 1.0])]);
+    show("negative values, 24x7:", picture(negative, 24, 7));
+    TUI_chart.Chart big = TUI_chart.Chart([TUI_chart.Dataset.of_values("", [1200.0, 5000.0, 3400.0, 9800.0])]);
+    show("large values widen the label column, 26x7:", picture(big, 26, 7));
+    head("chart: hover");
+    TUI_chart.Chart hovered = TUI_chart.Chart([TUI_chart.Dataset(name: "a", points: [TUI_chart.Point(0.0, 0.0), TUI_chart.Point(5.0, 5.0), TUI_chart.Point(10.0, 10.0)], kind: TUI_chart.Kind.Scatter)], marker: TUI_chart.Marker.Dot, legend: TUI_chart.LegendPosition.Hidden);
+    TUI_geometry.Rect area = TUI_geometry.Rect(0, 0, 30, 10);
+    TUI_geometry.Rect inner = hovered.plot_rect(area);
+    int middle_x = inner.x + inner.width / 2;
+    int middle_y = inner.y + inner.height / 2;
+    check(tally, "far from any point there is nothing to hover", hovered.nearest(area, inner.x + 6, inner.y).is_some().to_str(), "false");
+    check(tally, "a hover near a point changes the chart", hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, middle_x + 1, middle_y), area).to_str(), "changed");
+    check(tally, "hover is the middle point", hover_text(hovered), "0:1");
+    check(tally, "the same point again is ignored", hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, middle_x, middle_y), area).to_str(), "ignored");
+    show("hovered point with its tooltip, 30x10:", picture(hovered, 30, 10));
+    check(tally, "leave clears it", hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Leave, 0, 0), area).to_str(), "changed");
+    check(tally, "nothing is hovered", hover_text(hovered), "none");
+    check(tally, "leave again is ignored", hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Leave, 0, 0), area).to_str(), "ignored");
+    hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, inner.x, inner.bottom() - 1), area);
+    check(tally, "a press snaps to the nearest point", hover_text(hovered), "0:0");
+    hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, 0, 0), area);
+    check(tally, "moving off the plot clears it", hover_text(hovered), "none");
+    hovered.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Drag, inner.right() - 1, inner.y), area);
+    check(tally, "a drag follows the pointer", hover_text(hovered), "0:2");
+    show("tooltip near the right edge stays inside, 30x10:", picture(hovered, 30, 10));
+    show("tooltip in a tiny chart, 14x5:", picture(hovered, 14, 5));
+}
+
+str hover_text(TUI_chart.Chart chart) {
+    match (chart.hover) {
+        case Some(TUI_chart.Hover found): {
+            return str(found.dataset) + ":" + str(found.index);
+        }
+        case None: {
+            return "none";
+        }
+    }
+}
+
+void spinner_tests(Tally tally) {
+    head("spinner");
+    TUI_spinner.Spinner spinner = TUI_spinner.Spinner();
+    check(tally, "first frame", spinner.frame(), "\u{280B}");
+    check(tally, "less than an interval is no change", str(spinner.did_advance(50)), "false");
+    check(tally, "the rest of it is", str(spinner.did_advance(30)), "true");
+    check(tally, "second frame", spinner.frame(), "\u{2819}");
+    check_int(tally, "the remainder is kept", spinner.carried_ms, 0);
+    spinner.did_advance(250);
+    check_int(tally, "a long gap steps several frames", spinner.step, 4);
+    check_int(tally, "and keeps the remainder", spinner.carried_ms, 10);
+    check_int(tally, "time to the next frame", spinner.due_in_ms(), 70);
+    check(tally, "negative time is nothing", str(spinner.did_advance(-5)), "false");
+    spinner.did_advance(80 * 10 * 3);
+    check_int(tally, "whole turns land where they started", spinner.step, 4);
+    check(tally, "a whole turn is not a visible change", str(spinner.did_advance(800)), "false");
+    check(tally, "tick steps one frame", str(spinner.did_tick()), "true");
+    spinner.stop();
+    check(tally, "stopped is not spinning", str(spinner.is_spinning()), "false");
+    check(tally, "a stopped spinner draws the idle symbol", spinner.frame(), " ");
+    check(tally, "and ignores time", str(spinner.did_advance(1000)), "false");
+    check(tally, "and ticks", str(spinner.did_tick()), "false");
+    check_int(tally, "and is never due", spinner.due_in_ms(), 0);
+    spinner.idle_symbol = "\u{2713}";
+    check(tally, "a custom idle symbol", spinner.frame(), "\u{2713}");
+    spinner.start();
+    check(tally, "start carries on from the phase", spinner.frame(), "\u{2834}");
+    spinner.reset();
+    check(tally, "reset goes to the first frame", spinner.frame(), "\u{280B}");
+    TUI_spinner.Spinner custom = TUI_spinner.Spinner(frame_ms: 200);
+    check_int(tally, "frame_ms overrides the pace", custom.interval_ms(), 200);
+    check_int(tally, "set paces differ", TUI_spinner.Spinner(set: TUI_spinner.Set.Bounce).interval_ms(), 120);
+    List<TUI_spinner.Set> sets = [TUI_spinner.Set.Braille, TUI_spinner.Set.Line, TUI_spinner.Set.Dots, TUI_spinner.Set.Arc, TUI_spinner.Set.Bounce, TUI_spinner.Set.Ascii];
+    List<str> counts = [];
+    for (TUI_spinner.Set set in sets) {
+        counts.push(str(TUI_spinner.frames_of(set).size()));
+    }
+    check(tally, "frames per set", counts.join(","), "10,4,8,6,8,4");
+    bool is_plain = true;
+    for (str frame in TUI_spinner.frames_of(TUI_spinner.Set.Ascii)) {
+        for (int code in frame.chars()) {
+            if (code < 32 || code > 126) {
+                is_plain = false;
+            }
+        }
+    }
+    ok(tally, "the ASCII set is plain ASCII", is_plain);
+    bool is_distinct = true;
+    for (TUI_spinner.Set set in sets) {
+        List<str> frames = TUI_spinner.frames_of(set);
+        for (int left in 0 .. frames.size()) {
+            for (int right in left + 1 .. frames.size()) {
+                if (frames[left] == frames[right]) {
+                    is_distinct = false;
+                }
+            }
+        }
+    }
+    ok(tally, "no set repeats a frame", is_distinct);
+    bool is_one_column = true;
+    for (TUI_spinner.Set set in sets) {
+        for (str frame in TUI_spinner.frames_of(set)) {
+            if (TUI_text.width(frame) != 1) {
+                is_one_column = false;
+            }
+        }
+    }
+    ok(tally, "every frame is one column wide", is_one_column);
+    for (TUI_spinner.Set set in sets) {
+        TUI_spinner.Spinner each = TUI_spinner.Spinner(set: set, label: "working");
+        each.did_advance(each.interval_ms() * 2);
+        show("a frame of each set with a label, 12x1:", picture(each, 12, 1));
+    }
+    TUI_spinner.Spinner labelled = TUI_spinner.Spinner(label: "\u{6F22}\u{5B57} loading");
+    show("a wide label truncated, 8x1:", picture(labelled, 8, 1));
+    show("width 2 draws the glyph alone, 2x1:", picture(labelled, 2, 1));
+    show("width 1, 1x1:", picture(labelled, 1, 1));
+    show("zero width:", picture(labelled, 0, 1));
+    show("zero height:", picture(labelled, 5, 0));
+    show("in a sub-rectangle:", picture_in(labelled, 14, 3, TUI_geometry.Rect(2, 1, 10, 1)));
+    labelled.stop();
+    show("stopped, 12x1:", picture(labelled, 12, 1));
+}
+
+str gestures_text(List<TUI_mouse.Gesture> gestures) {
+    List<str> parts = [];
+    for (TUI_mouse.Gesture gesture in gestures) {
+        parts.push(gesture.to_str());
+    }
+    return parts.join("; ");
+}
+
+str routed_text(List<TUI_mouse.Routed> routed) {
+    List<str> parts = [];
+    for (TUI_mouse.Routed one in routed) {
+        parts.push(one.gesture.to_str() + " -> [" + one.id + "]");
+    }
+    return parts.join("; ");
+}
+
+void mouse_tests(Tally tally) {
+    head("mouse: the pointer");
+    TUI_mouse.Pointer pointer = TUI_mouse.Pointer();
+    check(tally, "reports are 1-based, gestures 0-based", gestures_text(pointer.feed(report(term.MouseKind.Down(0), 5, 3), 1000)), "press 4,2");
+    check(tally, "release then click", gestures_text(pointer.feed(report(term.MouseKind.Up(0), 5, 3), 1010)), "release 4,2; click 4,2");
+    check(tally, "a second click soon after is a double click", gestures_text(clickat(pointer, 5, 3, 1100)), "press 4,2; release 4,2; click 4,2 x2");
+    check(tally, "a third is a triple", gestures_text(clickat(pointer, 5, 3, 1200)), "press 4,2; release 4,2; click 4,2 x3");
+    check(tally, "a fourth starts over", gestures_text(clickat(pointer, 5, 3, 1300)), "press 4,2; release 4,2; click 4,2");
+    check(tally, "too late is a single click", gestures_text(clickat(pointer, 5, 3, 1900)), "press 4,2; release 4,2; click 4,2");
+    check(tally, "another cell is a single click", gestures_text(clickat(pointer, 6, 3, 1950)), "press 5,2; release 5,2; click 5,2");
+    check(tally, "a clock that went back is a single click", gestures_text(clickat(pointer, 6, 3, 100)), "press 5,2; release 5,2; click 5,2");
+    pointer.feed(report(term.MouseKind.Down(0), 2, 2), 3000);
+    check(tally, "dragging reports each cell", gestures_text(pointer.feed(report(term.MouseKind.Drag(0), 3, 2), 3010)), "drag 2,1");
+    check(tally, "the drag knows where it began", str(pointer.feed(report(term.MouseKind.Drag(0), 4, 2), 3020)[0].origin_x), "1");
+    check(tally, "release after a drag is not a click", gestures_text(pointer.feed(report(term.MouseKind.Up(0), 4, 2), 3030)), "release 3,1");
+    check(tally, "a release with nothing down is nothing", gestures_text(pointer.feed(report(term.MouseKind.Up(0), 4, 2), 3040)), "");
+    check(tally, "hover", gestures_text(pointer.feed(report(term.MouseKind.Moved, 8, 8), 3050)), "hover 7,7");
+    check(tally, "hover on the same cell is nothing", gestures_text(pointer.feed(report(term.MouseKind.Moved, 8, 8), 3060)), "");
+    check(tally, "wheel up", gestures_text(pointer.feed(report(term.MouseKind.ScrollUp, 8, 8), 3070)), "scroll-up 7,7");
+    check(tally, "wheel down", gestures_text(pointer.feed(report(term.MouseKind.ScrollDown, 8, 8), 3080)), "scroll-down 7,7");
+    check(tally, "wheel left", gestures_text(pointer.feed(report(term.MouseKind.ScrollLeft, 8, 8), 3090)), "scroll-left 7,7");
+    check(tally, "wheel right", gestures_text(pointer.feed(report(term.MouseKind.ScrollRight, 8, 8), 3100)), "scroll-right 7,7");
+    TUI_mouse.Gesture modified = pointer.feed(report(term.MouseKind.Down(0), 1, 1, mods: term.CTRL | term.SHIFT), 4000)[0];
+    ok(tally, "modifiers are carried", modified.has_mods(term.CTRL) && modified.has_mods(term.SHIFT) && !modified.has_mods(term.ALT));
+    pointer.feed(report(term.MouseKind.Up(0), 1, 1), 4010);
+    TUI_mouse.Gesture right = pointer.feed(report(term.MouseKind.Down(2), 1, 1), 4020)[0];
+    check_int(tally, "the right button is 2", right.button, 2);
+    ok(tally, "and is not primary", !right.is_primary());
+    pointer.feed(report(term.MouseKind.Up(2), 1, 1), 4030);
+    check(tally, "a click of another button does not join a double click", gestures_text(clickat(pointer, 1, 1, 4040)), "press 0,0; release 0,0; click 0,0");
+    check(tally, "a report at column 0 is clamped", gestures_text(pointer.feed(report(term.MouseKind.Moved, 0, 0), 5000)), "hover 0,0");
+    TUI_mouse.Pointer slow = TUI_mouse.Pointer(double_click_ms: 50);
+    clickat(slow, 2, 2, 100);
+    check(tally, "double_click_ms is a knob", gestures_text(clickat(slow, 2, 2, 200)), "press 1,1; release 1,1; click 1,1");
+    head("mouse: the router");
+    TUI_mouse.Router router = TUI_mouse.Router();
+    router.begin_frame();
+    router.add("list", TUI_geometry.Rect(0, 0, 10, 10));
+    router.add("detail", TUI_geometry.Rect(10, 0, 10, 10));
+    router.add("popup", TUI_geometry.Rect(4, 4, 8, 3), is_focusable: false);
+    check(tally, "a press goes to the region under it", routed_text(router.route(report(term.MouseKind.Down(0), 2, 2), 0)), "press 1,1 -> [list]");
+    check(tally, "which takes focus", router.focused(), "list");
+    check(tally, "the release follows", routed_text(router.route(report(term.MouseKind.Up(0), 2, 2), 10)), "release 1,1 -> [list]; click 1,1 -> [list]");
+    check(tally, "a region added later is on top", routed_text(router.route(report(term.MouseKind.ScrollDown, 6, 6), 20)), "scroll-down 5,5 -> [popup]");
+    router.route(report(term.MouseKind.Down(0), 6, 6), 30);
+    check(tally, "a region that cannot take focus leaves it", router.focused(), "list");
+    router.route(report(term.MouseKind.Up(0), 6, 6), 40);
+    check(tally, "pressing the other region moves focus", routed_text(router.route(report(term.MouseKind.Down(0), 15, 2), 50)), "press 14,1 -> [detail]");
+    check(tally, "to it", router.focused(), "detail");
+    check(tally, "a drag out of the region still goes to it", routed_text(router.route(report(term.MouseKind.Drag(0), 3, 3), 60)), "drag 2,2 -> [detail]");
+    check(tally, "and so does the release", routed_text(router.route(report(term.MouseKind.Up(0), 3, 3), 70)), "release 2,2 -> [detail]");
+    check(tally, "after it, nothing is captured", routed_text(router.route(report(term.MouseKind.Drag(0), 3, 3), 80)), "drag 2,2 -> []");
+    router.route(report(term.MouseKind.Up(0), 3, 3), 85);
+    TUI_mouse.Routed pressed = router.route(report(term.MouseKind.Down(0), 3, 3), 90)[0];
+    ok(tally, "a press that moved focus says so", pressed.did_focus);
+    router.route(report(term.MouseKind.Up(0), 3, 3), 95);
+    TUI_mouse.Routed again = router.route(report(term.MouseKind.Down(0), 3, 3), 100)[0];
+    ok(tally, "a press on what has focus does not", !again.did_focus);
+    router.route(report(term.MouseKind.Up(0), 3, 3), 105);
+    check(tally, "a press on nothing", routed_text(router.route(report(term.MouseKind.Down(0), 30, 30), 110)), "press 29,29 -> []");
+    check(tally, "leaves focus alone", router.focused(), "list");
+    router.route(report(term.MouseKind.Up(0), 30, 30), 115);
+    check(tally, "hover over a region", routed_text(router.route(report(term.MouseKind.Moved, 2, 2), 120)), "hover 1,1 -> [list]");
+    check(tally, "is remembered", router.hovered(), "list");
+    check(tally, "moving to another leaves the first", routed_text(router.route(report(term.MouseKind.Moved, 15, 2), 130)), "leave 14,1 -> [list]; hover 14,1 -> [detail]");
+    check(tally, "moving to nothing leaves it", routed_text(router.route(report(term.MouseKind.Moved, 30, 30), 140)), "leave 29,29 -> [detail]; hover 29,29 -> []");
+    check(tally, "nothing is hovered", router.hovered(), "");
+    check(tally, "within one region, only hover", routed_text(router.route(report(term.MouseKind.Moved, 2, 2), 150)), "hover 1,1 -> [list]");
+    check(tally, "and again", routed_text(router.route(report(term.MouseKind.Moved, 3, 2), 160)), "hover 2,1 -> [list]");
+    router.begin_frame();
+    router.add("list", TUI_geometry.Rect(0, 0, 5, 5));
+    check(tally, "a new frame forgets the old regions", routed_text(router.route(report(term.MouseKind.ScrollUp, 15, 2), 170)), "scroll-up 14,1 -> []");
+    check(tally, "region lookup", router.hit(2, 2).is_some().to_str(), "true");
+    check(tally, "region lookup misses", router.hit(7, 7).is_some().to_str(), "false");
+    check(tally, "find by id", router.find("list").is_some().to_str(), "true");
+    check(tally, "find a missing id", router.find("detail").is_some().to_str(), "false");
+    head("mouse: focus order");
+    TUI_mouse.Router order = TUI_mouse.Router();
+    order.begin_frame();
+    order.add("a", TUI_geometry.Rect(0, 0, 4, 4));
+    order.add("b", TUI_geometry.Rect(4, 0, 4, 4), is_focusable: false);
+    order.add("c", TUI_geometry.Rect(8, 0, 4, 4));
+    check(tally, "nothing is focused at first", order.focused(), "");
+    order.focus_next();
+    check(tally, "next from nothing is the first", order.focused(), "a");
+    order.focus_next();
+    check(tally, "skips what cannot focus", order.focused(), "c");
+    order.focus_next();
+    check(tally, "wraps", order.focused(), "a");
+    order.focus_previous();
+    check(tally, "previous wraps back", order.focused(), "c");
+    order.focus_previous();
+    check(tally, "previous", order.focused(), "a");
+    order.focus("b");
+    ok(tally, "focus can be given by hand", order.is_focused("b"));
+    TUI_mouse.Router empty = TUI_mouse.Router();
+    empty.focus_next();
+    check(tally, "no regions, no focus", empty.focused(), "");
+    TUI_mouse.Router fresh = TUI_mouse.Router();
+    fresh.begin_frame();
+    fresh.add("a", TUI_geometry.Rect(0, 0, 2, 2));
+    fresh.add("b", TUI_geometry.Rect(2, 0, 2, 2));
+    fresh.focus_previous();
+    check(tally, "previous from nothing is the last", fresh.focused(), "b");
+    head("mouse: outline and diff view");
+    TUI_geometry.Rect list_area = TUI_geometry.Rect(0, 0, 24, 6);
+    TUI_outline.Outline outline = sample_outline();
+    outline.render(TUI_buffer.Buffer.sized(24, 6), list_area);
+    check(tally, "press selects a row", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 8, 1), list_area).to_str(), "changed");
+    check_int(tally, "the cursor is on it", outline.cursor, 1);
+    check(tally, "the same row again still answers changed", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 8, 1), list_area).to_str(), "changed");
+    check(tally, "press on a fold mark folds", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 1, 0), list_area).to_str(), "activated");
+    check_int(tally, "rows after folding", outline.count(), 4);
+    check(tally, "press below the last row", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 3, 5), list_area).to_str(), "ignored");
+    check(tally, "press outside the area", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 30, 1), list_area).to_str(), "ignored");
+    check(tally, "press in an empty area", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 0, 0), TUI_geometry.Rect(0, 0, 0, 0)).to_str(), "ignored");
+    check(tally, "double click on a folded section opens it", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 6, 0, clicks: 2), list_area).to_str(), "activated");
+    check_int(tally, "rows after unfolding", outline.count(), 6);
+    check(tally, "a single click does nothing more", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 6, 0, clicks: 1), list_area).to_str(), "ignored");
+    outline.cursor = 0;
+    check(tally, "wheel down moves three", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollDown, 3, 3), list_area).to_str(), "changed");
+    check_int(tally, "cursor after the wheel", outline.cursor, 3);
+    outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollDown, 3, 3), list_area);
+    check_int(tally, "the wheel stops at the end", outline.cursor, 5);
+    check(tally, "and then is ignored", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollDown, 3, 3), list_area).to_str(), "ignored");
+    check(tally, "wheel right pans", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollRight, 3, 3), list_area).to_str(), "changed");
+    check(tally, "hover is not for it", outline.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, 3, 3), list_area).to_str(), "ignored");
+    show("the outline after all that, panned, 24x6:", picture(outline, 24, 6));
+    TUI_diff_view.Hunk first_hunk = TUI_diff_view.Hunk("@@ -1,2 +1,3 @@", [TUI_diff_view.Line.context("one"), TUI_diff_view.Line.removed("two"), TUI_diff_view.Line.added("two changed"), TUI_diff_view.Line.added("three")]);
+    TUI_diff_view.Hunk second_hunk = TUI_diff_view.Hunk("@@ -10,1 +11,1 @@", [TUI_diff_view.Line.context("ten")]);
+    TUI_diff_view.DiffView diff_view = TUI_diff_view.DiffView([first_hunk, second_hunk]);
+    TUI_geometry.Rect diff_area = TUI_geometry.Rect(2, 1, 20, 4);
+    TUI_buffer.Buffer diff_buffer = TUI_buffer.Buffer.sized(24, 6);
+    diff_view.render(diff_buffer, diff_area);
+    check(tally, "press puts the cursor on a line", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 5, 3), diff_area).to_str(), "changed");
+    check(tally, "which at() reports", row_text(diff_view), "body 0.1");
+    diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 5, 1), diff_area);
+    check(tally, "the header row", row_text(diff_view), "header 0");
+    check(tally, "pressing the same row is ignored", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 5, 1), diff_area).to_str(), "ignored");
+    check(tally, "outside the area is ignored", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Press, 0, 4), diff_area).to_str(), "ignored");
+    check(tally, "wheel down", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollDown, 5, 2), diff_area).to_str(), "changed");
+    check(tally, "moves three rows", row_text(diff_view), "body 0.2");
+    check(tally, "wheel up", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollUp, 5, 2), diff_area).to_str(), "changed");
+    check(tally, "back to the top", row_text(diff_view), "header 0");
+    check(tally, "the wheel at the top is ignored", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollUp, 5, 2), diff_area).to_str(), "ignored");
+    check(tally, "a click is not for it", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 5, 2, clicks: 2), diff_area).to_str(), "ignored");
+}
+
+TUI_outline.Outline sample_outline() {
+    return TUI_outline.Outline([TUI_outline.Node.section("wip", "Unstaged changes", [TUI_outline.Node.leaf("a.txt", "modified: a.txt"), TUI_outline.Node.leaf("b.txt", "modified: b.txt")]), TUI_outline.Node.section("staged", "Staged changes", [TUI_outline.Node.leaf("c.txt", "new file: c.txt")]), TUI_outline.Node.leaf("stash", "stash@{0}: on main: wip")]);
+}
+
+List<TUI_mouse.Gesture> clickat(TUI_mouse.Pointer pointer, int col, int row, int now_ms) {
+    List<TUI_mouse.Gesture> out = pointer.feed(report(term.MouseKind.Down(0), col, row), now_ms);
+    for (TUI_mouse.Gesture gesture in pointer.feed(report(term.MouseKind.Up(0), col, row), now_ms + 5)) {
+        out.push(gesture);
+    }
+    return out;
+}
+
+str row_text(TUI_diff_view.DiffView view) {
+    match (view.at()) {
+        case Some(TUI_diff_view.Row row): {
+            match (row.kind) {
+                case Header: {
+                    return "header " + str(row.hunk);
+                }
+                case Body: {
+                    return "body " + str(row.hunk) + "." + str(row.line);
+                }
+            }
+        }
+        case None: {
+            return "none";
+        }
+    }
+}
+
+void app_tests(Tally tally) {
+    head("app: sequences, timer, fold");
+    TUI_app.Loop plain = TUI_app.Loop();
+    check(tally, "a default loop enters as before", plain.enter_sequence(), term.ALT_SCREEN_ON + term.HIDE_CURSOR);
+    check(tally, "and leaves as before", plain.leave_sequence(), term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF);
+    TUI_app.Loop mouse = TUI_app.Loop(should_report_mouse: true);
+    check(tally, "mouse reporting is asked for after the screen", mouse.enter_sequence(), term.ALT_SCREEN_ON + term.HIDE_CURSOR + term.MOUSE_ON);
+    check(tally, "and turned off before the screen goes", mouse.leave_sequence(), term.MOUSE_OFF + term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF);
+    TUI_app.Loop everything = TUI_app.Loop(should_report_mouse: true, should_report_hover: true, should_report_paste: true);
+    check(tally, "all three on entry", everything.enter_sequence(), term.ALT_SCREEN_ON + term.HIDE_CURSOR + term.MOUSE_ON + TUI_mouse.HOVER_ON + term.PASTE_ON);
+    check(tally, "all three off in reverse on the way out", everything.leave_sequence(), term.PASTE_OFF + TUI_mouse.HOVER_OFF + term.MOUSE_OFF + term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF);
+    check(tally, "hover without mouse asks for nothing", TUI_app.Loop(should_report_hover: true).enter_sequence(), plain.enter_sequence());
+    check(tally, "hover without mouse turns off nothing", TUI_app.Loop(should_report_hover: true).leave_sequence(), plain.leave_sequence());
+    check(tally, "paste alone", TUI_app.Loop(should_report_paste: true).enter_sequence(), term.ALT_SCREEN_ON + term.HIDE_CURSOR + term.PASTE_ON);
+    check(tally, "paste alone, off", TUI_app.Loop(should_report_paste: true).leave_sequence(), term.PASTE_OFF + term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF);
+    check(tally, "a custom enter keeps its bytes first", TUI_app.Loop(enter: "E", leave: "L", should_report_mouse: true).enter_sequence(), "E" + term.MOUSE_ON);
+    check(tally, "a custom leave keeps its bytes last", TUI_app.Loop(enter: "E", leave: "L", should_report_mouse: true).leave_sequence(), term.MOUSE_OFF + "L");
+    check_int(tally, "no timer waits the whole tick", TUI_app.read_timeout_ms(250, 0, 0), 250);
+    check_int(tally, "a timer shortens the wait", TUI_app.read_timeout_ms(250, 80, 30), 50);
+    check_int(tally, "a long timer leaves the tick alone", TUI_app.read_timeout_ms(250, 1000, 0), 250);
+    check_int(tally, "a late tick is a poll of one", TUI_app.read_timeout_ms(250, 80, 200), 1);
+    check_int(tally, "never under one", TUI_app.read_timeout_ms(0, 0, 0), 1);
+    check_int(tally, "elapsed passes", TUI_app.clamp_elapsed(37), 37);
+    check_int(tally, "backwards is zero", TUI_app.clamp_elapsed(-500), 0);
+    check_int(tally, "a long gap is cut", TUI_app.clamp_elapsed(86400000), TUI_app.MAX_ELAPSED_MS);
+    check_int(tally, "the limit itself", TUI_app.clamp_elapsed(TUI_app.MAX_ELAPSED_MS), TUI_app.MAX_ELAPSED_MS);
+    List<TUI_app.Action> actions = [TUI_app.Action.Continue, TUI_app.Action.Redraw, TUI_app.Action.Quit];
+    List<str> names = ["continue", "redraw", "quit"];
+    for (int first in 0 .. 3) {
+        for (int second in 0 .. 3) {
+            int want = first;
+            if (second > want) {
+                want = second;
+            }
+            check(tally, "fold " + names[first] + " " + names[second], action_name(TUI_app.fold(actions[first], actions[second])), names[want]);
+        }
+    }
+    check(tally, "the do-nothing ticker continues", action_name(TUI_app.NoTicker().tick(10)), "continue");
+    check(tally, "the do-nothing mouse handler continues", action_name(TUI_app.NoMouse().handle_mouse(TUI_mouse.Routed(TUI_mouse.Gesture(TUI_mouse.Kind.Hover, 0, 0), "", TUI_geometry.Rect(0, 0, 0, 0)))), "continue");
+    ok(tally, "has_resized sees a change", TUI_app.has_resized(term.Size(80, 24), term.Size(81, 24)));
+    ok(tally, "and no change", !TUI_app.has_resized(term.Size(80, 24), term.Size(80, 24)));
+}
+
+str action_name(TUI_app.Action action) {
+    match (action) {
+        case Continue: {
+            return "continue";
+        }
+        case Redraw: {
+            return "redraw";
+        }
+        case Quit: {
+            return "quit";
+        }
+    }
+}
+
+void word_tests(Tally tally) {
+    head("word and eighths");
+    List<str> glyphs = TUI_text.clusters("foo, bar_baz /usr/local \u{6F22}\u{5B57}e\u{301}");
+    check_int(tally, "previous word from the end", TUI_word.previous_word(glyphs, glyphs.size()), 24);
+    check_int(tally, "previous word over separators", TUI_word.previous_word(glyphs, 5), 0);
+    check_int(tally, "previous word from inside a word", TUI_word.previous_word(glyphs, 9), 5);
+    check_int(tally, "next word from the start", TUI_word.next_word(glyphs, 0), 3);
+    check_int(tally, "next word over separators", TUI_word.next_word(glyphs, 3), 12);
+    check_int(tally, "next word from inside a word", TUI_word.next_word(glyphs, 6), 12);
+    check_int(tally, "next word at the end", TUI_word.next_word(glyphs, glyphs.size()), glyphs.size());
+    check_int(tally, "previous word at the start", TUI_word.previous_word(glyphs, 0), 0);
+    check_int(tally, "previous word beyond the end", TUI_word.previous_word(glyphs, 500), 24);
+    check_int(tally, "next word before the start", TUI_word.next_word(glyphs, -4), 3);
+    check_int(tally, "blank word takes a path whole", TUI_word.previous_blank_word(glyphs, 19), 13);
+    check_int(tally, "blank word skips blanks first", TUI_word.previous_blank_word(glyphs, 13), 5);
+    ok(tally, "a blank is blank", TUI_word.is_space(" "));
+    ok(tally, "an ideographic space is blank", TUI_word.is_space("\u{3000}"));
+    ok(tally, "a no-break space is blank", TUI_word.is_space("\u{A0}"));
+    ok(tally, "an empty cluster is blank", TUI_word.is_space(""));
+    ok(tally, "a letter is not", !TUI_word.is_space("a"));
+    ok(tally, "an underscore is a word character", TUI_word.is_word("_"));
+    ok(tally, "a digit is a word character", TUI_word.is_word("7"));
+    ok(tally, "punctuation is not", !TUI_word.is_word("-"));
+    ok(tally, "an ideograph is", TUI_word.is_word("\u{6F22}"));
+    ok(tally, "a letter with a combining mark is", TUI_word.is_word("e\u{301}"));
+    ok(tally, "an emoji is", TUI_word.is_word("\u{1F44D}"));
+    ok(tally, "a blank is not", !TUI_word.is_word(" "));
+    check_int(tally, "no ratio is no eighths", TUI_eighths.of_ratio(0.0, 4), 0);
+    check_int(tally, "half of 4 cells", TUI_eighths.of_ratio(0.5, 4), 16);
+    check_int(tally, "all of 4 cells", TUI_eighths.of_ratio(1.0, 4), 32);
+    check_int(tally, "over is pulled in", TUI_eighths.of_ratio(7.0, 4), 32);
+    check_int(tally, "under is pulled in", TUI_eighths.of_ratio(-2.0, 4), 0);
+    check_int(tally, "not a number is nothing", TUI_eighths.of_ratio(0.0 / 0.0, 4), 0);
+    check_int(tally, "no cells is nothing", TUI_eighths.of_ratio(0.5, 0), 0);
+    check_int(tally, "scaled mid", TUI_eighths.scaled(5.0, 0.0, 10.0, 16), 8);
+    check_int(tally, "scaled below", TUI_eighths.scaled(-5.0, 0.0, 10.0, 16), 0);
+    check_int(tally, "scaled with no span", TUI_eighths.scaled(5.0, 3.0, 3.0, 16), 0);
+    check_int(tally, "scaled with negative bounds", TUI_eighths.scaled(0.0, -10.0, 10.0, 16), 8);
+    check(tally, "vertical glyphs", TUI_eighths.vertical(0) + TUI_eighths.vertical(1) + TUI_eighths.vertical(4) + TUI_eighths.vertical(8), " \u{2581}\u{2584}\u{2588}");
+    check(tally, "vertical out of range is pulled in", TUI_eighths.vertical(-3) + TUI_eighths.vertical(99), " \u{2588}");
+    check(tally, "horizontal glyphs", TUI_eighths.horizontal(0) + TUI_eighths.horizontal(1) + TUI_eighths.horizontal(4) + TUI_eighths.horizontal(8), " \u{258F}\u{258C}\u{2588}");
+    check(tally, "floats", float_list(TUI_eighths.floats([1, 2, 3])), "1 2 3");
+    TUI_eighths.Bounds bounds = TUI_eighths.bounds_of([3.0, 8.0, 0.0 / 0.0, 5.0], Option<float>.None, Option<float>.None);
+    check(tally, "all-positive data starts at zero", float_text(bounds.lower) + ".." + float_text(bounds.upper), "0..8");
+    bounds = TUI_eighths.bounds_of([-3.0, 8.0], Option<float>.None, Option<float>.None);
+    check(tally, "negative data reaches below", float_text(bounds.lower) + ".." + float_text(bounds.upper), "-3..8");
+    bounds = TUI_eighths.bounds_of([], Option<float>.None, Option<float>.None);
+    check(tally, "no data still has a width", float_text(bounds.lower) + ".." + float_text(bounds.upper), "0..1");
+    bounds = TUI_eighths.bounds_of([3.0, 8.0], Option<float>.Some(1.0), Option<float>.Some(4.0));
+    check(tally, "pinned ends win", float_text(bounds.lower) + ".." + float_text(bounds.upper), "1..4");
+    bounds = TUI_eighths.bounds_of([3.0], Option<float>.Some(5.0), Option<float>.Some(2.0));
+    check(tally, "reversed pins are repaired", float_text(bounds.lower) + ".." + float_text(bounds.upper), "5..6");
+}
+
+Tally score = Tally();
+scale_tests(score);
+gauge_tests(score);
+sparkline_tests(score);
+barchart_tests(score);
+input_tests(score);
+textarea_tests(score);
+tabs_tests(score);
+chart_tests(score);
+spinner_tests(score);
+mouse_tests(score);
+app_tests(score);
+word_tests(score);
+print("");
+print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
+if (score.fail > 0) {
+    os.exit(1);
+}

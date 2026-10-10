@@ -2,15 +2,15 @@
 # The TUI library's gate.
 #
 #   M31_ROOT=/path/to/m31 bash scripts/check.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash scripts/check.sh --bless    rewrite tests/tests.out from what tests/tests.m31 prints
+#   M31_ROOT=/path/to/m31 bash scripts/check.sh --bless    rewrite tests/tests.out and tests/widgets.out from what the tests print
 #
 # Four things are checked, and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
 #   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
-#   2. tests/tests.m31 and examples/{bench,demo,browse}.m31 all compile under gcc
-#      and clang, at -O0 and -O2, with no warning from the emitted C
-#   3. its output matches tests/tests.out, and contains no `FAIL` line
+#   2. tests/{tests,widgets}.m31 and examples/{bench,demo,browse,widgets}.m31 all
+#      compile under gcc and clang, at -O0 and -O2, with no warning from the emitted C
+#   3. each test's output matches its tests/<name>.out, and contains no `FAIL` line
 #   4. the refcount invariant holds: `__rc_live=0` at exit
 #
 # Then bench.m31 is built and run, and its numbers printed. They are not
@@ -71,8 +71,10 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
+    # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
+    case "$src" in */examples/widgets.*) base=example_widgets;; esac
     note "compiles: $base"
     if ! "$LANGC" --emit-c "$src" -o "$WORK/$base.c" 2>"$WORK/$base.diag"; then
         bad; sed 's/^/    /' "$WORK/$base.diag" | head -8; continue
@@ -97,42 +99,48 @@ for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DI
     if [ $bad_cc -eq 1 ]; then bad; else good; fi
 done
 
-# 3. and 4. the corpus, and the refcount invariant --------------------------
+# 3. and 4. the corpora, and the refcount invariant --------------------------
+#
+# Two test programs, each with its own expected output: tests/tests.m31 (the
+# library as it was) and tests/widgets.m31 (v0.3.0: the input, text, tab,
+# chart, gauge, spinner and mouse widgets, with golden renders).
 #
 # Every build must agree with every other, which is run.sh's layers 1 and 2
 # applied to one program: a disagreement between gcc and clang, or between
 # -O0 and -O2, means the emitted C leans on something C leaves open.
-ref=""; ref_tag=""
-for entry in "${CCS[@]}"; do
-    cc=${entry%%:*}; opt=${entry##*:}
-    got=$("$WORK/tests.$cc$opt" 2>&1)
-    note "refcounts: $cc $opt"
-    if grep -q '^__rc_live=0$' <<<"$got"; then good; else
-        bad; grep '^__rc_live=' <<<"$got" | sed 's/^/    /'
-    fi
-    got=$(grep -v '^__rc_live=' <<<"$got")
-    if [ -z "$ref_tag" ]; then ref=$got; ref_tag="$cc $opt"; else
-        note "agrees with $ref_tag"
-        if [ "$got" = "$ref" ]; then good; else
-            bad; diff <(echo "$ref") <(echo "$got") | head -6 | sed 's/^/    /'
+for corpus in tests widgets; do
+    ref=""; ref_tag=""
+    for entry in "${CCS[@]}"; do
+        cc=${entry%%:*}; opt=${entry##*:}
+        got=$("$WORK/$corpus.$cc$opt" 2>&1)
+        note "refcounts: $corpus $cc $opt"
+        if grep -q '^__rc_live=0$' <<<"$got"; then good; else
+            bad; grep '^__rc_live=' <<<"$got" | sed 's/^/    /'
         fi
+        got=$(grep -v '^__rc_live=' <<<"$got")
+        if [ -z "$ref_tag" ]; then ref=$got; ref_tag="$cc $opt"; else
+            note "agrees with $ref_tag"
+            if [ "$got" = "$ref" ]; then good; else
+                bad; diff <(echo "$ref") <(echo "$got") | head -6 | sed 's/^/    /'
+            fi
+        fi
+    done
+
+    if [ $bless -eq 1 ]; then
+        printf '%s\n' "$ref" > "$DIR/tests/$corpus.out"
+        echo "blessed $DIR/tests/$corpus.out"
+    fi
+
+    note "no FAIL line: $corpus"
+    if grep -q '^FAIL' <<<"$ref"; then
+        bad; grep -A2 '^FAIL' <<<"$ref" | head -20 | sed 's/^/    /'
+    else good; fi
+
+    note "output matches tests/$corpus.out"
+    if diff -q <(printf '%s\n' "$ref") "$DIR/tests/$corpus.out" >/dev/null 2>&1; then good; else
+        bad; diff "$DIR/tests/$corpus.out" <(printf '%s\n' "$ref") | head -30 | sed 's/^/    /'
     fi
 done
-
-if [ $bless -eq 1 ]; then
-    printf '%s\n' "$ref" > "$DIR/tests/tests.out"
-    echo "blessed $DIR/tests/tests.out"
-fi
-
-note "no FAIL line"
-if grep -q '^FAIL' <<<"$ref"; then
-    bad; grep -A2 '^FAIL' <<<"$ref" | head -20 | sed 's/^/    /'
-else good; fi
-
-note "output matches tests/tests.out"
-if diff -q <(printf '%s\n' "$ref") "$DIR/tests/tests.out" >/dev/null 2>&1; then good; else
-    bad; diff "$DIR/tests/tests.out" <(printf '%s\n' "$ref") | head -30 | sed 's/^/    /'
-fi
 
 # the benchmark -------------------------------------------------------------
 #

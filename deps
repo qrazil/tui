@@ -2,4 +2,4 @@
 # imports a module of this library as `import tui.TUI_app;` when it lists it as a
 # dependency, and the examples/ and tests/ entries here import them by bare name.
 name tui
-version 0.2.0
+version 0.3.0

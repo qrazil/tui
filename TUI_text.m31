@@ -86,7 +86,7 @@ pub int width(str text) {
 
 /// The grapheme clusters of `text`: `unicode.graphemes`, with the same fast
 /// path.
-List<str> clusters(str text) {
+pub List<str> clusters(str text) {
     if (!is_plain(text)) {
         return unicode.graphemes(text);
     }

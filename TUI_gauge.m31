@@ -1,0 +1,169 @@
+// A bar that shows how much of something is done, to an eighth of a cell.
+//
+// API
+// ---
+//   TUI_gauge.Gauge(ratio, label:, direction:, filled_style:, ...)  a Widget
+//   TUI_gauge.Gauge.of_percent(percent)         the same from 0 .. 100
+//   gauge.eighths(cells)                         how many eighths it fills
+//   gauge.shown_label()                          the text drawn over the bar
+//
+// A `Gauge` fills the rectangle it is given: horizontally it grows from the
+// left, vertically from the bottom, and a rectangle several rows tall is a
+// thick bar rather than several bars. The fill is exact to an eighth of a
+// cell (TUI_eighths.m31 has the glyphs and the rounding), so a gauge ten
+// cells wide has eighty distinct lengths and 41.25% looks different from 40%.
+//
+// --- colours ----------------------------------------------------------------
+//
+// `filled_style`'s FOREGROUND is the bar colour, because a block glyph is
+// painted in the foreground. `empty_style`'s BACKGROUND is what is behind the
+// bar. The one cell that is part full is drawn as a partial block glyph in the
+// bar colour on the empty background, which is what makes the fraction
+// visible with no second colour.
+//
+// --- the label --------------------------------------------------------------
+//
+// The label is centred on the middle row (horizontal) or the middle column
+// (vertical), over the bar. Where it lies on filled cells it is drawn
+// reversed, so its letters are the terminal's background colour on the bar
+// colour and stay readable; where it lies on empty cells it is drawn in
+// `empty_style`. A label wider than the bar is truncated with an ellipsis.
+// `label: ""` shows the percentage, rounded to a whole number; set
+// `should_show_label: false` for a bar with no text at all.
+//
+// A cell that is part full counts as filled for the label when it is half or
+// more full, since one cell cannot be both.
+
+import math;
+import TUI_buffer;
+import TUI_eighths;
+import TUI_geometry;
+import TUI_style;
+import TUI_text;
+
+/// A fraction shown as a bar.
+pub type Gauge {
+    /// `0.0 .. 1.0`; outside that range is pulled to the nearest end, and a
+    /// NaN is 0.0.
+    pub float ratio;
+    /// The text over the bar. Empty means the percentage.
+    pub str label = "";
+    pub bool should_show_label = true;
+    pub TUI_geometry.Direction direction = TUI_geometry.Direction.Horizontal;
+    /// The bar colour is this style's foreground.
+    pub TUI_style.Style filled_style = TUI_style.Style();
+    /// What lies behind the bar.
+    pub TUI_style.Style empty_style = TUI_style.Style();
+    /// Merged over the label's cells, on top of the filled or empty style.
+    pub TUI_style.Style label_style = TUI_style.Style(attrs: TUI_style.BOLD);
+}
+
+/// A gauge from a percentage, `0 .. 100`.
+pub static Gauge Gauge.of_percent(int percent) {
+    return Gauge(float(percent) / 100.0);
+}
+
+/// How many eighths of a bar `cells` cells long this gauge fills.
+pub int Gauge.eighths(int cells) {
+    return TUI_eighths.of_ratio(ratio, cells);
+}
+
+/// The text the gauge draws over the bar: `label`, or the percentage.
+pub str Gauge.shown_label() {
+    if (!should_show_label) {
+        return "";
+    }
+    if (label != "") {
+        return label;
+    }
+    int percent = int(math.floor(TUI_eighths.clamp_ratio(ratio) * 100.0 + 0.5));
+    return str(percent) + "%";
+}
+
+pub void Gauge.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    TUI_style.Style edge_style = TUI_style.Style(foreground: filled_style.foreground, background: empty_style.background, attrs: filled_style.attrs);
+    match (direction) {
+        case Horizontal: {
+            int total = eighths(area.width);
+            int full = total / 8;
+            int remainder = total - full * 8;
+            for (int row in area.y .. area.bottom()) {
+                buffer.fill(TUI_geometry.Rect(area.x, row, area.width, 1), " ", empty_style);
+                if (full > 0) {
+                    buffer.fill(TUI_geometry.Rect(area.x, row, full, 1), TUI_eighths.horizontal(8), filled_style);
+                }
+                if (remainder > 0) {
+                    buffer.set_str(area.x + full, row, TUI_eighths.horizontal(remainder), edge_style);
+                }
+            }
+            draw_label_across(buffer, area, total);
+        }
+        case Vertical: {
+            int total = eighths(area.height);
+            int full = total / 8;
+            int remainder = total - full * 8;
+            for (int column in area.x .. area.right()) {
+                buffer.fill(TUI_geometry.Rect(column, area.y, 1, area.height), " ", empty_style);
+                if (full > 0) {
+                    buffer.fill(TUI_geometry.Rect(column, area.bottom() - full, 1, full), TUI_eighths.vertical(8), filled_style);
+                }
+                if (remainder > 0) {
+                    buffer.set_str(column, area.bottom() - full - 1, TUI_eighths.vertical(remainder), edge_style);
+                }
+            }
+            draw_label_up(buffer, area, total);
+        }
+    }
+}
+
+// The label on a horizontal bar: one row, columns filled from the left.
+void Gauge.draw_label_across(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int total) {
+    str text = TUI_text.truncate(shown_label(), area.width);
+    int text_width = TUI_text.width(text);
+    if (text_width == 0) {
+        return;
+    }
+    int row = area.y + area.height / 2;
+    int start = area.x + (area.width - text_width) / 2;
+    buffer.set_str(start, row, text, label_style, max: text_width);
+    // A column is "filled" when at least half of it is.
+    for (int offset in 0 .. text_width) {
+        int column = offset + (start - area.x);
+        bool is_filled = total >= column * 8 + 4;
+        buffer.restyle(TUI_geometry.Rect(start + offset, row, 1, 1), label_cell_style(is_filled));
+    }
+}
+
+// The label on a vertical bar: one row of text, at the middle of the height,
+// over columns that are each filled or not by that row.
+void Gauge.draw_label_up(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int total) {
+    str text = TUI_text.truncate(shown_label(), area.width);
+    int text_width = TUI_text.width(text);
+    if (text_width == 0) {
+        return;
+    }
+    int row = area.y + area.height / 2;
+    int start = area.x + (area.width - text_width) / 2;
+    buffer.set_str(start, row, text, label_style, max: text_width);
+    // Rows are counted from the bottom: the row at `row` has `below` rows under it.
+    int below = area.bottom() - 1 - row;
+    bool is_filled = total >= below * 8 + 4;
+    buffer.restyle(TUI_geometry.Rect(start, row, text_width, 1), label_cell_style(is_filled));
+}
+
+TUI_style.Style Gauge.label_cell_style(bool is_filled) {
+    if (is_filled) {
+        return reversed(filled_style).merged(label_style);
+    }
+    return empty_style.merged(label_style);
+}
+
+TUI_style.Style reversed(TUI_style.Style style) {
+    if ((style.attrs & TUI_style.REVERSE) != 0) {
+        return TUI_style.Style(foreground: style.foreground, background: style.background, attrs: style.attrs - TUI_style.REVERSE);
+    }
+    return style.with_attrs(TUI_style.REVERSE);
+}

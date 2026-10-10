@@ -1,0 +1,1325 @@
+
+== scale =======================================================
+ok   nice number 0.7 rounded
+ok   nice number 23 rounded
+ok   nice number 4.2 not rounded
+ok   expanded ticks
+ok   expanded upper
+ok   kept bounds
+ok   kept-bounds ticks stay inside
+ok   fractional ticks
+ok   a flat range still has a span
+ok   reversed bounds are sorted
+ok   format short integer
+ok   format short fraction
+ok   format fixed
+ok   format fixed negative
+ok   scale length
+ok   lowest value is sub-cell 0
+ok   highest value is the last sub-cell
+ok   highest value is in the last cell
+ok   middle value cell
+ok   has inside
+ok   has outside
+ok   cell 0 round trip
+ok   cell 1 round trip
+ok   cell 2 round trip
+ok   cell 3 round trip
+ok   cell 4 round trip
+ok   cell 5 round trip
+ok   cell 6 round trip
+ok   cell 7 round trip
+ok   cell 8 round trip
+ok   cell 9 round trip
+
+== gauge =======================================================
+ok   default label is the percentage
+ok   half of ten cells is forty eighths
+ok   41.25 percent is 33 eighths of 8 cells
+ok   ratio above one is full
+ok   negative ratio is empty
+ok   NaN ratio is empty
+ok   of_percent
+ok   custom label
+horizontal 41.25% in 10x1:
++----------+
+|████▏     |
++----------+
+horizontal 41.25% with label in 12x1:
++------------+
+|████41%     |
++------------+
+full, labelled 'done', 9x1:
++---------+
+|██done███|
++---------+
+empty, 8x1:
++--------+
+|   0%   |
++--------+
+thick bar 8x3 at 62%:
++--------+
+|█████   |
+|█████   |
+|█████   |
++--------+
+vertical 5x6 at 70%:
++-----+
+|     |
+|▂▂▂▂▂|
+|█████|
+|█████|
+|█████|
+|█████|
++-----+
+label wider than the bar, 4x1:
++----+
+|dow…|
++----+
+wide label, 8x1:
++--------+
+|██漢字  |
++--------+
+in a sub-rectangle:
++----------+
+|..........|
+|..███   ..|
+|..........|
++----------+
+zero width:
+++
+||
+++
+zero height:
++-----+
++-----+
+one cell:
++-+
+|▌|
++-+
+
+== sparkline ===================================================
+eight values in 8x1:
++--------+
+|▁▃▂█▅▇▄▆|
++--------+
+eight values in 8x2 (finer):
++--------+
+|   █▂▆ ▄|
+|▂▆▄█████|
++--------+
+more values than columns keep the latest, 4x1:
++----+
+|▅▇▄▆|
++----+
+fewer values than columns, 12x1:
++------------+
+|▁▃▂█▅▇▄▆    |
++------------+
+ok   visible keeps the newest
+pinned 0..12:
++---+
+|▁▁▂|
++---+
+flat data, 5x1:
++-----+
+|█████|
++-----+
+negative values, 5x1:
++-----+
+| ▂▃▅█|
++-----+
+empty data, 5x1:
++-----+
+|     |
++-----+
+a NaN gap, 5x1:
++-----+
+|▂▃ ▆█|
++-----+
+zero size:
+++
+++
+in a sub-rectangle:
++------------+
+|............|
+|..▁▃▂█▅▇▄▆..|
+|............|
++------------+
+
+== bar chart ===================================================
+vertical, 20x8:
++--------------------+
+|            10      |
+|     7      ███     |
+|    ▂▂▂     ███     |
+|    ███  5  ███     |
+| 3  ███ ███ ███     |
+|▆▆▆ ███ ███ ███     |
+|███ ███ ███ ███     |
+| a   b   c   d      |
++--------------------+
+vertical, 20x4:
++--------------------+
+|     7      10      |
+| 3  ▃▃▃  5  ███     |
+|▅▅▅ ███ ███ ███     |
+| a   b   c   d      |
++--------------------+
+vertical, narrow 9x6 (clips the last bars):
++---------+
+|         |
+|     7   |
+| 3  ▆▆▆  |
+|▂▂▂ ███ █|
+|███ ███ █|
+| a   b   |
++---------+
+vertical, no values, 20x6:
++--------------------+
+|            ███     |
+|    ▄▄▄     ███     |
+|    ███ ▄▄▄ ███     |
+|▄▄▄ ███ ███ ███     |
+|███ ███ ███ ███     |
+| a   b   c   d      |
++--------------------+
+horizontal, 24x8:
++------------------------+
+|a █████▊ 3              |
+|                        |
+|b █████████████▎ 7      |
+|                        |
+|c █████████▌ 5          |
+|                        |
+|d ███████████████████ 10|
+|                        |
++------------------------+
+two groups, 16x8:
++----------------+
+|       6        |
+|   4   ██       |
+|   ▃▃  ██       |
+|2  ██  ██       |
+|▅▅ ██  ██ 1     |
+|██ ██  ██ ▇▇    |
+|x  y   x  y     |
+| Q1     Q2      |
++----------------+
+wide and combining labels, 12x5:
++------------+
+| 4          |
+|███  2      |
+|███ ▄▄▄     |
+|███ ███     |
+|漢   é      |
++------------+
+empty chart:
++--------+
+|        |
+|        |
+|        |
++--------+
+zero size:
+++
+||
+||
+||
+||
+++
+height one:
++--------------------+
+|a ████▌ 3           |
++--------------------+
+negative values, 10x5:
++----------+
+|     4    |
+|    ███   |
+|    ███   |
+|-2  ███   |
+| n   p    |
++----------+
+ok   values are listed in order
+
+== text input: editing =========================================
+ok   typing
+ok   cursor after typing
+ok   left changes
+ok   home
+ok   left at the start is ignored
+ok   backspace at the start is ignored
+ok   cursor at the start
+ok   ctrl-e goes to the end
+ok   right at the end is ignored
+ok   ctrl-w kills a word
+ok   ctrl-y yanks it back
+ok   ctrl-left is a word back
+ok   again
+ok   ctrl-right is a word forward
+ok   alt-f too
+ok   alt-b
+ok   ctrl-k kills to the end
+ok   ctrl-u kills to the start
+ok   consecutive kills are one ring entry, joined in order
+ok   undo the yank
+ok   undo both kills at once
+ok   redo
+ok   undo with no history is ignored
+ok   typing undoes a word at a time
+ok   and the next
+ok   ctrl-t transposes
+ok   delete
+ok   ctrl-d
+ok   backspace
+ok   alt-backspace kills a word
+ok   alt-d kills a word forward
+ok   an unused key is ignored
+ok   a mouse event is ignored
+ok   ctrl-c cancels
+ok   escape cancels
+ok   enter submits
+
+== text input: clusters ========================================
+ok   a combining mark joins the letter
+ok   an emoji with a skin tone is one cluster
+ok   one backspace deletes it whole
+ok   wide clusters: cursor column at the end
+ok   cursor column after one wide cluster
+ok   index at a column inside a wide cluster
+ok   index at the next column
+ok   index past the end
+
+== text input: paste, limits, validation, history ==============
+ok   a paste changes
+ok   newlines and tabs become spaces
+ok   a paste is one undo step
+ok   an empty paste is ignored
+ok   max_glyphs
+ok   a paste is cut at the limit too
+ok   validator rejects
+ok   error is kept
+rejected field in 8x1 (error style):
++--------+
+|a1      |
++--------+
+|..^.....|
+ok   editing clears the error
+ok   then it submits
+ok   up shows the newest
+ok   up again
+ok   up at the oldest is ignored
+ok   down returns to the draft
+ok   down past the draft is ignored
+ok   submitting appends
+ok   the appended entry
+ok   a repeat is not appended
+ok   a masked field records no history
+ok   but keeps the text
+
+== text input: drawing =========================================
+cursor at the end, 14x1:
++--------------+
+|hello world   |
++--------------+
+|...........^..|
+cursor at the start, 14x1:
++--------------+
+|hello world   |
++--------------+
+|^.............|
+scrolled to the end, 6x1:
++------+
+|world |
++------+
+|.....^|
+cursor moves left inside the window, 6x1:
++------+
+|lo wor|
++------+
+|^.....|
+back to the start, 6x1:
++------+
+|hello |
++------+
+|^.....|
+placeholder, 8x1:
++--------+
+|name    |
++--------+
+|^ddd....|
+placeholder cut, 3x1:
++---+
+|nam|
++---+
+|^dd|
+password mask, 6x1:
++------+
+|***   |
++------+
+|.^....|
+wide text, cursor on a wide cluster, 9x1:
++---------+
+|a漢字b👍 |
++---------+
+|...^^....|
+wide text scrolled to the end, 4x1:
++----+
+|b👍 |
++----+
+|...^|
+a wide cluster cut by the left edge, 5x1:
++-----+
+|漢字 |
++-----+
+|....^|
+the same cut in 2 columns:
++--+
+|  |
++--+
+|.^|
+combining marks, 5x1:
++-----+
+|éäz  |
++-----+
+|...^.|
+zero width:
+++
+||
+++
+zero height:
++-----+
++-----+
+one column, 1x1:
++-+
+| |
++-+
+|^|
+a tall area draws one row, 6x3:
++------+
+|abc   |
+|      |
+|      |
++------+
+|...^..|
+|......|
+|......|
+in a sub-rectangle:
++------------+
+|............|
+|..hello ....|
+|............|
++------------+
+unfocused has no cursor, 5x1:
++-----+
+|abc  |
++-----+
+|.....|
+ok   terminal cursor position
+
+== text input: mouse ===========================================
+ok   a press moves the cursor
+ok   to the clicked cluster
+ok   past the text is the end
+ok   the same place is ignored
+ok   a right-button press is ignored
+ok   hover is ignored
+
+== text area: model and editing ================================
+ok   an empty text has one line
+ok   a trailing newline is an empty last line
+ok   text round trips
+ok   typing and enter
+ok   cursor after typing
+ok   backspace at the line start joins lines
+ok   joined
+ok   cursor where the join was
+ok   alt-enter submits
+ok   escape with no selection cancels
+ok   an unused key is ignored
+ok   up on the first row is ignored at the line start
+ok   end of the line
+ok   down to a short line clamps the column
+ok   and the goal column is remembered
+ok   ctrl-home
+ok   ctrl-end
+ok   left at a line start goes to the previous line's end
+ok   right at a line end goes to the next line
+ok   ctrl-left at a line start goes to the previous line end
+
+== text area: selection, clipboard, undo =======================
+ok   shift-right selects
+ok   shift-down extends over lines
+ok   a plain motion clears the selection
+ok   select all
+ok   copy puts it in the clipboard
+ok   typing replaces the selection
+ok   paste from the box's clipboard
+ok   undo the paste
+ok   undo the typing
+ok   redo
+ok   ctrl-shift-right selects a word
+ok   cut
+ok   cut fills the clipboard
+ok   ctrl-y pastes
+ok   ctrl-k kills to the end of the line
+ok   ctrl-u kills to the start of the line
+ok   replace across lines
+ok   the cursor lands after the new text
+ok   replace orders its span
+ok   a paste keeps its line breaks
+ok   and is one undo step
+ok   tab inserts spaces to the stop
+ok   line length counts clusters
+ok   backspace deletes a whole emoji
+ok   set_cursor clamps
+
+== text area: drawing ==========================================
+cursor on line two, 12x5:
++------------+
+|first line  |
+|second      |
+|            |
+|fourth      |
+|            |
++------------+
+|............|
+|...^........|
+|............|
+|............|
+|............|
+line numbers, 14x5:
++--------------+
+|1 first line  |
+|2 second      |
+|3             |
+|4 fourth      |
+|              |
++--------------+
+|d.............|
+|d....^........|
+|d.............|
+|d.............|
+|..............|
+numbers, cursor at the end, 9x3 (scrolled both ways):
++---------+
+|2 second |
+|3        |
+|4 fourth |
++---------+
+|d........|
+|d........|
+|d.......^|
+a selection over two lines, 12x2 (_ is selected):
++------------+
+|alpha beta  |
+|gamma delta |
++------------+
+|......_____.|
+|______^.....|
+placeholder, 10x2:
++----------+
+|message   |
+|          |
++----------+
+|^dddddd...|
+|..........|
+wrapped, 12x5:
++------------+
+|the quick b |
+|rown fox ju |
+|mps over th |
+|e lazy dog  |
+|            |
++------------+
+|............|
+|.........^..|
+|............|
+|............|
+|............|
+wrapped with numbers, 12x6:
++------------+
+|1 the quick |
+|   brown fo |
+|  x jumps o |
+|  ver the l |
+|  azy dog   |
+|            |
++------------+
+|d...........|
+|............|
+|....^.......|
+|............|
+|............|
+|............|
+ok   down moves by visual row when wrapped
+wide clusters wrapped, 6x4:
++------+
+|漢字  |
+|漢字  |
+|漢    |
+|👍ab  |
++------+
+|......|
+|......|
+|......|
+|...^..|
+wide clusters, not wrapped, 7x2:
++-------+
+|漢字漢 |
+|👍     |
++-------+
+|......^|
+|.......|
+combining marks wrapped narrow, 3x3:
++---+
+|éé |
+|é  |
+|   |
++---+
+|^..|
+|...|
+|...|
+zero width:
+++
+||
+||
+||
+++
+zero height:
++--------+
++--------+
+one cell:
++-+
+|s|
++-+
+|.|
+width 4 with numbers (no room for text):
++----+
+|2 se|
+|3   |
++----+
+|d...|
+|d...|
+in a sub-rectangle:
++----------+
+|..........|
+|..abc  ...|
+|..def  ...|
+|..........|
++----------+
+ok   terminal cursor position
+ok   TextArea.of puts the cursor at the end
+
+== text area: mouse ============================================
+ok   a press moves the cursor
+ok   to the clicked cell
+ok   a drag selects
+ok   a double click selects a word
+ok   a triple click selects the line
+ok   past the end of a line is its end
+ok   the wheel scrolls
+ok   without moving the cursor
+ok   hover is ignored
+
+== tabs ========================================================
+ok   count
+three tabs, 30x1:
++------------------------------+
+| one │ two │ three            |
++------------------------------+
+|^^^^^d.....d..................|
+ok   next
+ok   selected
+ok   next at the end does not wrap
+ok   previous
+ok   select out of range
+ok   select the same one
+disabled and closable, 24x1 (d is dim):
++------------------------+
+| a │ b │ c × │ d        |
++------------------------+
+|^^^ddddd.....dddd.......|
+ok   next skips a disabled tab
+ok   next with only a disabled tab left
+ok   select a disabled tab
+ok   key right
+ok   key left at the start is ignored
+ok   key end
+ok   key home
+ok   alt-3
+ok   alt-2 is disabled
+ok   ctrl-w asks to close a closable tab
+ok   ctrl-w on a tab that is not closable is ignored
+ok   ctrl-pagedown
+ok   ctrl-pageup
+ok   a character is ignored
+
+== tabs: overflow ==============================================
+six tabs in 20x1, first selected:
++--------------------+
+| alpha │ beta      ›|
++--------------------+
+|^^^^^^^d............|
+fourth selected:
++--------------------+
+|‹ gamma │ delta    ›|
++--------------------+
+|........d^^^^^^^....|
+last selected:
++--------------------+
+|‹ epsilon │ zeta    |
++--------------------+
+|..........d^^^^^^...|
+first again:
++--------------------+
+| alpha │ beta      ›|
++--------------------+
+|^^^^^^^d............|
+very narrow 8x1:
++--------+
+| alpha ›|
++--------+
+|^^^^^^^.|
+epsilon in 8x1 (cut with an ellipsis):
++--------+
+|‹epsil…›|
++--------+
+|.^^^^^^.|
+a long title in 6x1:
++------+
+|a ver…|
++------+
+|^^^^^^|
+zero width:
+++
+||
+++
+zero height:
++----------+
++----------+
+one column:
++-+
+|›|
++-+
+|.|
+a taller area draws one row, 12x2:
++------------+
+| a │ b      |
+|            |
++------------+
+|^^^d........|
+|............|
+in a sub-rectangle:
++--------------+
+|..............|
+|.. a │ b    ..|
+|..............|
++--------------+
+wide, combining and emoji titles, 24x1:
++------------------------+
+| 漢字 │ é👍 × │ z       |
++------------------------+
+|^^^^^^d.......d.........|
+the same in 12x1:
++------------+
+| 漢字      ›|
++------------+
+|^^^^^^......|
+no tabs, 6x1:
++------+
+|      |
++------+
+|......|
+ok   no tabs: current
+ok   no tabs: next
+
+== tabs: editing the list ======================================
+ok   closing before keeps the same tab selected
+ok   which is c
+ok   closing the selected selects the next one
+ok   closing the last selects the one before
+ok   add appends
+ok   close out of range does nothing
+
+== tabs: mouse =================================================
+the row, 40x1 (hit-test it below):
++----------------------------------------+
+| aa │ bb × │ cc │ dd                    |
++----------------------------------------+
+|^^^^d......dddddd.......................|
+ok   hit tests along the row
+ok   a cell off the row
+ok   press selects
+ok   press on a disabled tab
+ok   click on the close box asks to close
+ok   click on a body does nothing more
+ok   middle click closes a closable tab
+ok   middle click on one that is not closable
+ok   wheel down moves the selection
+ok   wheel up
+ok   hover is ignored
+ok   the right mark is at the right edge
+ok   pressing it slides the window
+ok   and keeps the selection
+after sliding one tab, 20x1 (the selection is out of view):
++--------------------+
+|‹ beta │ gamma     ›|
++--------------------+
+|.......d............|
+ok   the left mark is now at the left edge
+ok   pressing the left mark slides back
+moving the selection brings the window back to it:
++--------------------+
+|‹ beta │ gamma     ›|
++--------------------+
+|.^^^^^^d............|
+
+== chart: scales and ticks =====================================
+ok   plot rectangle
+ok   value under the plot's lower left
+ok   no value outside the plot
+ok   the top-left cell is near x 0 and y at the top
+pinned y axis 0..10, 24x8:
++------------------------+
+|10┤                     |
+|  │                     |
+| 5┤                     |
+|  │                     |
+|  │     ⢀⣀⣀⣀⠤⠤⠤⠤⠔⠒⠒⠒⠒⠊⠉⠉|
+| 0┤⠒⠒⠉⠉⠉⠁               |
+|  └┬───────────────────┬|
+|   0                   2|
++------------------------+
+
+== chart: drawing ==============================================
+two lines, braille, 40x12:
++----------------------------------------+
+|load                                    |
+|10┤⡀                            ● rise  |
+|  │⠈⢆                         ⢀⡠● dip   |
+|  │  ⠱⡀                   ⣀⠤⠒⠊⠁         |
+| 5┤   ⠈⠢⣀            ⢀⡠⠔⠊⠉        ⢀⠔⠁   |
+|  │      ⠑⢄⡀     ⣀⡠⠔⠊⠁         ⢀⡠⠊⠁     |
+|  │        ⠈⢑⡢⠤⠶⣉⣀⣀     ⢀⣀⣀⠤⠤⠔⠊⠁        |
+|  │    ⢀⣀⠤⠒⠊⠁      ⠉⠉⠒⠊⠉⠁               |
+| 0┤⣀⠤⠒⠉⠁                                |
+|  └┬─────────────────┬─────────────────┬|
+|   0                 5                10|
+|                   time                 |
++----------------------------------------+
+the same with half blocks, 40x12:
++----------------------------------------+
+|load                                    |
+|10┤▄                            ● rise  |
+|  │ ▀▄                         ▄● dip   |
+|  │  ▀▄                   ▄▄▀▀▀         |
+| 5┤    ▀▄            ▄▄▄▀▀        ▄▀    |
+|  │      ▀▄▄▄   ▄▄▄▀▀          ▄▄▀      |
+|  │         ▄█▀▀▄▄▄▄    ▄▄▄▀▀▀▀         |
+|  │    ▄▄▀▀▀        ▀▀▀▀                |
+| 0┤▄▄▀▀                                 |
+|  └┬─────────────────┬─────────────────┬|
+|   0                 5                10|
+|                   time                 |
++----------------------------------------+
+the same with dots, 40x12:
++----------------------------------------+
+|load                                    |
+|10┤                             ● rise  |
+|  │••                          •● dip   |
+|  │  ••                    ••••         |
+| 5┤    ••           •••••••       ••    |
+|  │      ••••   ••••           •••      |
+|  │          •••••••    •••••••         |
+|  │   •••••••       ••••                |
+| 0┤•••                                  |
+|  └┬─────────────────┬─────────────────┬|
+|   0                 5                10|
+|                   time                 |
++----------------------------------------+
+small, 20x7:
++--------------------+
+|load                |
+|10┤⠢⡀       ● rise  |
+|  │ ⠈⠒⢄⡀ ⣀⡠⠔● dip   |
+| 0┤⣀⠤⠤⠒⠊⠉⠉⠉⠒⠊⠉⠉⠁    |
+|  └┬───────────────┬|
+|   0              10|
+|         time       |
++--------------------+
+scatter, half blocks, legend bottom right, 30x9:
++------------------------------+
+|10┤                           |
+|  │             ▄             |
+|  │                           |
+| 5┤                  ▀        |
+|  │     ▀                     |
+|  │         ▀                 |
+| 0┤   ▀                ● pts  |
+|  └┬─────────────────────────┬|
+|   0                        10|
++------------------------------+
+legend bottom left, 30x9:
++------------------------------+
+|10┤                           |
+|  │             ▄             |
+|  │                           |
+| 5┤                  ▀        |
+|  │     ▀                     |
+|  │         ▀                 |
+| 0┤ ● pts                     |
+|  └┬─────────────────────────┬|
+|   0                        10|
++------------------------------+
+legend top left, 30x9:
++------------------------------+
+|10┤ ● pts                     |
+|  │             ▄             |
+|  │                           |
+| 5┤                  ▀        |
+|  │     ▀                     |
+|  │         ▀                 |
+| 0┤   ▀                       |
+|  └┬─────────────────────────┬|
+|   0                        10|
++------------------------------+
+legend hidden, 30x9:
++------------------------------+
+|10┤                           |
+|  │             ▄             |
+|  │                           |
+| 5┤                  ▀        |
+|  │     ▀                     |
+|  │         ▀                 |
+| 0┤   ▀                       |
+|  └┬─────────────────────────┬|
+|   0                        10|
++------------------------------+
+narrow, 10x5 (no room for axes: the plot and legend alone):
++----------+
+|⡄ ● rise  |
+|⠸⡀● dip   |
+| ⠱⡀ ⡠⠊ ⢀⠎ |
+|  ⡨⠚⠤⡠⠔⠁  |
+|⡠⠊        |
++----------+
+too small for axes, 6x3 (the plot alone):
++------+
+|⢆   ⡠⠂|
+|⠘⡄⡠⠊⢠⠃|
+|⡠⠊⠉⠊⠁ |
++------+
+one cell:
++-+
+|⡿|
++-+
+zero width:
+++
+||
+||
+||
+||
+||
+++
+zero height:
++--------------------+
++--------------------+
+no data, 16x5:
++----------------+
+|1┤              |
+| │              |
+|0┤              |
+| └┬────────────┬|
+|  0            1|
++----------------+
+NaN and infinity are skipped, lines do not bridge them, 26x7:
++--------------------------+
+|5┤       ⢀⠤⠊         ● g  |
+| │       ⠁                |
+| │  ⢀           ⠑⠢⢄       |
+| │⡠⠒⠁                     |
+|0┤                        |
+| └┬──────────────────────┬|
+|  0                     10|
++--------------------------+
+a line leaving the pinned bounds is cut where it leaves, 24x8:
++------------------------+
+| │   ⡸ ⢇     ⢀⠇ ⢇  ● c  |
+| │  ⢀⠇ ⠸⡀    ⡸  ⠸⡀      |
+|5┤  ⢸   ⡇    ⡇   ⡇      |
+| │  ⡇   ⢸   ⢸    ⢸      |
+| │ ⢰⠁   ⠈⡆  ⡎    ⠈⡆     |
+| │ ⡎     ⢱ ⢰⠁     ⢱     |
+| └┬────────────────────┬|
+|  0                    5|
++------------------------+
+flat data still gets a scale, 20x7:
++--------------------+
+|4┤             ● f  |
+| │                  |
+|3┤⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒       |
+| │                  |
+|2┤                  |
+| └┬────────────────┬|
+|  0                5|
++--------------------+
+wide, combining and emoji names and titles, 28x8:
++----------------------------+
+|値                          |
+|4┤                  ● 漢字  |
+|2┤⠉⠒⠒⠤⠤⣀⣀⣀⡠⠤⠔⠒⠊⠉⠉⠑⠒⠒● é👍  ⣀|
+| │⣀⠤⠤⠒⠒⠉⠉⠉⠑⠒⠢⠤⢄⣀⣀⠤⠤⠤⠒⠒⠒⠉⠉⠉  |
+|0┤                          |
+| └┬────────────────────────┬|
+|  0                        2|
+|             時間           |
++----------------------------+
+in a sub-rectangle:
++------------------------------------+
+|....................................|
+|...10┤                           ...|
+|...  │             ▄             ...|
+|...  │                           ...|
+|... 5┤                  ▀        ...|
+|...  │     ▀                     ...|
+|...  │         ▀                 ...|
+|... 0┤   ▀                       ...|
+|...  └┬─────────────────────────┬...|
+|...   0                        10...|
+|....................................|
++------------------------------------+
+negative values, 24x7:
++------------------------+
+| 10┤               ● n  |
+|   │           ⣀⣀       |
+|  0┤   ⢀⣀⡠⠤⠔⠒⠉⠉  ⠉⠉⠒    |
+|   │⠤⠒⠊⠁                |
+|-10┤                    |
+|   └┬──────────────────┬|
+|    0                  5|
++------------------------+
+large values widen the label column, 26x7:
++--------------------------+
+|10000┤          ⢀⠎        |
+|     │         ⢀⠎         |
+|     │   ⡠⠒⠤⣀ ⢀⠎          |
+|     │ ⡠⠊    ⠉⠊           |
+|    0┤⠊                   |
+|     └┬──────────────────┬|
+|      0                  5|
++--------------------------+
+
+== chart: hover ================================================
+ok   far from any point there is nothing to hover
+ok   a hover near a point changes the chart
+ok   hover is the middle point
+ok   the same point again is ignored
+hovered point with its tooltip, 30x10:
++------------------------------+
+|10┤                          •|
+|  │                           |
+|  │              a: 5, 5      |
+| 5┤             •             |
+|  │                           |
+|  │                           |
+|  │                           |
+| 0┤•                          |
+|  └┬─────────────────────────┬|
+|   0                        10|
++------------------------------+
+ok   leave clears it
+ok   nothing is hovered
+ok   leave again is ignored
+ok   a press snaps to the nearest point
+ok   moving off the plot clears it
+ok   a drag follows the pointer
+tooltip near the right edge stays inside, 30x10:
++------------------------------+
+|10┤                          •|
+|  │                 a: 10, 10 |
+|  │                           |
+| 5┤             •             |
+|  │                           |
+|  │                           |
+|  │                           |
+| 0┤•                          |
+|  └┬─────────────────────────┬|
+|   0                        10|
++------------------------------+
+tooltip in a tiny chart, 14x5:
++--------------+
+|10┤          •|
+|  │ a: 10, 10 |
+| 0┤•          |
+|  └┬─────────┬|
+|   0        10|
++--------------+
+
+== spinner =====================================================
+ok   first frame
+ok   less than an interval is no change
+ok   the rest of it is
+ok   second frame
+ok   the remainder is kept
+ok   a long gap steps several frames
+ok   and keeps the remainder
+ok   time to the next frame
+ok   negative time is nothing
+ok   whole turns land where they started
+ok   a whole turn is not a visible change
+ok   tick steps one frame
+ok   stopped is not spinning
+ok   a stopped spinner draws the idle symbol
+ok   and ignores time
+ok   and ticks
+ok   and is never due
+ok   a custom idle symbol
+ok   start carries on from the phase
+ok   reset goes to the first frame
+ok   frame_ms overrides the pace
+ok   set paces differ
+ok   frames per set
+ok   the ASCII set is plain ASCII
+ok   no set repeats a frame
+ok   every frame is one column wide
+a frame of each set with a label, 12x1:
++------------+
+|⠹ working   |
++------------+
+a frame of each set with a label, 12x1:
++------------+
+|─ working   |
++------------+
+a frame of each set with a label, 12x1:
++------------+
+|⣻ working   |
++------------+
+a frame of each set with a label, 12x1:
++------------+
+|◝ working   |
++------------+
+a frame of each set with a label, 12x1:
++------------+
+|⠄ working   |
++------------+
+a frame of each set with a label, 12x1:
++------------+
+|| working   |
++------------+
+a wide label truncated, 8x1:
++--------+
+|⠋ 漢字 …|
++--------+
+width 2 draws the glyph alone, 2x1:
++--+
+|⠋ |
++--+
+width 1, 1x1:
++-+
+|⠋|
++-+
+zero width:
+++
+||
+++
+zero height:
++-----+
++-----+
+in a sub-rectangle:
++--------------+
+|..............|
+|..⠋ 漢字 lo…..|
+|..............|
++--------------+
+stopped, 12x1:
++------------+
+|  漢字 load…|
++------------+
+
+== mouse: the pointer ==========================================
+ok   reports are 1-based, gestures 0-based
+ok   release then click
+ok   a second click soon after is a double click
+ok   a third is a triple
+ok   a fourth starts over
+ok   too late is a single click
+ok   another cell is a single click
+ok   a clock that went back is a single click
+ok   dragging reports each cell
+ok   the drag knows where it began
+ok   release after a drag is not a click
+ok   a release with nothing down is nothing
+ok   hover
+ok   hover on the same cell is nothing
+ok   wheel up
+ok   wheel down
+ok   wheel left
+ok   wheel right
+ok   modifiers are carried
+ok   the right button is 2
+ok   and is not primary
+ok   a click of another button does not join a double click
+ok   a report at column 0 is clamped
+ok   double_click_ms is a knob
+
+== mouse: the router ===========================================
+ok   a press goes to the region under it
+ok   which takes focus
+ok   the release follows
+ok   a region added later is on top
+ok   a region that cannot take focus leaves it
+ok   pressing the other region moves focus
+ok   to it
+ok   a drag out of the region still goes to it
+ok   and so does the release
+ok   after it, nothing is captured
+ok   a press that moved focus says so
+ok   a press on what has focus does not
+ok   a press on nothing
+ok   leaves focus alone
+ok   hover over a region
+ok   is remembered
+ok   moving to another leaves the first
+ok   moving to nothing leaves it
+ok   nothing is hovered
+ok   within one region, only hover
+ok   and again
+ok   a new frame forgets the old regions
+ok   region lookup
+ok   region lookup misses
+ok   find by id
+ok   find a missing id
+
+== mouse: focus order ==========================================
+ok   nothing is focused at first
+ok   next from nothing is the first
+ok   skips what cannot focus
+ok   wraps
+ok   previous wraps back
+ok   previous
+ok   focus can be given by hand
+ok   no regions, no focus
+ok   previous from nothing is the last
+
+== mouse: outline and diff view ================================
+ok   press selects a row
+ok   the cursor is on it
+ok   the same row again still answers changed
+ok   press on a fold mark folds
+ok   rows after folding
+ok   press below the last row
+ok   press outside the area
+ok   press in an empty area
+ok   double click on a folded section opens it
+ok   rows after unfolding
+ok   a single click does nothing more
+ok   wheel down moves three
+ok   cursor after the wheel
+ok   the wheel stops at the end
+ok   and then is ignored
+ok   wheel right pans
+ok   hover is not for it
+the outline after all that, panned, 24x6:
++------------------------+
+|staged changes          |
+|  dified: a.txt         |
+|  dified: b.txt         |
+|aged changes            |
+|  w file: c.txt         |
+|ash@{0}: on main: wip   |
++------------------------+
+ok   press puts the cursor on a line
+ok   which at() reports
+ok   the header row
+ok   pressing the same row is ignored
+ok   outside the area is ignored
+ok   wheel down
+ok   moves three rows
+ok   wheel up
+ok   back to the top
+ok   the wheel at the top is ignored
+ok   a click is not for it
+
+== app: sequences, timer, fold =================================
+ok   a default loop enters as before
+ok   and leaves as before
+ok   mouse reporting is asked for after the screen
+ok   and turned off before the screen goes
+ok   all three on entry
+ok   all three off in reverse on the way out
+ok   hover without mouse asks for nothing
+ok   hover without mouse turns off nothing
+ok   paste alone
+ok   paste alone, off
+ok   a custom enter keeps its bytes first
+ok   a custom leave keeps its bytes last
+ok   no timer waits the whole tick
+ok   a timer shortens the wait
+ok   a long timer leaves the tick alone
+ok   a late tick is a poll of one
+ok   never under one
+ok   elapsed passes
+ok   backwards is zero
+ok   a long gap is cut
+ok   the limit itself
+ok   fold continue continue
+ok   fold continue redraw
+ok   fold continue quit
+ok   fold redraw continue
+ok   fold redraw redraw
+ok   fold redraw quit
+ok   fold quit continue
+ok   fold quit redraw
+ok   fold quit quit
+ok   the do-nothing ticker continues
+ok   the do-nothing mouse handler continues
+ok   has_resized sees a change
+ok   and no change
+
+== word and eighths ============================================
+ok   previous word from the end
+ok   previous word over separators
+ok   previous word from inside a word
+ok   next word from the start
+ok   next word over separators
+ok   next word from inside a word
+ok   next word at the end
+ok   previous word at the start
+ok   previous word beyond the end
+ok   next word before the start
+ok   blank word takes a path whole
+ok   blank word skips blanks first
+ok   a blank is blank
+ok   an ideographic space is blank
+ok   a no-break space is blank
+ok   an empty cluster is blank
+ok   a letter is not
+ok   an underscore is a word character
+ok   a digit is a word character
+ok   punctuation is not
+ok   an ideograph is
+ok   a letter with a combining mark is
+ok   an emoji is
+ok   a blank is not
+ok   no ratio is no eighths
+ok   half of 4 cells
+ok   all of 4 cells
+ok   over is pulled in
+ok   under is pulled in
+ok   not a number is nothing
+ok   no cells is nothing
+ok   scaled mid
+ok   scaled below
+ok   scaled with no span
+ok   scaled with negative bounds
+ok   vertical glyphs
+ok   vertical out of range is pulled in
+ok   horizontal glyphs
+ok   floats
+ok   all-positive data starts at zero
+ok   negative data reaches below
+ok   no data still has a width
+ok   pinned ends win
+ok   reversed pins are repaired
+
+-- 419 passed, 0 failed

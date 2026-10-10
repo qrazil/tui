@@ -1,0 +1,100 @@
+// A row of tiny bars, one per value: the shape of a series in the room of a
+// word.
+//
+// API
+// ---
+//   TUI_sparkline.Sparkline(data, min_value:, max_value:, style:)   a Widget
+//   spark.visible(width)       the values that fit, newest last
+//   spark.bounds()             the range the bars are scaled against
+//
+// One value is one column and `height` rows are one bar's whole range, so a
+// sparkline three rows tall has 24 levels. The bar is exact to an eighth of a
+// cell (TUI_eighths.m31). Bars grow from the bottom of the rectangle.
+//
+// --- scaling ----------------------------------------------------------------
+//
+// `min_value` and `max_value` pin the ends of the range. An end left
+// unpinned comes from the data (TUI_eighths.bounds_of): the largest finite
+// value on top, and at the bottom the smallest finite value or 0.0,
+// whichever is less. So an ordinary all-positive series is proportional to
+// its values and starts from nothing, and a series that goes negative is
+// scaled from its minimum. A value outside pinned bounds is drawn at the
+// nearest end. NaN and infinities draw nothing.
+//
+// A value that is strictly above the lower bound is drawn at least one
+// eighth tall, however small: a sparkline exists to show that something
+// happened, and a spike of 1 beside a spike of 10000 should not vanish.
+//
+// --- more values than columns -----------------------------------------------
+//
+// The NEWEST values are the ones kept, which are the last ones: a sparkline
+// is a window on a series that grows at its right end. Fewer values than
+// columns leave the right of the rectangle blank.
+
+import math;
+import TUI_buffer;
+import TUI_eighths;
+import TUI_geometry;
+import TUI_style;
+
+/// A series drawn as eighth-block columns.
+pub type Sparkline {
+    pub List<float> data;
+    /// Pin the bottom of the range; unpinned, it comes from the data.
+    pub Option<float> min_value = Option<float>.None;
+    /// Pin the top of the range; unpinned, it comes from the data.
+    pub Option<float> max_value = Option<float>.None;
+    pub TUI_style.Style style = TUI_style.Style();
+}
+
+/// A sparkline of integers.
+pub static Sparkline Sparkline.of_ints(List<int> data, TUI_style.Style style = TUI_style.Style()) {
+    return Sparkline(TUI_eighths.floats(data), style: style);
+}
+
+/// The range the bars are scaled against.
+pub TUI_eighths.Bounds Sparkline.bounds() {
+    return TUI_eighths.bounds_of(data, min_value, max_value);
+}
+
+/// The values that fit in `width` columns: all of them, or the newest `width`.
+pub List<float> Sparkline.visible(int width) {
+    if (width <= 0) {
+        return [];
+    }
+    int count = data.size();
+    if (count <= width) {
+        return data;
+    }
+    return data.slice(count - width, count);
+}
+
+pub void Sparkline.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    buffer.fill(area, " ", style);
+    TUI_eighths.Bounds range = bounds();
+    int total = area.height * 8;
+    int column = 0;
+    for (float value in visible(area.width)) {
+        int eighths = TUI_eighths.scaled(value, range.lower, range.upper, total);
+        if (eighths == 0 && math.is_finite(value) && value > range.lower) {
+            eighths = 1;
+        }
+        draw_column(buffer, area, column, eighths);
+        column = column + 1;
+    }
+}
+
+void Sparkline.draw_column(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int column, int eighths) {
+    int full = eighths / 8;
+    int remainder = eighths - full * 8;
+    int x = area.x + column;
+    if (full > 0) {
+        buffer.fill(TUI_geometry.Rect(x, area.bottom() - full, 1, full), TUI_eighths.vertical(8), style);
+    }
+    if (remainder > 0) {
+        buffer.set_str(x, area.bottom() - full - 1, TUI_eighths.vertical(remainder), style);
+    }
+}

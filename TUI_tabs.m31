@@ -1,0 +1,656 @@
+// A row of tabs: one is selected, some are disabled, some can be closed, and
+// when they do not all fit the row scrolls.
+//
+// API
+// ---
+//   TUI_tabs.Tab(title, is_disabled:, is_closable:)    one tab
+//   TUI_tabs.Tabs(items, selected:, ...)               the row
+//   tabs.did_select(i) / did_select_next() / did_select_previous() / did_select_first() / did_select_last()   -> bool, did the selection change
+//   tabs.add(tab) / close(i)                           edit the list; the selection follows
+//   tabs.current()                                     -> Option<Tab>
+//   tabs.handle(event)  -> TabOutcome                  Left/Right/Home/End, Ctrl-W, Alt-1..9
+//   tabs.hit(area, x, y) -> Hit                        what is under a cell
+//   tabs.handle_mouse(gesture, area) -> TabOutcome     click, close box, overflow marks, wheel
+//   tabs.render(buffer, area)
+//
+// --- what a tab is, and what the row does -----------------------------------
+//
+// The row is a single line: ` title ` per tab, ` title x ` when `is_closable`,
+// separated by a divider. The selected tab is drawn in `selected_style`, a
+// disabled one in `disabled_style`. A disabled tab is skipped by every way of
+// moving the selection -- keys, wheel, `next` -- and a click on it does
+// nothing; it is still drawn, because the point of disabling a tab rather than
+// removing it is that the user can see it exists.
+//
+// **Overflow.** When the tabs do not fit, the row shows a window of them
+// starting at `offset`, with `\u{2039}` at the left edge if tabs are hidden
+// before the window and `\u{203A}` at the right if after. `render` slides the
+// window just far enough to keep the selected tab fully in view (the same
+// rule `ListView` follows for its offset), so keyboard selection always shows
+// what it selected; clicking a mark slides the window one tab without
+// changing the selection (and `render` leaves it there until the selection
+// changes, see `detached_for`). A selected tab wider than the row on its own is
+// truncated with an ellipsis rather than hidden.
+//
+// --- closing is a request ---------------------------------------------------
+//
+// Tabs never removes a tab because the user clicked its close box or pressed
+// Ctrl-W: that answers `CloseRequested(i)` and the program decides, since
+// closing a tab with unsaved work wants a question first. Then `close(i)` does
+// it, and the selection follows: closing a tab before the selected one keeps
+// the same tab selected, closing the selected one selects the next enabled
+// tab to its right, or the nearest on its left.
+//
+// --- mouse ------------------------------------------------------------------
+//
+// With `TUI_mouse.Router` (see that module) the program registers the
+// rectangle the row was drawn in and passes `routed.gesture`, `routed.area`
+// to `handle_mouse`. A press on a tab selects it; a click on its close box,
+// or a middle click anywhere on a closable tab, answers `CloseRequested`; the
+// wheel moves the selection.
+
+import term;
+import TUI_buffer;
+import TUI_clip;
+import TUI_geometry;
+import TUI_mouse;
+import TUI_style;
+import TUI_text;
+
+/// One tab.
+pub type Tab {
+    pub str title;
+    pub bool is_disabled = false;
+    pub bool is_closable = false;
+}
+
+/// What a key or a gesture did to the row.
+pub enum TabOutcome {
+    /// Nothing for the row in it.
+    Ignored;
+    /// The row changed without the selection changing (the window slid).
+    Changed;
+    /// The selection moved to this tab.
+    Selected(int);
+    /// The user asked to close this tab; see the header.
+    CloseRequested(int);
+}
+
+pub str TabOutcome.to_str() {
+    match (this) {
+        case Ignored: {
+            return "ignored";
+        }
+        case Changed: {
+            return "changed";
+        }
+        case Selected(int index): {
+            return "selected " + str(index);
+        }
+        case CloseRequested(int index): {
+            return "close " + str(index);
+        }
+    }
+}
+
+/// What is under a cell of the row.
+pub enum Hit {
+    Nothing;
+    Body(int);
+    CloseBox(int);
+    LeftMark;
+    RightMark;
+}
+
+pub str Hit.to_str() {
+    match (this) {
+        case Nothing: {
+            return "nothing";
+        }
+        case Body(int index): {
+            return "body " + str(index);
+        }
+        case CloseBox(int index): {
+            return "close-box " + str(index);
+        }
+        case LeftMark: {
+            return "left-mark";
+        }
+        case RightMark: {
+            return "right-mark";
+        }
+    }
+}
+
+/// Where one tab sits in the row: its index, first column (relative to the
+/// row) and width, and whether it was cut to fit.
+pub type Slot {
+    pub int index;
+    pub int x;
+    pub int width;
+    pub bool is_cut = false;
+}
+
+pub const str LEFT_MARK = "\u{2039}";
+pub const str RIGHT_MARK = "\u{203A}";
+pub const str CLOSE_BOX = "\u{00D7}";
+
+/// The row.
+pub type Tabs {
+    pub List<Tab> items;
+    pub int selected = 0;
+    /// The first tab of the visible window; `render` keeps the selection in it.
+    pub int offset = 0;
+    /// The tab the window was slid away from by clicking an overflow mark: while
+    /// it is still the selected one, `render` leaves the window where the mark
+    /// put it instead of snapping back; any selection change ends that.
+    pub int detached_for = -1;
+    pub str divider = "\u{2502}";
+    pub TUI_style.Style style = TUI_style.Style();
+    pub TUI_style.Style selected_style = TUI_style.Style(attrs: TUI_style.REVERSE | TUI_style.BOLD);
+    pub TUI_style.Style disabled_style = TUI_style.Style(attrs: TUI_style.DIM);
+    pub TUI_style.Style mark_style = TUI_style.Style(attrs: TUI_style.BOLD);
+}
+
+/// A row from titles alone: all enabled, none closable.
+pub static Tabs Tabs.of(List<str> titles) {
+    List<Tab> items = [];
+    for (str title in titles) {
+        items.push(Tab(title));
+    }
+    return Tabs(items);
+}
+
+pub int Tabs.count() {
+    return items.size();
+}
+
+/// The selected tab, if there is one.
+pub Option<Tab> Tabs.current() {
+    if (selected < 0 || selected >= items.size()) {
+        return Option<Tab>.None;
+    }
+    return Option<Tab>.Some(items[selected]);
+}
+
+// --- the selection ----------------------------------------------------------
+
+bool Tabs.can_select(int index) {
+    return index >= 0 && index < items.size() && !items[index].is_disabled;
+}
+
+/// Select tab `index`. False (and no change) if there is no such tab or it is
+/// disabled or already selected.
+pub bool Tabs.did_select(int index) {
+    if (!can_select(index) || index == selected) {
+        return false;
+    }
+    selected = index;
+    return true;
+}
+
+/// The next enabled tab to the right. False at the end: it does not wrap.
+pub bool Tabs.did_select_next() {
+    int index = selected + 1;
+    while (index < items.size()) {
+        if (can_select(index)) {
+            selected = index;
+            return true;
+        }
+        index = index + 1;
+    }
+    return false;
+}
+
+/// The next enabled tab to the left. False at the start.
+pub bool Tabs.did_select_previous() {
+    int index = selected - 1;
+    while (index >= 0) {
+        if (can_select(index)) {
+            selected = index;
+            return true;
+        }
+        index = index - 1;
+    }
+    return false;
+}
+
+/// The first enabled tab.
+pub bool Tabs.did_select_first() {
+    for (int index in 0 .. items.size()) {
+        if (can_select(index)) {
+            return did_select(index);
+        }
+    }
+    return false;
+}
+
+/// The last enabled tab.
+pub bool Tabs.did_select_last() {
+    int index = items.size() - 1;
+    while (index >= 0) {
+        if (can_select(index)) {
+            return did_select(index);
+        }
+        index = index - 1;
+    }
+    return false;
+}
+
+/// Append a tab. The selection stays where it is, unless nothing was
+/// selectable before and this one is.
+pub void Tabs.add(Tab tab) {
+    items.push(tab);
+    if (items.size() == 1 && tab.is_disabled) {
+        selected = 0;
+    }
+}
+
+/// Remove tab `index`; the selection follows (see the header).
+pub void Tabs.close(int index) {
+    if (index < 0 || index >= items.size()) {
+        return;
+    }
+    items.remove_at(index);
+    if (items.size() == 0) {
+        selected = 0;
+        offset = 0;
+        return;
+    }
+    if (index < selected) {
+        selected = selected - 1;
+    } else if (index == selected) {
+        int right = index;
+        while (right < items.size() && items[right].is_disabled) {
+            right = right + 1;
+        }
+        if (right < items.size()) {
+            selected = right;
+        } else {
+            int left = index - 1;
+            while (left > 0 && items[left].is_disabled) {
+                left = left - 1;
+            }
+            if (left < 0) {
+                left = 0;
+            }
+            selected = left;
+        }
+    }
+    if (offset >= items.size()) {
+        offset = items.size() - 1;
+    }
+    if (offset > selected) {
+        offset = selected;
+    }
+}
+
+// --- layout -----------------------------------------------------------------
+
+// A tab's natural width: padding, title, and the close box.
+int Tabs.natural_width(int index) {
+    int total = 2 + TUI_text.width(items[index].title);
+    if (items[index].is_closable) {
+        total = total + 2;
+    }
+    return total;
+}
+
+/// The tabs visible in a row `width` wide, from `offset`. Pure: it does not
+/// move the window (`render` does that, then calls this).
+pub List<Slot> Tabs.slots(int width) {
+    List<Slot> out = [];
+    int divider_width = TUI_text.width(divider);
+    int x = 0;
+    if (offset > 0) {
+        x = 1;
+    }
+    int index = offset;
+    while (index < items.size() && index >= 0) {
+        int gap = 0;
+        if (index > offset) {
+            gap = divider_width;
+        }
+        int reserve = 0;
+        if (index + 1 < items.size()) {
+            reserve = 1;
+        }
+        int natural = natural_width(index);
+        if (x + gap + natural + reserve <= width) {
+            out.push(Slot(index, x + gap, natural));
+            x = x + gap + natural;
+            index = index + 1;
+        } else {
+            if (index == offset) {
+                int room = width - x - reserve;
+                if (room >= 1) {
+                    out.push(Slot(index, x, room, is_cut: true));
+                }
+            }
+            break;
+        }
+    }
+    return out;
+}
+
+void Tabs.clamp_offset() {
+    if (offset > items.size() - 1) {
+        offset = items.size() - 1;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+}
+
+// Slide `offset` until the selected tab is among the visible ones.
+void Tabs.reveal_selected(int width) {
+    if (items.size() == 0) {
+        offset = 0;
+        return;
+    }
+    if (offset > items.size() - 1) {
+        offset = items.size() - 1;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+    if (selected < offset) {
+        offset = selected;
+    }
+    while (offset < selected) {
+        bool is_visible = false;
+        for (Slot slot in slots(width)) {
+            if (slot.index == selected && !slot.is_cut) {
+                is_visible = true;
+            }
+        }
+        if (is_visible) {
+            break;
+        }
+        offset = offset + 1;
+    }
+}
+
+/// What is under cell `x`, `y` for a row drawn in `area`.
+pub Hit Tabs.hit(TUI_geometry.Rect area, int x, int y) {
+    if (!area.has_point(x, y)) {
+        return Hit.Nothing;
+    }
+    int local = x - area.x;
+    if (offset > 0 && local == 0) {
+        return Hit.LeftMark;
+    }
+    List<Slot> shown = slots(area.width);
+    for (Slot slot in shown) {
+        if (local >= slot.x && local < slot.x + slot.width) {
+            if (items[slot.index].is_closable && !slot.is_cut && local == slot.x + slot.width - 2) {
+                return Hit.CloseBox(slot.index);
+            }
+            return Hit.Body(slot.index);
+        }
+    }
+    bool has_more = false;
+    if (shown.size() == 0) {
+        has_more = items.size() > offset;
+    } else {
+        has_more = shown[shown.size() - 1].index + 1 < items.size();
+    }
+    if (has_more && local == area.width - 1) {
+        return Hit.RightMark;
+    }
+    return Hit.Nothing;
+}
+
+// --- events -----------------------------------------------------------------
+
+TabOutcome Tabs.moved(bool did_move) {
+    if (did_move) {
+        return TabOutcome.Selected(selected);
+    }
+    return TabOutcome.Ignored;
+}
+
+/// Keys: Left/Right/Home/End select; Ctrl-PageUp/PageDown too; Alt-1..9
+/// select the nth tab; Ctrl-W asks to close the selected tab if it can be.
+pub TabOutcome Tabs.handle(term.Event event) {
+    match (event) {
+        case Key(term.Key key): {
+            return handle_key(key);
+        }
+        case Mouse(term.Mouse mouse): {
+            return TabOutcome.Ignored;
+        }
+        case Paste(str pasted): {
+            return TabOutcome.Ignored;
+        }
+        case Unknown(bytes raw): {
+            return TabOutcome.Ignored;
+        }
+    }
+}
+
+TabOutcome Tabs.handle_key(term.Key key) {
+    match (key.code) {
+        case Left: {
+            return moved(did_select_previous());
+        }
+        case Right: {
+            return moved(did_select_next());
+        }
+        case Home: {
+            return moved(did_select_first());
+        }
+        case End: {
+            return moved(did_select_last());
+        }
+        case PageUp: {
+            if (key.has(term.CTRL)) {
+                return moved(did_select_previous());
+            }
+            return TabOutcome.Ignored;
+        }
+        case PageDown: {
+            if (key.has(term.CTRL)) {
+                return moved(did_select_next());
+            }
+            return TabOutcome.Ignored;
+        }
+        case Char(int code): {
+            if (key.has(term.CTRL) && code == 'w') {
+                return request_close(selected);
+            }
+            if (key.has(term.ALT) && code >= '1' && code <= '9') {
+                return moved(did_select(code - '1'));
+            }
+            return TabOutcome.Ignored;
+        }
+        case Enter: {
+            return TabOutcome.Ignored;
+        }
+        case Tab: {
+            return TabOutcome.Ignored;
+        }
+        case BackTab: {
+            return TabOutcome.Ignored;
+        }
+        case Backspace: {
+            return TabOutcome.Ignored;
+        }
+        case Escape: {
+            return TabOutcome.Ignored;
+        }
+        case Up: {
+            return TabOutcome.Ignored;
+        }
+        case Down: {
+            return TabOutcome.Ignored;
+        }
+        case Insert: {
+            return TabOutcome.Ignored;
+        }
+        case Delete: {
+            return TabOutcome.Ignored;
+        }
+        case F(int number): {
+            return TabOutcome.Ignored;
+        }
+    }
+}
+
+TabOutcome Tabs.request_close(int index) {
+    if (index >= 0 && index < items.size() && items[index].is_closable) {
+        return TabOutcome.CloseRequested(index);
+    }
+    return TabOutcome.Ignored;
+}
+
+/// A gesture over the row drawn in `area`. See the header.
+pub TabOutcome Tabs.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
+    match (gesture.kind) {
+        case Press: {
+            if (!gesture.is_primary()) {
+                return TabOutcome.Ignored;
+            }
+            match (hit(area, gesture.x, gesture.y)) {
+                case Body(int index): {
+                    return moved(did_select(index));
+                }
+                case CloseBox(int index): {
+                    return TabOutcome.Ignored;
+                }
+                case LeftMark: {
+                    return slide(-1);
+                }
+                case RightMark: {
+                    return slide(1);
+                }
+                case Nothing: {
+                    return TabOutcome.Ignored;
+                }
+            }
+        }
+        case Click: {
+            match (hit(area, gesture.x, gesture.y)) {
+                case Body(int index): {
+                    if (gesture.button == 1) {
+                        return request_close(index);
+                    }
+                    return TabOutcome.Ignored;
+                }
+                case CloseBox(int index): {
+                    if (gesture.is_primary() || gesture.button == 1) {
+                        return request_close(index);
+                    }
+                    return TabOutcome.Ignored;
+                }
+                case LeftMark: {
+                    return TabOutcome.Ignored;
+                }
+                case RightMark: {
+                    return TabOutcome.Ignored;
+                }
+                case Nothing: {
+                    return TabOutcome.Ignored;
+                }
+            }
+        }
+        case ScrollUp: {
+            return wheel(area, gesture, false);
+        }
+        case ScrollLeft: {
+            return wheel(area, gesture, false);
+        }
+        case ScrollDown: {
+            return wheel(area, gesture, true);
+        }
+        case ScrollRight: {
+            return wheel(area, gesture, true);
+        }
+        case Drag: {
+            return TabOutcome.Ignored;
+        }
+        case Release: {
+            return TabOutcome.Ignored;
+        }
+        case Hover: {
+            return TabOutcome.Ignored;
+        }
+        case Leave: {
+            return TabOutcome.Ignored;
+        }
+    }
+}
+
+TabOutcome Tabs.wheel(TUI_geometry.Rect area, TUI_mouse.Gesture gesture, bool is_forward) {
+    if (!area.has_point(gesture.x, gesture.y)) {
+        return TabOutcome.Ignored;
+    }
+    if (is_forward) {
+        return moved(did_select_next());
+    }
+    return moved(did_select_previous());
+}
+
+// Slide the window by one tab (clicking an overflow mark).
+TabOutcome Tabs.slide(int delta) {
+    int target = offset + delta;
+    if (target < 0 || target >= items.size()) {
+        return TabOutcome.Ignored;
+    }
+    offset = target;
+    detached_for = selected;
+    return TabOutcome.Changed;
+}
+
+// --- drawing ----------------------------------------------------------------
+
+/// Draw the row in the top line of `area`.
+pub void Tabs.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    if (area.is_empty()) {
+        return;
+    }
+    TUI_geometry.Rect row = TUI_geometry.Rect(area.x, area.y, area.width, 1);
+    TUI_clip.paint(buffer, row, row, " ", style);
+    if (items.size() == 0) {
+        return;
+    }
+    if (detached_for == selected) {
+        clamp_offset();
+    } else {
+        reveal_selected(area.width);
+    }
+    List<Slot> shown = slots(area.width);
+    if (offset > 0) {
+        TUI_clip.put_str(buffer, row, area.x, area.y, LEFT_MARK, style.merged(mark_style));
+    }
+    int divider_width = TUI_text.width(divider);
+    for (int position in 0 .. shown.size()) {
+        Slot slot = shown[position];
+        Tab tab = items[slot.index];
+        TUI_style.Style tab_style = style;
+        if (tab.is_disabled) {
+            tab_style = style.merged(disabled_style);
+        }
+        if (slot.index == selected) {
+            tab_style = style.merged(selected_style);
+        }
+        int x = area.x + slot.x;
+        if (position > 0) {
+            TUI_clip.put_str(buffer, row, x - divider_width, area.y, divider, style.merged(disabled_style));
+        }
+        TUI_geometry.Rect cell = TUI_geometry.Rect(x, area.y, slot.width, 1);
+        TUI_clip.paint(buffer, row, cell, " ", tab_style);
+        if (slot.is_cut) {
+            TUI_clip.put_str(buffer, cell, x, area.y, TUI_text.truncate(tab.title, slot.width), tab_style);
+        } else {
+            TUI_clip.put_str(buffer, cell, x + 1, area.y, tab.title, tab_style);
+            if (tab.is_closable) {
+                TUI_clip.put_str(buffer, cell, x + slot.width - 2, area.y, CLOSE_BOX, tab_style);
+            }
+        }
+    }
+    bool has_more = shown.size() == 0 || shown[shown.size() - 1].index + 1 < items.size();
+    if (has_more) {
+        TUI_clip.put_str(buffer, row, area.x + area.width - 1, area.y, RIGHT_MARK, style.merged(mark_style));
+    }
+}
