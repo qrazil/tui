@@ -44,7 +44,7 @@
 // a single-byte ASCII symbol allocates nothing at all: those 95 strings are
 // module constants, and a module constant is immortal (reference §7.3).
 
-import unicode;
+import text.unicode;
 import TUI_geometry;
 import TUI_style;
 

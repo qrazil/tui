@@ -38,7 +38,7 @@
 // answer with `\n` gets its paragraph back with the same number of blank
 // lines in it.
 
-import unicode;
+import text.unicode;
 
 /// Where text sits in a space wider than it is.
 pub enum Align {
