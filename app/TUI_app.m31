@@ -180,6 +180,11 @@ pub type Loop {
     pub int animate_ms = 0;
     /// Where mouse reports are routed. Share it with the view.
     pub TUI_mouse.Router router = TUI_mouse.Router();
+    /// After an event, up to this many more that have ALREADY arrived are
+    /// handled before the frame is drawn, so a burst of typing, a macro's
+    /// replayed keys or a paste costs one frame, not one per event. 0 draws
+    /// after every event, as the loop did before.
+    pub int drain_events = 512;
 }
 
 /// The bytes written on entry: `enter`, then the modes asked for.
@@ -257,10 +262,12 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             int last_tick_ms = now_ms();
             while (is_running) {
                 bool should_redraw = false;
+                bool did_get_event = false;
                 match (reader.read(read_timeout_ms(tick_ms, animate_ms, now_ms() - last_tick_ms))) {
                     case Ok(term.Input inp): {
                         match (inp) {
                             case Got(term.Event event): {
+                                did_get_event = true;
                                 Action answer = dispatch(event, on_event, on_mouse);
                                 match (answer) {
                                     case Continue: {
@@ -282,6 +289,38 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     }
                     case Err(term.Error error): {
                         is_running = false;
+                    }
+                }
+                int drained = 0;
+                while (is_running && did_get_event && should_keep_draining(drained, drain_events)) {
+                    // What has already arrived, with a timeout of 0: no wait.
+                    match (reader.read(0)) {
+                        case Ok(term.Input more): {
+                            match (more) {
+                                case Got(term.Event event): {
+                                    drained = drained + 1;
+                                    match (dispatch(event, on_event, on_mouse)) {
+                                        case Continue: {
+                                        }
+                                        case Redraw: {
+                                            should_redraw = true;
+                                        }
+                                        case Quit: {
+                                            is_running = false;
+                                        }
+                                    }
+                                }
+                                case Timeout: {
+                                    drained = drain_events;
+                                }
+                                case End: {
+                                    is_running = false;
+                                }
+                            }
+                        }
+                        case Err(term.Error error): {
+                            is_running = false;
+                        }
                     }
                 }
                 if (is_running && animate_ms > 0) {
@@ -376,6 +415,12 @@ pub int read_timeout_ms(int tick_ms, int animate_ms, int since_tick_ms) {
         return 1;
     }
     return wait;
+}
+
+/// Whether the loop may take one more already-arrived event before drawing:
+/// fewer than `limit` so far, and a limit above 0.
+pub bool should_keep_draining(int drained, int limit) {
+    return limit > 0 && drained < limit;
 }
 
 /// An elapsed time made safe to hand on: a clock that went backwards is 0, and

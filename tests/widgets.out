@@ -1258,6 +1258,8 @@ ok   a timer shortens the wait
 ok   a long timer leaves the tick alone
 ok   a late tick is a poll of one
 ok   never under one
+ok   draining stops at the limit
+ok   a zero limit never drains
 ok   elapsed passes
 ok   backwards is zero
 ok   a long gap is cut
@@ -1322,4 +1324,4 @@ ok   no data still has a width
 ok   pinned ends win
 ok   reversed pins are repaired
 
--- 419 passed, 0 failed
+-- 421 passed, 0 failed

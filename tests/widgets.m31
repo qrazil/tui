@@ -1139,6 +1139,8 @@ void app_tests(Tally tally) {
     check_int(tally, "a long timer leaves the tick alone", TUI_app.read_timeout_ms(250, 1000, 0), 250);
     check_int(tally, "a late tick is a poll of one", TUI_app.read_timeout_ms(250, 80, 200), 1);
     check_int(tally, "never under one", TUI_app.read_timeout_ms(0, 0, 0), 1);
+    check(tally, "draining stops at the limit", TUI_app.should_keep_draining(511, 512).to_str() + TUI_app.should_keep_draining(512, 512).to_str(), "truefalse");
+    check(tally, "a zero limit never drains", TUI_app.should_keep_draining(0, 0).to_str(), "false");
     check_int(tally, "elapsed passes", TUI_app.clamp_elapsed(37), 37);
     check_int(tally, "backwards is zero", TUI_app.clamp_elapsed(-500), 0);
     check_int(tally, "a long gap is cut", TUI_app.clamp_elapsed(86400000), TUI_app.MAX_ELAPSED_MS);
