@@ -25,12 +25,12 @@
 // the hunk when it is a `Header`, or exactly that one line when it is a
 // `Body`; deciding that is the caller's, not this widget's.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_mouse;
-import TUI_scroll;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_mouse;
+import core.TUI_scroll;
+import core.TUI_style;
+import core.TUI_text;
 
 /// What one line of a hunk's body is.
 pub enum Kind {

@@ -13,13 +13,13 @@
 // run interactively through `TUI_app.Loop`.
 
 import io;
-import TUI_buffer;
-import TUI_diff;
-import TUI_geometry;
-import TUI_list_table;
-import TUI_style;
-import TUI_text;
-import TUI_widget;
+import core.TUI_buffer;
+import app.TUI_diff;
+import core.TUI_geometry;
+import widgets.TUI_list_table;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
 
 const int WIDTH = 78;
 const int HEIGHT = 22;

@@ -1,3 +1,36 @@
+# tui 0.5.0: the modules moved into folders
+
+Version 0.5.0, from master 8edfea1 (v0.4.0). **No module, type, function or
+field changed its name.** Only the file locations changed, so the only edit a
+program that depends on tui has to make is the import path. Module names keep
+the `TUI_` prefix and are still the name a program uses in code
+(`TUI_buffer.Buffer`); there is still no namespacing.
+
+| folder | modules |
+|---|---|
+| `core/` | `TUI_geometry`, `TUI_style`, `TUI_buffer`, `TUI_text`, `TUI_clip`, `TUI_widget`, `TUI_mouse`, `TUI_scroll`, `TUI_scale`, `TUI_eighths`, `TUI_word` |
+| `widgets/` | `TUI_barchart`, `TUI_chart`, `TUI_diff_view`, `TUI_footer`, `TUI_gauge`, `TUI_input`, `TUI_jump_list`, `TUI_list_table`, `TUI_menu`, `TUI_outline`, `TUI_sparkline`, `TUI_spinner`, `TUI_tabs`, `TUI_textarea` |
+| `app/` | `TUI_app`, `TUI_diff` |
+
+In a program that lists `tui` in its `deps`, replace `import tui.TUI_x;` with
+`import tui.<folder>.TUI_x;`, for example:
+
+| old | new |
+|---|---|
+| `import tui.TUI_buffer;` | `import tui.core.TUI_buffer;` |
+| `import tui.TUI_outline;` | `import tui.widgets.TUI_outline;` |
+| `import tui.TUI_app;` | `import tui.app.TUI_app;` |
+| `import tui.TUI_diff;` | `import tui.app.TUI_diff;` |
+
+Inside the repository `core/` imports nothing from `widgets/` or `app/`, and
+`widgets/` imports nothing from `app/`. Also changed: `scripts/check.sh` is now
+`tests/test.sh` (the single entry point, same checks), the release tarball
+carries `core/`, `widgets/`, `app/` and `RENAMES.md`, and it still needs
+m31 v0.4.0. A dependent that pins tui by sha must re-pin and rewrite its imports
+in the same commit. Tests and their expected output are byte-for-byte what they were.
+
+---
+
 # tui -> m31 0.4.0: what changes for a downstream program
 
 Version 0.4.0, from master f19daf8 (v0.3.0). **No public name of tui changed in

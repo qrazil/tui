@@ -81,13 +81,13 @@
 // half a glyph.
 
 import term;
-import TUI_buffer;
-import TUI_clip;
-import TUI_geometry;
-import TUI_mouse;
-import TUI_style;
-import TUI_text;
-import TUI_word;
+import core.TUI_buffer;
+import core.TUI_clip;
+import core.TUI_geometry;
+import core.TUI_mouse;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_word;
 
 /// What became of one event. See the header: `Ignored` means no state changed.
 pub enum Outcome {

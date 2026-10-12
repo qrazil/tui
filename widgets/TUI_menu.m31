@@ -23,11 +23,11 @@
 // each switch, a blank line, and the rendered command -- but the box, the
 // title, the centring and the border are one piece of code, not two.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_style;
-import TUI_text;
-import TUI_widget;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
 
 /// One `(key, label)` pair -- one row of a `WhichKey` overlay.
 pub type Item {

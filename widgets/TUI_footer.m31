@@ -17,10 +17,10 @@
 // overlay, or anything else this library or a program built on it adds
 // later.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_style;
-import TUI_widget;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_widget;
 
 /// Cut `area` into what is left for the rest of the screen and a fixed band
 /// `height` rows tall at the bottom -- the footer's own, reserved regardless

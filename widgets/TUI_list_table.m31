@@ -14,10 +14,10 @@
 // The type is `ListView` rather than `List` because `List` is a predeclared
 // type name and nothing may shadow one (reference §4.1).
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
 
 /// A vertical list of single-line items, with one of them selected.
 ///

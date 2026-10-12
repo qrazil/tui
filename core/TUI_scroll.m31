@@ -21,9 +21,9 @@
 // method already work, and changing a widget nothing asked to change is not
 // this library's business.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_style;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
 
 /// A scroll offset, and the arithmetic that keeps it inside its content.
 /// `total` and `visible` are not fields -- they are whatever the content and

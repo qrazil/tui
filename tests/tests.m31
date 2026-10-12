@@ -1,36 +1,36 @@
 // The test corpus for the TUI library.
 //
-//   bash apps/tui/check.sh
+//   bash tests/test.sh
 //
 // Everything here runs against an in-memory `Buffer` and a `bytes`, so
 // nothing needs a terminal. Two kinds of expectation:
 //
 //   - a `check` line, which prints `ok` or `FAIL` and is counted;
 //   - the rendered frames and byte strings printed below them, which are
-//     compared against `apps/tui/tests.out` by `check.sh`. A picture of a
+//     compared against `tests/tests.out` by `tests/test.sh`. A picture of a
 //     grid is much easier to read than the twenty assertions it would take
 //     to say the same thing, and `Buffer.frame` draws the picture.
 //
-// A failure shows up twice, as a `FAIL` line and as a diff, and `check.sh`
+// A failure shows up twice, as a `FAIL` line and as a diff, and `tests/test.sh`
 // greps for the first and diffs the second.
 
 import os;
 import random;
 import term;
-import TUI_app;
-import TUI_buffer;
-import TUI_diff;
-import TUI_diff_view;
-import TUI_footer;
-import TUI_geometry;
-import TUI_jump_list;
-import TUI_list_table;
-import TUI_menu;
-import TUI_outline;
-import TUI_scroll;
-import TUI_style;
-import TUI_text;
-import TUI_widget;
+import app.TUI_app;
+import core.TUI_buffer;
+import app.TUI_diff;
+import widgets.TUI_diff_view;
+import widgets.TUI_footer;
+import core.TUI_geometry;
+import widgets.TUI_jump_list;
+import widgets.TUI_list_table;
+import widgets.TUI_menu;
+import widgets.TUI_outline;
+import core.TUI_scroll;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
 
 /// The score. There is no mutable module state (reference §2), so the count
 /// is an object every check is handed.

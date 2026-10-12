@@ -16,25 +16,25 @@
 // the chart to read a value (the terminal must report motion; most do).
 //
 // Like `browse.m31` this needs a terminal and a person, so it is not in the
-// test corpus; check.sh checks that it compiles clean. What it drives is
+// test corpus; tests/test.sh checks that it compiles clean. What it drives is
 // tested in tests/widgets.m31 against synthetic events, buffers and clocks.
 
 import io;
 import term;
-import TUI_app;
-import TUI_buffer;
-import TUI_chart;
-import TUI_diff_view;
-import TUI_gauge;
-import TUI_geometry;
-import TUI_input;
-import TUI_mouse;
-import TUI_outline;
-import TUI_sparkline;
-import TUI_spinner;
-import TUI_style;
-import TUI_tabs;
-import TUI_widget;
+import app.TUI_app;
+import core.TUI_buffer;
+import widgets.TUI_chart;
+import widgets.TUI_diff_view;
+import widgets.TUI_gauge;
+import core.TUI_geometry;
+import widgets.TUI_input;
+import core.TUI_mouse;
+import widgets.TUI_outline;
+import widgets.TUI_sparkline;
+import widgets.TUI_spinner;
+import core.TUI_style;
+import widgets.TUI_tabs;
+import core.TUI_widget;
 
 /// Everything on screen, and what the last event did. One object, reached by
 /// the lambdas below that close over it: m31 has no mutable module state.

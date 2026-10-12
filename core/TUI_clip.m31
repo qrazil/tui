@@ -16,10 +16,10 @@
 // it, so a wide character straddling the edge becomes a blank column rather
 // than half a glyph, the rule `Buffer.set_str` follows at the buffer's edge.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
 
 /// Draw `text` at `x`, `y`, only where it falls inside `clip`. Answers the
 /// columns drawn, which excludes anything cut off on the left.

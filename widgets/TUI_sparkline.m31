@@ -32,10 +32,10 @@
 // columns leave the right of the rectangle blank.
 
 import math;
-import TUI_buffer;
-import TUI_eighths;
-import TUI_geometry;
-import TUI_style;
+import core.TUI_buffer;
+import core.TUI_eighths;
+import core.TUI_geometry;
+import core.TUI_style;
 
 /// A series drawn as eighth-block columns.
 pub type Sparkline {

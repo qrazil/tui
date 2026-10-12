@@ -1,6 +1,6 @@
 // How long a frame takes, and how many bytes it is.
 //
-//   bash apps/tui/check.sh          (runs this last)
+//   bash tests/test.sh          (runs this last)
 //
 // The budget is one frame in 16.6 ms, which is sixty frames a second. A
 // terminal program redraws on a keystroke rather than on a clock, so the
@@ -18,15 +18,15 @@
 // fast measures the clock.
 
 import date;
-import TUI_buffer;
-import TUI_diff;
-import TUI_diff_view;
-import TUI_geometry;
-import TUI_list_table;
-import TUI_outline;
-import TUI_style;
-import TUI_text;
-import TUI_widget;
+import core.TUI_buffer;
+import app.TUI_diff;
+import widgets.TUI_diff_view;
+import core.TUI_geometry;
+import widgets.TUI_list_table;
+import widgets.TUI_outline;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
 
 const int SCREEN_WIDTH = 200;
 const int SCREEN_HEIGHT = 50;

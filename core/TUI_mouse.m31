@@ -75,7 +75,7 @@
 // still scrolls the list it started on rather than whatever it crosses.
 
 import term;
-import TUI_geometry;
+import core.TUI_geometry;
 
 /// Hover reporting: motion with no button held (xterm's any-event tracking).
 pub const str HOVER_ON = "\x1b[?1003h";

@@ -25,12 +25,12 @@
 // is what keeps the two lists in step with each other regardless of what is
 // currently folded.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_outline;
-import TUI_scroll;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import widgets.TUI_outline;
+import core.TUI_scroll;
+import core.TUI_style;
+import core.TUI_text;
 
 /// One row of the jump list: an outline node's `id` and `label`, and how deep
 /// it was nested, copied out of an `Outline` by `sync_from`.

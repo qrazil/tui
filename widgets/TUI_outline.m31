@@ -45,12 +45,12 @@
 // commit hash, a file path, a hunk index, blank for a row nothing else needs
 // to address by name.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_mouse;
-import TUI_scroll;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_mouse;
+import core.TUI_scroll;
+import core.TUI_style;
+import core.TUI_text;
 
 /// One entry in the outline, and the subtree rooted at it.
 pub type Node {

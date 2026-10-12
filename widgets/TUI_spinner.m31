@@ -47,11 +47,11 @@
 // truncated to the width. A zero-sized area draws nothing. A 1-wide area draws
 // the glyph alone.
 
-import TUI_buffer;
-import TUI_clip;
-import TUI_geometry;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_clip;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
 
 pub enum Set {
     Braille;

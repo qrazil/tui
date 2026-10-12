@@ -45,8 +45,8 @@
 // module constants, and a module constant is immortal (reference §7.3).
 
 import text.unicode;
-import TUI_geometry;
-import TUI_style;
+import core.TUI_geometry;
+import core.TUI_style;
 
 /// One cell of the grid.
 ///

@@ -35,11 +35,11 @@
 // more full, since one cell cannot be both.
 
 import math;
-import TUI_buffer;
-import TUI_eighths;
-import TUI_geometry;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_eighths;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
 
 /// A fraction shown as a bar.
 pub type Gauge {

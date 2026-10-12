@@ -42,13 +42,13 @@
 // small for a plot (no rows left after the labels, or no columns) draws
 // nothing.
 
-import TUI_buffer;
-import TUI_clip;
-import TUI_eighths;
-import TUI_geometry;
-import TUI_scale;
-import TUI_style;
-import TUI_text;
+import core.TUI_buffer;
+import core.TUI_clip;
+import core.TUI_eighths;
+import core.TUI_geometry;
+import core.TUI_scale;
+import core.TUI_style;
+import core.TUI_text;
 
 /// One bar.
 pub type Bar {

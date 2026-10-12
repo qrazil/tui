@@ -43,9 +43,9 @@
 // pen can be put back to plain first, which is exactly when the remaining
 // cells are plain spaces.
 
-import TUI_buffer;
-import TUI_geometry;
-import TUI_style;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
 
 /// How many plain trailing blanks make `\x1b[K` worth its bytes: the escape
 /// is three bytes and putting the pen back may cost four more.

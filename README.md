@@ -23,7 +23,7 @@ it, `handle_mouse` on every interactive widget, and an opt-in timer, mouse and
 paste mode on `TUI_app.Loop`. See "Left deliberately undone" below for what
 remains.
 
-    M31_ROOT=/path/to/m31 bash scripts/check.sh                              # tests, then the benchmark
+    M31_ROOT=/path/to/m31 bash tests/test.sh                              # tests, then the benchmark
     M31_ROOT=/path/to/m31 bash scripts/build.sh examples/demo.m31 -o /tmp/d    # a static screen; run /tmp/d
     M31_ROOT=/path/to/m31 bash scripts/build.sh examples/browse.m31 -o /tmp/b  # an interactive one; run /tmp/b
     M31_ROOT=/path/to/m31 bash scripts/build.sh examples/widgets.m31 -o /tmp/w # every stage 4 widget, mouse and timer
@@ -32,26 +32,28 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.4.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
-a program moving from m31 0.3.x has to change.
+version (0.5.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
+a program moving from 0.4.0 or from m31 0.3.x has to change.
 
     name myapp
     version 0.1.0
     tui https://github.com/qrazil/tui <ref>
 
-    import tui.TUI_app;
+    import tui.app.TUI_app;
 
-(`tui path ../tui` uses a checkout in place.) The modules stay at the root of
-this repository so those paths are `tui.<module>`; this repository's own
-`deps` file is what marks the root, so `examples/` and `tests/` import the
-modules by their bare names. What the language used to force instead is
-written up in `docs/FRICTION.md` §1.
+(`tui path ../tui` uses a checkout in place.) The modules sit in three
+folders, `core/`, `widgets/` and `app/`, so a program's import is
+`tui.<folder>.<module>`; the module is still called by its own name
+(`TUI_app.Loop`). This repository's own `deps` file is what marks the root, so
+the library's modules, `examples/` and `tests/` import each other by
+`<folder>.<module>` (`import core.TUI_buffer;`). What the language used to
+force instead is written up in `docs/FRICTION.md` §1.
 
 ---
 
 ## The modules
 
-Twenty-seven, in dependency order. They are all prefixed `tui` because module
+Twenty-seven, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
 `docs/FRICTION.md` §1. `TUI_app` is the one exception worth naming: it is the only
@@ -59,35 +61,35 @@ module that imports `lib/term.m31` and touches raw mode, a real read and a
 real write; every other module below it is still pure computation against a
 buffer.
 
-| module | what is in it |
-|---|---|
-| `TUI_style` | `Colour`, `Style`, `Depth`, the attribute bits, the SGR escapes, and `Theme` |
-| `TUI_geometry`  | `Rect`, `Constraint`, `Layout`, and the constraint solver |
-| `TUI_text`  | `Align`, `wrap`, `truncate`, `pad`, `fit` — all in terminal columns |
-| `TUI_buffer`   | `Cell` and `Buffer` |
-| `TUI_diff`  | `full`, `diff`, and the small control sequences |
-| `TUI_widget`| the `Widget` interface, `Block`, `Paragraph`, `Span` and `Line` |
-| `TUI_list_table` | `ListView` and `Table` |
-| `TUI_scroll`| `Viewport` (a scroll offset and its clamping/reveal math) and `Scrollbar` |
-| `TUI_outline`| `Node`, `Outline` — the collapsible primary-view document |
-| `TUI_jump_list`  | `Entry`, `JumpList` — a flat index synced two ways to an `Outline` |
-| `TUI_menu`  | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
-| `TUI_diff_view`| `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line |
-| `TUI_footer`| `split`, `Footer` — a screen band reserved regardless of the main view |
-| `TUI_eighths` | eighth-block bar maths: `of_ratio`, `scaled`, `vertical`, `horizontal`, `bounds_of` |
-| `TUI_scale` | `nice_ticks` and `Scale`: one mapping that places both tick marks and their labels |
-| `TUI_clip` | `put_str` and `paint` into a clip rectangle, so a widget cannot draw outside its area |
-| `TUI_word` | word-boundary motion over grapheme clusters, shared by the two text widgets |
-| `TUI_gauge` | `Gauge` — a ratio as a filled bar with a label, in eighths of a cell |
-| `TUI_sparkline` | `Sparkline` — a series as a row of vertical eighth-blocks |
-| `TUI_barchart` | `Bar`, `BarGroup`, `BarChart` — vertical or horizontal, grouped, with value labels |
-| `TUI_chart` | `Dataset`, `Axis`, `Chart` — line, scatter and bar over braille, dot or block markers, with a legend and a hover readout |
-| `TUI_spinner` | `Spinner` and its frame sets, advanced by the loop's timer |
-| `TUI_input` | `TextInput` — a one-line editor: selection, kill ring, undo/redo, paste, validation, scrolling |
-| `TUI_textarea` | `TextArea` — a multi-line editor: selection, wrapping, line numbers, undo/redo, wheel scroll |
-| `TUI_tabs` | `Tab`, `Tabs` — a tab bar with overflow scrolling, selection and close requests |
-| `TUI_mouse` | `Gesture`, `Pointer`, `Region`, `Router` — mouse reports to clicks, drags and hovers, routed to widgets |
-| `TUI_app`   | `Action`, `Handler`, `Ticker`, `MouseHandler`, `Loop` — the application loop, over `lib/term.m31` |
+| module | folder | what is in it |
+|---|---|---|
+| `TUI_style` | `core/` | `Colour`, `Style`, `Depth`, the attribute bits, the SGR escapes, and `Theme` |
+| `TUI_geometry` | `core/` | `Rect`, `Constraint`, `Layout`, and the constraint solver |
+| `TUI_text` | `core/` | `Align`, `wrap`, `truncate`, `pad`, `fit` — all in terminal columns |
+| `TUI_buffer` | `core/` | `Cell` and `Buffer` |
+| `TUI_widget` | `core/` | the `Widget` interface, `Block`, `Paragraph`, `Span` and `Line` |
+| `TUI_scroll` | `core/` | `Viewport` (a scroll offset and its clamping/reveal math) and `Scrollbar` |
+| `TUI_eighths` | `core/` | eighth-block bar maths: `of_ratio`, `scaled`, `vertical`, `horizontal`, `bounds_of` |
+| `TUI_scale` | `core/` | `nice_ticks` and `Scale`: one mapping that places both tick marks and their labels |
+| `TUI_clip` | `core/` | `put_str` and `paint` into a clip rectangle, so a widget cannot draw outside its area |
+| `TUI_word` | `core/` | word-boundary motion over grapheme clusters, shared by the two text widgets |
+| `TUI_mouse` | `core/` | `Gesture`, `Pointer`, `Region`, `Router` — mouse reports to clicks, drags and hovers, routed to widgets |
+| `TUI_list_table` | `widgets/` | `ListView` and `Table` |
+| `TUI_outline` | `widgets/` | `Node`, `Outline` — the collapsible primary-view document |
+| `TUI_jump_list` | `widgets/` | `Entry`, `JumpList` — a flat index synced two ways to an `Outline` |
+| `TUI_menu` | `widgets/` | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
+| `TUI_diff_view` | `widgets/` | `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line |
+| `TUI_footer` | `widgets/` | `split`, `Footer` — a screen band reserved regardless of the main view |
+| `TUI_gauge` | `widgets/` | `Gauge` — a ratio as a filled bar with a label, in eighths of a cell |
+| `TUI_sparkline` | `widgets/` | `Sparkline` — a series as a row of vertical eighth-blocks |
+| `TUI_barchart` | `widgets/` | `Bar`, `BarGroup`, `BarChart` — vertical or horizontal, grouped, with value labels |
+| `TUI_chart` | `widgets/` | `Dataset`, `Axis`, `Chart` — line, scatter and bar over braille, dot or block markers, with a legend and a hover readout |
+| `TUI_spinner` | `widgets/` | `Spinner` and its frame sets, advanced by the loop's timer |
+| `TUI_input` | `widgets/` | `TextInput` — a one-line editor: selection, kill ring, undo/redo, paste, validation, scrolling |
+| `TUI_textarea` | `widgets/` | `TextArea` — a multi-line editor: selection, wrapping, line numbers, undo/redo, wheel scroll |
+| `TUI_tabs` | `widgets/` | `Tab`, `Tabs` — a tab bar with overflow scrolling, selection and close requests |
+| `TUI_diff` | `app/` | `full`, `diff`, and the small control sequences |
+| `TUI_app` | `app/` | `Action`, `Handler`, `Ticker`, `MouseHandler`, `Loop` — the application loop, over `lib/term.m31` |
 
 Each file's header comment is its reference documentation.
 
@@ -96,13 +98,13 @@ Each file's header comment is its reference documentation.
 ## The shape of a program
 
 ```c
-import TUI_buffer;
-import TUI_diff;
-import TUI_geometry;
-import TUI_list_table;
-import TUI_style;
-import TUI_text;
-import TUI_widget;
+import tui.app.TUI_diff;
+import tui.core.TUI_buffer;
+import tui.core.TUI_geometry;
+import tui.core.TUI_style;
+import tui.core.TUI_text;
+import tui.core.TUI_widget;
+import tui.widgets.TUI_list_table;
 
 TUI_buffer.Buffer screen = TUI_buffer.Buffer.sized(80, 24);
 
@@ -333,7 +335,7 @@ A 200×50 frame — 10 000 cells, a full-screen terminal — built with
 
 The 60-frames-a-second budget is 16.67 ms, so a complete frame is about
 **8× inside it**, and a frame in which nothing much moved is 21 bytes on the
-wire. Run `M31_ROOT=/path/to/m31 bash scripts/check.sh` for the numbers on your own
+wire. Run `M31_ROOT=/path/to/m31 bash tests/test.sh` for the numbers on your own
 machine.
 
 ---
@@ -343,7 +345,7 @@ machine.
 There are two test programs, `tests/tests.m31` (the stage 1 to 3 library:
 175 `ok` lines plus rendered frames) and `tests/widgets.m31` (stage 4: 419
 assertions plus rendered frames, golden renders of every new widget).
-`check.sh` runs each, compares it against its `.out` file (`tests/tests.out`,
+`tests/test.sh` runs each, compares it against its `.out` file (`tests/tests.out`,
 `tests/widgets.out`; `--bless` rewrites them), checks for a `FAIL` line, checks
 `__rc_live=0`, and checks that gcc and clang at `-O0` and `-O2` all agree.
 Every widget and primitive added for stage 2 and stage 3 is in the first,
@@ -410,7 +412,7 @@ Stage 4 built the whole of stage 2's original wishlist (`Gauge`, `Sparkline`,
     documented in `TUI_textarea.m31`'s header for that purpose.
   - **A test of the real terminal path.** The loop's pure pieces are tested
     and every example was smoke-tested in a pty by hand, but there is no pty
-    harness in `check.sh`, so mouse mode on a real terminal is not a CI
+    harness in `tests/test.sh`, so mouse mode on a real terminal is not a CI
     assertion, and CI runs only what the macOS and Linux bash and C
     compilers can run with no terminal.
   - **Chart extras.** No log axes, no secondary axis, no area fill, no
@@ -432,3 +434,34 @@ because only the program knows whether a tab has unsaved state.
 `lib/term.m31` itself is not on this list: it already existed, complete and
 tested, before this work started — see the module table above, and do not
 believe an older copy of this README that says otherwise.
+
+---
+
+## Layout
+
+    deps                 project file: name, version, no dependencies
+    core/                the buffer, geometry, text, style, clip, scale, mouse and widget primitives
+    widgets/             the fourteen ready-made widgets built on core
+    app/                 the diffing renderer (TUI_diff) and the application loop (TUI_app)
+    examples/            demo, browse, widgets, bench: programs, built by scripts/build.sh
+    tests/               test.sh (the one entry point), tests.m31, widgets.m31 and their .out files
+    scripts/             build.sh
+    docs/                FRICTION.md, the notes from building this on m31
+
+Folders are for finding files. Module names stay globally unique and keep the
+`TUI_` prefix; `core/` never imports `widgets/` or `app/`, and `widgets/` never
+imports `app/`.
+
+## Build, test, release
+
+Build and run a program: `M31_ROOT=/path/to/m31 bash scripts/build.sh examples/demo.m31 -o /tmp/d`.
+
+Test: `M31_ROOT=/path/to/m31 LANGC=/path/to/m31c bash tests/test.sh` checks
+formatting, compiles every test and example under gcc and clang at `-O0` and
+`-O2`, compares each test's output to its `.out` file, checks `__rc_live=0`,
+then runs the benchmark. CI runs it on Linux x86-64, Linux aarch64 and macOS
+arm64 against the m31 release named by `M31_REF` in `.github/workflows/test.yml`.
+
+Release: pushing a `v*` tag runs the same tests as a precondition and publishes
+`tui-source.tar.gz` (the three folders, `deps`, README, `RENAMES.md`, scripts
+and docs).

@@ -83,14 +83,14 @@
 // until the next key.
 
 import term;
-import TUI_buffer;
-import TUI_clip;
-import TUI_geometry;
-import TUI_input;
-import TUI_mouse;
-import TUI_style;
-import TUI_text;
-import TUI_word;
+import core.TUI_buffer;
+import core.TUI_clip;
+import core.TUI_geometry;
+import widgets.TUI_input;
+import core.TUI_mouse;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_word;
 
 /// A place in the text. See the header.
 pub type Position {

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The TUI library's gate.
 #
-#   M31_ROOT=/path/to/m31 bash scripts/check.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash scripts/check.sh --bless    rewrite tests/tests.out and tests/widgets.out from what the tests print
+#   M31_ROOT=/path/to/m31 bash tests/test.sh            tests, then the benchmark
+#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/tests.out and tests/widgets.out from what the tests print
 #
 # Four things are checked, and the rule is the repository's own: grep for
 # FAILED, never for ok.
