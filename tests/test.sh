@@ -2,13 +2,13 @@
 # The TUI library's gate.
 #
 #   M31_ROOT=/path/to/m31 bash tests/test.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/tests.out and tests/widgets.out from what the tests print
+#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax}.out from what the tests print
 #
 # Four things are checked, and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
 #   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
-#   2. tests/{tests,widgets}.m31 and examples/{bench,demo,browse,widgets}.m31 all
+#   2. tests/{tests,widgets,syntax}.m31 and examples/{bench,demo,browse,widgets}.m31 all
 #      compile under gcc and clang, at -O0 and -O2, with no warning from the emitted C
 #   3. each test's output matches its tests/<name>.out, and contains no `FAIL` line
 #   4. the refcount invariant holds: `__rc_live=0` at exit
@@ -71,7 +71,7 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
     # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
     case "$src" in */examples/widgets.*) base=example_widgets;; esac
@@ -101,14 +101,15 @@ done
 
 # 3. and 4. the corpora, and the refcount invariant --------------------------
 #
-# Two test programs, each with its own expected output: tests/tests.m31 (the
-# library as it was) and tests/widgets.m31 (v0.3.0: the input, text, tab,
-# chart, gauge, spinner and mouse widgets, with golden renders).
+# Three test programs, each with its own expected output: tests/tests.m31 (the
+# library as it was), tests/widgets.m31 (v0.3.0: the input, text, tab,
+# chart, gauge, spinner and mouse widgets, with golden renders) and
+# tests/syntax.m31 (TUI_syntax and the highlighted DiffView).
 #
 # Every build must agree with every other, which is run.sh's layers 1 and 2
 # applied to one program: a disagreement between gcc and clang, or between
 # -O0 and -O2, means the emitted C leans on something C leaves open.
-for corpus in tests widgets; do
+for corpus in tests widgets syntax; do
     ref=""; ref_tag=""
     for entry in "${CCS[@]}"; do
         cc=${entry%%:*}; opt=${entry##*:}

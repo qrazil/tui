@@ -14,6 +14,7 @@
 //   view.count()        -> int           how many rows, without building them
 //   view.move(delta), view.render(buf, area)
 //   view.handle_mouse(gesture, area)   press puts the cursor on a row, wheel moves it
+//   view.language = "rust"             syntax-colour the code of the lines (see below)
 //
 // --- what a `Row` addresses ---------------------------------------------------
 //
@@ -30,6 +31,7 @@ import core.TUI_geometry;
 import core.TUI_mouse;
 import core.TUI_scroll;
 import core.TUI_style;
+import core.TUI_syntax;
 import core.TUI_text;
 
 /// What one line of a hunk's body is.
@@ -94,6 +96,18 @@ pub type DiffView {
     pub TUI_style.Style remove_style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(1));
     pub TUI_style.Style context_style = TUI_style.Style();
     pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
+    /// A `TUI_syntax` language name ("" for none, the default). When set, the
+    /// code of each line is coloured by token; the marker column and the
+    /// plain text of an added or removed line keep `add_style` / `remove_style`.
+    /// Each hunk is classified on its own, from a clean state, along its old
+    /// side and its new side separately, and only as far as it is drawn.
+    pub str language = "";
+    /// Whether the terminal background is dark (see `TUI_syntax.is_dark`).
+    pub bool is_dark = true;
+    /// Per-hunk token streams, built on first draw and kept: scrolling
+    /// redraws without classifying anything again.
+    pub List<HunkSyntax> syntax = [];
+    pub str syntax_language = "";
 }
 
 /// The flattened rows: every hunk's header, followed by its lines, in order.
@@ -171,6 +185,61 @@ pub void DiffView.move(int delta) {
         target = row_count - 1;
     }
     cursor = target;
+}
+
+// The token streams of hunk `hunk_index`, built the first time it is asked
+// for. A changed `language` (or a different hunk list) starts over.
+HunkSyntax DiffView.syntax_of(int hunk_index) {
+    if (syntax_language != language || syntax.size() != hunks.size()) {
+        syntax = [];
+        syntax_language = language;
+        for (int index in 0 .. hunks.size()) {
+            syntax.push(HunkSyntax(TUI_syntax.Highlighter(""), TUI_syntax.Highlighter("")));
+        }
+    }
+    HunkSyntax built = syntax[hunk_index];
+    if (built.old_at.size() == hunks[hunk_index].lines.size()) {
+        return built;
+    }
+    HunkSyntax fresh = HunkSyntax(TUI_syntax.Highlighter(language), TUI_syntax.Highlighter(language));
+    for (Line line in hunks[hunk_index].lines) {
+        fresh.old_at.push(fresh.old_side.lines.size());
+        fresh.new_at.push(fresh.new_side.lines.size());
+        match (line.kind) {
+            case Context: {
+                fresh.old_side.add(line.text);
+                fresh.new_side.add(line.text);
+            }
+            case Add: {
+                fresh.new_side.add(line.text);
+            }
+            case Remove: {
+                fresh.old_side.add(line.text);
+            }
+        }
+    }
+    syntax[hunk_index] = fresh;
+    return fresh;
+}
+
+// The class of every byte of one body line, or none without a language.
+List<int> DiffView.classes_of(int hunk_index, int line_index) {
+    if (language == "") {
+        return [];
+    }
+    HunkSyntax built = syntax_of(hunk_index);
+    Line line = hunks[hunk_index].lines[line_index];
+    match (line.kind) {
+        case Remove: {
+            return built.old_side.classes(built.old_at[line_index]);
+        }
+        case Context: {
+            return built.new_side.classes(built.new_at[line_index]);
+        }
+        case Add: {
+            return built.new_side.classes(built.new_at[line_index]);
+        }
+    }
 }
 
 TUI_style.Style DiffView.line_style(Line line) {
@@ -277,21 +346,30 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
             return;
         }
         int y = area.y + screen_row;
-        str text = "";
         TUI_style.Style row_style = context_style;
         if (line_index < 0) {
-            text = hunks[hunk_index].header;
             row_style = header_style;
+            if (row_index == cursor) {
+                row_style = row_style.merged(highlight_style);
+                buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
+            }
+            buffer.set_str(area.x, y, TUI_text.truncate(hunks[hunk_index].header, area.width), row_style, max: area.width);
         } else {
             Line line = hunks[hunk_index].lines[line_index];
-            text = marker(line) + line.text;
             row_style = line_style(line);
+            TUI_style.Style over = TUI_style.Style();
+            if (row_index == cursor) {
+                over = highlight_style;
+                row_style = row_style.merged(highlight_style);
+                buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
+            }
+            if (language == "") {
+                buffer.set_str(area.x, y, TUI_text.truncate(marker(line) + line.text, area.width), row_style, max: area.width);
+            } else {
+                buffer.set_str(area.x, y, marker(line), row_style, max: area.width);
+                TUI_syntax.draw(buffer, area.x + 1, y, area.width - 1, line.text, classes_of(hunk_index, line_index), line_style(line), is_dark, over: over);
+            }
         }
-        if (row_index == cursor) {
-            row_style = row_style.merged(highlight_style);
-            buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
-        }
-        buffer.set_str(area.x, y, TUI_text.truncate(text, area.width), row_style, max: area.width);
         if (line_index + 1 < hunks[hunk_index].lines.size()) {
             line_index = line_index + 1;
         } else {
@@ -300,6 +378,16 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
         }
         screen_row = screen_row + 1;
     }
+}
+
+/// The two token streams of one hunk: the old side (context and removed
+/// lines) and the new side (context and added lines), each classified lazily
+/// by a `Highlighter`, and where each line sits in them.
+pub type HunkSyntax {
+    pub TUI_syntax.Highlighter old_side;
+    pub TUI_syntax.Highlighter new_side;
+    pub List<int> old_at = [];
+    pub List<int> new_at = [];
 }
 
 /// How many rows a wheel notch moves the cursor.

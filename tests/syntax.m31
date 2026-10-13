@@ -1,0 +1,261 @@
+// The test corpus for TUI_syntax: the language of a file, the class of every
+// byte of a line with the state carried between lines, the styles and the
+// spans, the cached `Highlighter`, drawing into a buffer, and a highlighted
+// `DiffView`. Everything runs against an in-memory `Buffer`.
+
+import os;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_syntax;
+import core.TUI_widget;
+import widgets.TUI_diff_view;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void check_int(Tally tally, str name, int got, int want) {
+    check(tally, name, str(got), str(want));
+}
+
+void head(str text) {
+    print("");
+    print("== " + text + " " + "=".repeat(60 - text.size()));
+}
+
+void language_tests(Tally tally) {
+    head("language_of");
+    check(tally, "c by extension", TUI_syntax.language_of("a/b/x.c", ""), "c");
+    check(tally, "c header", TUI_syntax.language_of("x.h", ""), "c");
+    check(tally, "cpp", TUI_syntax.language_of("x.hpp", ""), "cpp");
+    check(tally, "rust", TUI_syntax.language_of("main.rs", ""), "rust");
+    check(tally, "go", TUI_syntax.language_of("main.go", ""), "go");
+    check(tally, "typescript is javascript", TUI_syntax.language_of("a.tsx", ""), "javascript");
+    check(tally, "json", TUI_syntax.language_of("a.json", ""), "json");
+    check(tally, "m31", TUI_syntax.language_of("m3d1tor.m31", ""), "m31");
+    check(tally, "markdown", TUI_syntax.language_of("README.md", ""), "markdown");
+    check(tally, "python", TUI_syntax.language_of("a.py", ""), "python");
+    check(tally, "shell", TUI_syntax.language_of("a.sh", ""), "sh");
+    check(tally, "toml", TUI_syntax.language_of("Cargo.toml", ""), "toml");
+    check(tally, "Cargo.lock by name", TUI_syntax.language_of("Cargo.lock", ""), "toml");
+    check(tally, "yaml", TUI_syntax.language_of("ci.yml", ""), "yaml");
+    check(tally, "upper-case extension", TUI_syntax.language_of("A.PY", ""), "python");
+    check(tally, "shebang", TUI_syntax.language_of("tool", "#!/usr/bin/env python3"), "python");
+    check(tally, "shebang sh", TUI_syntax.language_of("tool", "#!/bin/bash"), "sh");
+    check(tally, "shebang node", TUI_syntax.language_of("tool", "#!/usr/bin/env node"), "javascript");
+    check(tally, "unknown", TUI_syntax.language_of("notes.txt", ""), "");
+    check(tally, "dot in a directory is no extension", TUI_syntax.language_of("a.d/Makefile", ""), "");
+    check(tally, "dotfile name", TUI_syntax.language_of("/home/u/.bashrc", ""), "sh");
+    check_int(tally, "twelve languages", TUI_syntax.languages().size(), 12);
+}
+
+void classify_tests(Tally tally) {
+    head("classify");
+    TUI_syntax.Tokens python = TUI_syntax.classify("python", "def f(x): # note", 0);
+    check_int(tally, "keyword", python.classes[0], TUI_syntax.KEYWORD);
+    check_int(tally, "function name", python.classes[4], TUI_syntax.FUNCTION);
+    check_int(tally, "plain", python.classes[7], TUI_syntax.NORMAL);
+    check_int(tally, "comment", python.classes[11], TUI_syntax.COMMENT);
+    check_int(tally, "one class per byte", python.classes.size(), 16);
+    TUI_syntax.Tokens open_string = TUI_syntax.classify("python", "x = \"\"\"abc", 0);
+    check_int(tally, "string", open_string.classes[6], TUI_syntax.STRING);
+    check(tally, "triple string stays open", str(open_string.state != 0), "true");
+    TUI_syntax.Tokens closed = TUI_syntax.classify("python", "def\"\"\" + 1", open_string.state);
+    check_int(tally, "inside the string", closed.classes[0], TUI_syntax.STRING);
+    check_int(tally, "string closed", closed.state, 0);
+    check_int(tally, "number after it", closed.classes[9], TUI_syntax.NUMBER);
+    TUI_syntax.Tokens block = TUI_syntax.classify("c", "int x; /* start", 0);
+    check_int(tally, "type", block.classes[0], TUI_syntax.TYPE);
+    check_int(tally, "block comment", block.classes[8], TUI_syntax.COMMENT);
+    check(tally, "block comment stays open", str(block.state != 0), "true");
+    TUI_syntax.Tokens after = TUI_syntax.classify("c", "end */ return 0;", block.state);
+    check_int(tally, "comment ends", after.classes[4], TUI_syntax.COMMENT);
+    check_int(tally, "keyword after", after.classes[7], TUI_syntax.KEYWORD);
+    check_int(tally, "closed again", after.state, 0);
+    TUI_syntax.Tokens preproc = TUI_syntax.classify("c", "#include <stdio.h>", 0);
+    check_int(tally, "preprocessor", preproc.classes[3], TUI_syntax.PREPROC);
+    TUI_syntax.Tokens json = TUI_syntax.classify("json", "{\"a\": [1, true, \"s\"]}", 0);
+    check_int(tally, "json key", json.classes[2], TUI_syntax.TYPE);
+    check_int(tally, "json number", json.classes[7], TUI_syntax.NUMBER);
+    check_int(tally, "json constant", json.classes[10], TUI_syntax.CONSTANT);
+    check_int(tally, "json string value", json.classes[17], TUI_syntax.STRING);
+    TUI_syntax.Tokens heading = TUI_syntax.classify("markdown", "## Title", 0);
+    check_int(tally, "markdown heading", heading.classes[3], TUI_syntax.TITLE);
+    TUI_syntax.Tokens fence = TUI_syntax.classify("markdown", "```rust", 0);
+    check(tally, "fence opens", str(fence.state != 0), "true");
+    TUI_syntax.Tokens inside = TUI_syntax.classify("markdown", "fn main() {}", fence.state);
+    check_int(tally, "code in a fence", inside.classes[0], TUI_syntax.STRING);
+    TUI_syntax.Tokens fence_end = TUI_syntax.classify("markdown", "```", fence.state);
+    check_int(tally, "fence closes", fence_end.state, 0);
+    TUI_syntax.Tokens shell = TUI_syntax.classify("sh", "echo \"$HOME\" # c", 0);
+    check_int(tally, "shell keyword", shell.classes[0], TUI_syntax.KEYWORD);
+    check_int(tally, "shell string", shell.classes[6], TUI_syntax.STRING);
+    check_int(tally, "shell comment", shell.classes[15], TUI_syntax.COMMENT);
+    TUI_syntax.Tokens variable = TUI_syntax.classify("sh", "x=$HOME/a", 0);
+    check_int(tally, "shell variable", variable.classes[2], TUI_syntax.SPECIAL);
+    TUI_syntax.Tokens rust = TUI_syntax.classify("rust", "let c = 'a'; // x", 0);
+    check_int(tally, "rust char", rust.classes[8], TUI_syntax.STRING);
+    check_int(tally, "rust comment", rust.classes[14], TUI_syntax.COMMENT);
+    TUI_syntax.Tokens lifetime = TUI_syntax.classify("rust", "fn f<'a>(x: &'a str)", 0);
+    check_int(tally, "a lifetime is not a string", lifetime.classes[5], TUI_syntax.NORMAL);
+    TUI_syntax.Tokens macro = TUI_syntax.classify("rust", "println!(x)", 0);
+    check_int(tally, "rust macro", macro.classes[0], TUI_syntax.FUNCTION);
+    TUI_syntax.Tokens template = TUI_syntax.classify("javascript", "const s = `a", 0);
+    check(tally, "template literal stays open", str(template.state != 0), "true");
+    TUI_syntax.Tokens template_end = TUI_syntax.classify("javascript", "b` + 1", template.state);
+    check_int(tally, "template literal ends", template_end.classes[1], TUI_syntax.STRING);
+    check_int(tally, "template state clear", template_end.state, 0);
+    TUI_syntax.Tokens toml = TUI_syntax.classify("toml", "name = \"x\"", 0);
+    check_int(tally, "toml key", toml.classes[0], TUI_syntax.TYPE);
+    TUI_syntax.Tokens yaml = TUI_syntax.classify("yaml", "a: 1 # c", 0);
+    check_int(tally, "yaml comment", yaml.classes[5], TUI_syntax.COMMENT);
+    TUI_syntax.Tokens unknown = TUI_syntax.classify("", "if (x) { return 1; }", 0);
+    check_int(tally, "unknown language keyword stays plain", unknown.classes[0], TUI_syntax.NORMAL);
+    TUI_syntax.Tokens utf = TUI_syntax.classify("python", "s = \"h\u{e9}\"", 0);
+    check_int(tally, "utf-8 bytes inside a string", utf.classes[6], TUI_syntax.STRING);
+    check_int(tally, "empty line", TUI_syntax.classify("c", "", 0).classes.size(), 0);
+}
+
+void style_tests(Tally tally) {
+    head("styles and spans");
+    check(tally, "dark when unset", str(TUI_syntax.is_dark("")), "true");
+    check(tally, "dark background 0", str(TUI_syntax.is_dark("15;0")), "true");
+    check(tally, "light background 15", str(TUI_syntax.is_dark("0;15")), "false");
+    check(tally, "light background 7 with three fields", str(TUI_syntax.is_dark("0;default;7")), "false");
+    check(tally, "garbage is dark", str(TUI_syntax.is_dark("x;y")), "true");
+    check(tally, "normal is plain", TUI_syntax.class_style(TUI_syntax.NORMAL, true).to_str(), TUI_style.Style().to_str());
+    check(tally, "keyword is bold magenta", TUI_syntax.class_style(TUI_syntax.KEYWORD, true).to_str(), "fg index 5, bg default, attrs 1");
+    check(tally, "number differs by background", str(TUI_syntax.class_style(TUI_syntax.NUMBER, true).eq(TUI_syntax.class_style(TUI_syntax.NUMBER, false))), "false");
+    TUI_syntax.Tokens tokens = TUI_syntax.classify("python", "if x: 1", 0);
+    List<TUI_widget.Span> spans = TUI_syntax.spans("if x: 1", tokens.classes, TUI_style.Style(), true);
+    List<str> parts = [];
+    for (TUI_widget.Span span in spans) {
+        parts.push("[" + span.text + "]");
+    }
+    check(tally, "runs of equal class", parts.join(""), "[if][ x: ][1]");
+    TUI_style.Style base = TUI_style.Style(foreground: TUI_style.Colour.Indexed(2), background: TUI_style.Colour.Indexed(4));
+    spans = TUI_syntax.spans("if x", TUI_syntax.classify("python", "if x", 0).classes, base, true);
+    check(tally, "normal run keeps the base style", spans[1].style.to_str(), base.to_str());
+    check(tally, "token keeps the base background", spans[0].style.background.to_str(), "index 4");
+    check(tally, "token takes the class colour", spans[0].style.foreground.to_str(), "index 5");
+    spans = TUI_syntax.spans("h\u{e9}llo", [0, 4, 4, 0, 0, 0], TUI_style.Style(), true);
+    check_int(tally, "a run never splits a UTF-8 sequence", spans.size(), 3);
+    check(tally, "no classes: one plain run", str(TUI_syntax.spans("abc", [], TUI_style.Style(), true).size()), "1");
+}
+
+void highlighter_tests(Tally tally) {
+    head("Highlighter");
+    TUI_syntax.Highlighter highlighter = TUI_syntax.Highlighter("c");
+    highlighter.add("int x; /* a");
+    highlighter.add("still comment");
+    highlighter.add("end */ return 0;");
+    check_int(tally, "state carried to the last line", highlighter.classes(2)[0], TUI_syntax.COMMENT);
+    check_int(tally, "and out of the comment", highlighter.classes(2)[7], TUI_syntax.KEYWORD);
+    check_int(tally, "all three classified", highlighter.done.size(), 3);
+    TUI_syntax.Highlighter lazy = TUI_syntax.Highlighter("c");
+    for (int index in 0 .. 50) {
+        lazy.add("int a" + str(index) + ";");
+    }
+    check_int(tally, "line 4 classifies only lines 0..4", lazy.classes(4).size() + lazy.done.size(), 7 + 5);
+    check_int(tally, "asking again classifies nothing more", lazy.classes(2).size() + lazy.done.size(), 7 + 5);
+    check_int(tally, "out of range is empty", lazy.classes(99).size(), 0);
+    TUI_syntax.Highlighter none = TUI_syntax.Highlighter("");
+    none.add("int x;");
+    check_int(tally, "no language, no classes", none.classes(0).size(), 0);
+}
+
+str row_of(TUI_buffer.Buffer buffer, int y) {
+    List<str> out = [];
+    for (int x in 0 .. buffer.area().width) {
+        out.push(buffer.get(x, y).symbol);
+    }
+    return out.join("");
+}
+
+void draw_tests(Tally tally) {
+    head("draw");
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(12, 2);
+    TUI_syntax.Tokens tokens = TUI_syntax.classify("python", "if x: # hi", 0);
+    int used = TUI_syntax.draw(buffer, 0, 0, 12, "if x: # hi", tokens.classes, TUI_style.Style(), true);
+    check_int(tally, "columns used", used, 10);
+    check(tally, "text", row_of(buffer, 0), "if x: # hi  ");
+    check(tally, "keyword style", buffer.get(0, 0).style.to_str(), "fg index 5, bg default, attrs 1");
+    check(tally, "plain style", buffer.get(3, 0).style.to_str(), TUI_style.Style().to_str());
+    check(tally, "comment style", buffer.get(6, 0).style.to_str(), "fg index 8, bg default, attrs 0");
+    used = TUI_syntax.draw(buffer, 0, 1, 6, "if x: # hi", tokens.classes, TUI_style.Style(), true);
+    check_int(tally, "clipped to the width", used, 6);
+    check(tally, "ellipsis at the end", row_of(buffer, 1), "if x:\u{2026}      ");
+    TUI_buffer.Buffer reversed = TUI_buffer.Buffer.sized(6, 1);
+    TUI_syntax.draw(reversed, 0, 0, 6, "if x", TUI_syntax.classify("python", "if x", 0).classes, TUI_style.Style(), true, over: TUI_style.Style(attrs: TUI_style.REVERSE));
+    check(tally, "over adds reverse to a token", reversed.get(0, 0).style.to_str(), "fg index 5, bg default, attrs 17");
+    check(tally, "and to plain text", reversed.get(3, 0).style.to_str(), "fg default, bg default, attrs 16");
+}
+
+void diff_view_tests(Tally tally) {
+    head("DiffView with a language");
+    List<TUI_diff_view.Line> body = [TUI_diff_view.Line.context("int a = 1;"), TUI_diff_view.Line.removed("int b = 2; /* old"), TUI_diff_view.Line.added("return b;"), TUI_diff_view.Line.removed("end */ int z;")];
+    TUI_diff_view.DiffView view = TUI_diff_view.DiffView([TUI_diff_view.Hunk("@@ -1,3 +1,3 @@", body)]);
+    view.language = "c";
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(24, 6);
+    view.render(buffer, buffer.area());
+    check(tally, "header row", row_of(buffer, 0), "@@ -1,3 +1,3 @@" + " ".repeat(9));
+    check(tally, "context text", row_of(buffer, 1), " int a = 1;" + " ".repeat(13));
+    check(tally, "context keyword is a type", buffer.get(1, 1).style.foreground.to_str(), "index 6");
+    check(tally, "context number", buffer.get(9, 1).style.foreground.to_str(), "index 3");
+    check(tally, "removed marker keeps red", buffer.get(0, 2).style.foreground.to_str(), "index 1");
+    check(tally, "removed plain text keeps red", buffer.get(5, 2).style.foreground.to_str(), "index 1");
+    check(tally, "removed comment opens", buffer.get(12, 2).style.foreground.to_str(), "index 8");
+    check(tally, "added marker keeps green", buffer.get(0, 3).style.foreground.to_str(), "index 2");
+    check(tally, "added keyword is magenta", buffer.get(1, 3).style.foreground.to_str(), "index 5");
+    check(tally, "old-side comment is closed on the old side", buffer.get(1, 4).style.foreground.to_str(), "index 8");
+    check(tally, "the added line did not close it", buffer.get(8, 4).style.foreground.to_str(), "index 6");
+    view.language = "";
+    view.render(buffer, buffer.area());
+    check(tally, "no language: plain context", buffer.get(1, 1).style.to_str(), TUI_style.Style().to_str());
+    check(tally, "no language: removed is red", buffer.get(5, 2).style.foreground.to_str(), "index 1");
+    view.language = "c";
+    view.cursor = 3;
+    view.render(buffer, buffer.area());
+    check(tally, "cursor row is reversed", str(buffer.get(1, 3).style.attrs & TUI_style.REVERSE), "16");
+    check(tally, "cursor row keeps the token colour", buffer.get(1, 3).style.foreground.to_str(), "index 5");
+    List<TUI_diff_view.Line> many = [];
+    for (int index in 0 .. 3000) {
+        many.push(TUI_diff_view.Line.added("int v" + str(index) + " = " + str(index) + "; // n"));
+    }
+    TUI_diff_view.DiffView big = TUI_diff_view.DiffView([TUI_diff_view.Hunk("@@ -0,0 +1,3000 @@", many)]);
+    big.language = "c";
+    TUI_buffer.Buffer screen = TUI_buffer.Buffer.sized(60, 20);
+    big.cursor = 2500;
+    big.render(screen, screen.area());
+    check_int(tally, "only lines up to the screen are classified", big.syntax[0].new_side.done.size(), 2500);
+    big.move(1);
+    big.render(screen, screen.area());
+    check_int(tally, "scrolling one row classifies one line", big.syntax[0].new_side.done.size(), 2501);
+}
+
+Tally score = Tally();
+language_tests(score);
+classify_tests(score);
+style_tests(score);
+highlighter_tests(score);
+draw_tests(score);
+diff_view_tests(score);
+print("");
+print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
+if (score.fail > 0) {
+    os.exit(1);
+}

@@ -32,7 +32,7 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.5.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
+version (0.6.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
 a program moving from 0.4.0 or from m31 0.3.x has to change.
 
     name myapp
@@ -53,7 +53,7 @@ force instead is written up in `docs/FRICTION.md` §1.
 
 ## The modules
 
-Twenty-seven, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
+Twenty-eight, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
 `docs/FRICTION.md` §1. `TUI_app` is the one exception worth naming: it is the only
@@ -73,12 +73,13 @@ buffer.
 | `TUI_scale` | `core/` | `nice_ticks` and `Scale`: one mapping that places both tick marks and their labels |
 | `TUI_clip` | `core/` | `put_str` and `paint` into a clip rectangle, so a widget cannot draw outside its area |
 | `TUI_word` | `core/` | word-boundary motion over grapheme clusters, shared by the two text widgets |
+| `TUI_syntax` | `core/` | `language_of`, `classify`, `class_style`, `spans`, `draw`, `Highlighter` — a lexical highlighter and the styles to draw it in |
 | `TUI_mouse` | `core/` | `Gesture`, `Pointer`, `Region`, `Router` — mouse reports to clicks, drags and hovers, routed to widgets |
 | `TUI_list_table` | `widgets/` | `ListView` and `Table` |
 | `TUI_outline` | `widgets/` | `Node`, `Outline` — the collapsible primary-view document |
 | `TUI_jump_list` | `widgets/` | `Entry`, `JumpList` — a flat index synced two ways to an `Outline` |
 | `TUI_menu` | `widgets/` | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
-| `TUI_diff_view` | `widgets/` | `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line |
+| `TUI_diff_view` | `widgets/` | `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line, optionally syntax-coloured (`language`) |
 | `TUI_footer` | `widgets/` | `split`, `Footer` — a screen band reserved regardless of the main view |
 | `TUI_gauge` | `widgets/` | `Gauge` — a ratio as a filled bar with a label, in eighths of a cell |
 | `TUI_sparkline` | `widgets/` | `Sparkline` — a series as a row of vertical eighth-blocks |
@@ -437,6 +438,42 @@ believe an older copy of this README that says otherwise.
 
 ---
 
+## Syntax highlighting
+
+`TUI_syntax` (in `core/`) is a small lexical highlighter, not a parser: a
+language is picked from a file name, every line is classified byte by byte
+from the state the line before it left behind, and the classes are turned into
+`TUI_style` styles in the terminal's own 16 colours (so they follow the user's
+scheme and are right at every `Depth`).
+
+```c
+str lang = TUI_syntax.language_of("src/main.rs", "");   // "rust"; "" when unknown
+TUI_syntax.Highlighter hl = TUI_syntax.Highlighter(lang);
+for (str text in lines) {
+    hl.add(text);                                        // feed the file in order
+}
+bool dark = TUI_syntax.is_dark(os.env("COLORFGBG").or(""));
+TUI_syntax.draw(buf, x, y, width, lines[i], hl.classes(i), TUI_style.Style(), dark);
+```
+
+`Highlighter.classes(i)` classifies lazily, through line `i`, and keeps the
+result, so a long file costs one `classify` per line the first time it is
+drawn and nothing when it is scrolled. `draw` clips to `width` and ends a
+clipped line in the ellipsis; its `base` style is what plain text is drawn in
+(an added line's green, say) and `over` is laid on every span (a cursor row's
+reverse video). `TUI_diff_view.DiffView` takes the same thing as one field:
+`view.language = "rust"` colours each hunk's code per token, classifying the
+old and the new side of the hunk separately, keeping the `+`/`-` marker and
+the plain text of added and removed lines in `add_style`/`remove_style`.
+Passing no language is the previous behaviour exactly.
+
+Classes: `NORMAL COMMENT STRING NUMBER KEYWORD TYPE FUNCTION PREPROC CONSTANT
+OPERATOR SPECIAL TITLE`. Languages: c, cpp, go, javascript (ts, jsx, tsx),
+json, m31, markdown, python, rust, sh, toml, yaml; a `#!` first line picks
+python, sh or node for a file with no known extension.
+
+---
+
 ## Layout
 
     deps                 project file: name, version, no dependencies
@@ -444,7 +481,7 @@ believe an older copy of this README that says otherwise.
     widgets/             the fourteen ready-made widgets built on core
     app/                 the diffing renderer (TUI_diff) and the application loop (TUI_app)
     examples/            demo, browse, widgets, bench: programs, built by scripts/build.sh
-    tests/               test.sh (the one entry point), tests.m31, widgets.m31 and their .out files
+    tests/               test.sh (the one entry point), tests.m31, widgets.m31, syntax.m31 and their .out files
     scripts/             build.sh
     docs/                FRICTION.md, the notes from building this on m31
 

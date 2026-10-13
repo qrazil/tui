@@ -1,0 +1,124 @@
+
+== language_of =================================================
+ok   c by extension
+ok   c header
+ok   cpp
+ok   rust
+ok   go
+ok   typescript is javascript
+ok   json
+ok   m31
+ok   markdown
+ok   python
+ok   shell
+ok   toml
+ok   Cargo.lock by name
+ok   yaml
+ok   upper-case extension
+ok   shebang
+ok   shebang sh
+ok   shebang node
+ok   unknown
+ok   dot in a directory is no extension
+ok   dotfile name
+ok   twelve languages
+
+== classify ====================================================
+ok   keyword
+ok   function name
+ok   plain
+ok   comment
+ok   one class per byte
+ok   string
+ok   triple string stays open
+ok   inside the string
+ok   string closed
+ok   number after it
+ok   type
+ok   block comment
+ok   block comment stays open
+ok   comment ends
+ok   keyword after
+ok   closed again
+ok   preprocessor
+ok   json key
+ok   json number
+ok   json constant
+ok   json string value
+ok   markdown heading
+ok   fence opens
+ok   code in a fence
+ok   fence closes
+ok   shell keyword
+ok   shell string
+ok   shell comment
+ok   shell variable
+ok   rust char
+ok   rust comment
+ok   a lifetime is not a string
+ok   rust macro
+ok   template literal stays open
+ok   template literal ends
+ok   template state clear
+ok   toml key
+ok   yaml comment
+ok   unknown language keyword stays plain
+ok   utf-8 bytes inside a string
+ok   empty line
+
+== styles and spans ============================================
+ok   dark when unset
+ok   dark background 0
+ok   light background 15
+ok   light background 7 with three fields
+ok   garbage is dark
+ok   normal is plain
+ok   keyword is bold magenta
+ok   number differs by background
+ok   runs of equal class
+ok   normal run keeps the base style
+ok   token keeps the base background
+ok   token takes the class colour
+ok   a run never splits a UTF-8 sequence
+ok   no classes: one plain run
+
+== Highlighter =================================================
+ok   state carried to the last line
+ok   and out of the comment
+ok   all three classified
+ok   line 4 classifies only lines 0..4
+ok   asking again classifies nothing more
+ok   out of range is empty
+ok   no language, no classes
+
+== draw ========================================================
+ok   columns used
+ok   text
+ok   keyword style
+ok   plain style
+ok   comment style
+ok   clipped to the width
+ok   ellipsis at the end
+ok   over adds reverse to a token
+ok   and to plain text
+
+== DiffView with a language ====================================
+ok   header row
+ok   context text
+ok   context keyword is a type
+ok   context number
+ok   removed marker keeps red
+ok   removed plain text keeps red
+ok   removed comment opens
+ok   added marker keeps green
+ok   added keyword is magenta
+ok   old-side comment is closed on the old side
+ok   the added line did not close it
+ok   no language: plain context
+ok   no language: removed is red
+ok   cursor row is reversed
+ok   cursor row keeps the token colour
+ok   only lines up to the screen are classified
+ok   scrolling one row classifies one line
+
+-- 110 passed, 0 failed

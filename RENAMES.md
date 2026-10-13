@@ -1,3 +1,26 @@
+# tui 0.6.0: syntax highlighting (`TUI_syntax`)
+
+Version 0.6.0, from master 5327361 (v0.5.1). **Nothing was renamed or
+removed**; this is an addition, so a program that depends on tui changes
+nothing but its pin.
+
+- New `core/TUI_syntax.m31`: `language_of(path, first_line)`, `languages()`,
+  `classify(lang, line, state)` (a class per byte and the state the next line
+  starts in: open block comments, triple-quoted strings, template literals,
+  markdown fences), `is_dark(colorfgbg)`, `class_style`, `spans`, `draw`, and
+  `Highlighter` -- lines fed in order, classified lazily and cached. It is the
+  highlighter m3d1tor's `MED_syntax` grew, ported with its tests. Languages: c,
+  cpp, go, javascript/typescript, json, m31, markdown, python, rust, sh, toml,
+  yaml. Colours are the terminal's own 16, so they follow the user's scheme.
+- `TUI_diff_view.DiffView` gains `language`, `is_dark` (and the private cache
+  fields `syntax`, `syntax_language`). With `language` set, each hunk's code
+  is coloured per token, classified along its old side and its new side
+  separately and only as far as it is drawn; the marker column and the plain
+  text of an added or removed line keep `add_style`/`remove_style`. With
+  `language` empty (the default) the output is byte for byte what it was.
+- `tests/syntax.m31` and `tests/syntax.out`: 110 checks, run by `tests/test.sh`
+  with the other corpora.
+
 # tui 0.5.0: the modules moved into folders
 
 Version 0.5.0, from master 8edfea1 (v0.4.0). **No module, type, function or

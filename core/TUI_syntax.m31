@@ -1,0 +1,877 @@
+// Syntax highlighting: a small lexical highlighter, no parse tree, and the
+// styles to draw it in.
+//
+// A language is picked from the file name (or by name); every line is
+// classified byte by byte from the state the line before left behind (an
+// open block comment, a triple-quoted string, a code fence). Nothing here
+// touches a terminal: the result is a class per byte, and `spans`/`draw`
+// turn that into styled text in a `Buffer`.
+//
+// API
+// ---
+//   TUI_syntax.language_of(path, first_line)      "c", "rust", ...; "" when unknown
+//   TUI_syntax.languages()                        every name `language_of` can answer
+//   TUI_syntax.classify(lang, line, state)        Tokens: a class per byte, and the state after
+//   TUI_syntax.NORMAL .. TITLE                    the classes
+//   TUI_syntax.is_dark(colorfgbg)                 light or dark, from $COLORFGBG ("15;0")
+//   TUI_syntax.class_style(class, is_dark)        the Style of one class (16-colour indexes)
+//   TUI_syntax.spans(text, classes, base, is_dark)  the line as styled `Span`s
+//   TUI_syntax.draw(buffer, x, y, width, text, classes, base, is_dark, over)
+//                                                 write them, clipped with an ellipsis
+//   TUI_syntax.Highlighter(language)              lines fed in order, classified lazily and
+//                                                 cached: `add(text)`, `classes(index)`
+//
+// Classes: NORMAL, COMMENT, STRING, NUMBER, KEYWORD, TYPE, FUNCTION, PREPROC,
+// CONSTANT, OPERATOR, SPECIAL (escapes, markdown markers), TITLE.
+//
+// **Colours are the terminal's own 16** (palette indexes 1..14), so the
+// result is right at every colour depth and follows the user's colour
+// scheme; `is_dark` only picks between the two shades that read badly on
+// the other kind of background.
+//
+// Languages: c, cpp, go, javascript (and ts, jsx, tsx), json, m31, markdown,
+// python, rust, sh, toml, yaml.
+
+import core.TUI_buffer;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
+
+pub const int NORMAL = 0;
+pub const int COMMENT = 1;
+pub const int STRING = 2;
+pub const int NUMBER = 3;
+pub const int KEYWORD = 4;
+pub const int TYPE = 5;
+pub const int FUNCTION = 6;
+pub const int PREPROC = 7;
+pub const int CONSTANT = 8;
+pub const int OPERATOR = 9;
+pub const int SPECIAL = 10;
+pub const int TITLE = 11;
+// States carried from line to line.
+const int IN_BLOCK_COMMENT = 1;
+const int IN_TRIPLE_SINGLE = 2;
+const int IN_TRIPLE_DOUBLE = 3;
+const int IN_BACKTICK = 4;
+const int IN_FENCE = 5;
+
+/// One classified line: the class of each byte, and the state at its end
+/// (what the next line must be classified from).
+pub type Tokens {
+    pub List<int> classes = [];
+    pub int state = 0;
+}
+
+pub List<str> languages() {
+    return ["c", "cpp", "go", "javascript", "json", "m31", "markdown", "python", "rust", "sh", "toml", "yaml"];
+}
+
+str extension_of(str path) {
+    int dot = -1;
+    int slash = -1;
+    for (int index in 0 .. path.size()) {
+        int byte = path.byte_at(index);
+        if (byte == 46) {
+            dot = index;
+        } else if (byte == 47) {
+            slash = index;
+        }
+    }
+    if (dot < 0 || dot < slash) {
+        return "";
+    }
+    return path.substr(dot + 1, path.size()).to_lower();
+}
+
+str base_of(str path) {
+    int slash = -1;
+    for (int index in 0 .. path.size()) {
+        if (path.byte_at(index) == 47) {
+            slash = index;
+        }
+    }
+    return path.substr(slash + 1, path.size());
+}
+
+/// The language of a file: by extension or name, else by a `#!` line.
+pub str language_of(str path, str first_line) {
+    str extension = extension_of(path);
+    str base = base_of(path);
+    if (extension == "c" || extension == "h") {
+        return "c";
+    }
+    if (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "hpp" || extension == "hh" || extension == "hxx") {
+        return "cpp";
+    }
+    if (extension == "rs") {
+        return "rust";
+    }
+    if (extension == "go") {
+        return "go";
+    }
+    if (extension == "js" || extension == "mjs" || extension == "cjs" || extension == "jsx" || extension == "ts" || extension == "tsx") {
+        return "javascript";
+    }
+    if (extension == "json" || extension == "jsonc") {
+        return "json";
+    }
+    if (extension == "m31") {
+        return "m31";
+    }
+    if (extension == "md" || extension == "markdown") {
+        return "markdown";
+    }
+    if (extension == "py" || extension == "pyw") {
+        return "python";
+    }
+    if (extension == "sh" || extension == "bash" || extension == "zsh" || base == ".bashrc" || base == ".zshrc" || base == ".profile") {
+        return "sh";
+    }
+    if (extension == "toml" || base == "Cargo.lock") {
+        return "toml";
+    }
+    if (extension == "yaml" || extension == "yml") {
+        return "yaml";
+    }
+    if (first_line.starts_with("#!")) {
+        if (first_line.contains("python")) {
+            return "python";
+        }
+        if (first_line.contains("sh") || first_line.contains("bash") || first_line.contains("zsh")) {
+            return "sh";
+        }
+        if (first_line.contains("node")) {
+            return "javascript";
+        }
+    }
+    return "";
+}
+
+List<str> keywords_of(str lang) {
+    if (lang == "c" || lang == "cpp") {
+        return ["if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "return", "goto", "sizeof", "typedef", "struct", "union", "enum", "static", "extern", "const", "volatile", "inline", "register", "auto", "class", "public", "private", "protected", "namespace", "template", "typename", "using", "new", "delete", "try", "catch", "throw", "virtual", "override", "operator", "this", "constexpr", "nullptr"];
+    }
+    if (lang == "rust") {
+        return ["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "type", "unsafe", "use", "where", "while"];
+    }
+    if (lang == "go") {
+        return ["break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch", "type", "var"];
+    }
+    if (lang == "javascript") {
+        return ["async", "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else", "export", "extends", "finally", "for", "function", "if", "import", "in", "instanceof", "let", "new", "of", "return", "static", "super", "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with", "yield", "interface", "type", "enum", "implements", "readonly"];
+    }
+    if (lang == "m31") {
+        return ["if", "else", "for", "while", "in", "break", "continue", "return", "match", "case", "default", "type", "enum", "import", "pub", "const", "void", "int", "bool", "str", "bytes", "float", "true", "false", "none", "this", "async", "await", "spawn", "try", "defer"];
+    }
+    if (lang == "python") {
+        return ["and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield", "match", "case"];
+    }
+    if (lang == "sh") {
+        return ["if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "in", "function", "select", "time", "return", "break", "continue", "exit", "export", "local", "readonly", "declare", "set", "unset", "shift", "source", "alias", "eval", "exec", "trap", "cd", "echo", "printf", "test"];
+    }
+    return [];
+}
+
+List<str> types_of(str lang) {
+    if (lang == "c" || lang == "cpp") {
+        return ["int", "char", "short", "long", "float", "double", "void", "unsigned", "signed", "bool", "size_t", "ssize_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t", "FILE", "string", "vector", "map", "set"];
+    }
+    if (lang == "rust") {
+        return ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "str", "String", "Vec", "Option", "Result", "Box", "Rc", "Arc", "HashMap", "HashSet"];
+    }
+    if (lang == "go") {
+        return ["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64", "complex64", "complex128", "string", "bool", "byte", "rune", "error", "any"];
+    }
+    if (lang == "javascript") {
+        return ["string", "number", "boolean", "any", "unknown", "never", "object", "Array", "Map", "Set", "Promise", "Object", "String", "Number", "Boolean", "Date", "Error", "Symbol"];
+    }
+    if (lang == "python") {
+        return ["int", "str", "float", "bool", "list", "dict", "set", "tuple", "bytes", "object", "type", "None", "self", "cls"];
+    }
+    return [];
+}
+
+List<str> constants_of(str lang) {
+    if (lang == "python") {
+        return ["True", "False", "None"];
+    }
+    if (lang == "c" || lang == "cpp") {
+        return ["NULL", "true", "false", "EOF"];
+    }
+    if (lang == "sh") {
+        return [];
+    }
+    return ["true", "false", "null", "undefined", "nil", "none", "NaN", "Infinity", "iota"];
+}
+
+bool is_listed(List<str> items, str word) {
+    for (str item in items) {
+        if (item == word) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_word_start(int byte) {
+    return (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || byte == 95 || byte >= 128;
+}
+
+bool is_word_byte(int byte) {
+    return is_word_start(byte) || (byte >= 48 && byte <= 57);
+}
+
+bool is_digit_byte(int byte) {
+    return byte >= 48 && byte <= 57;
+}
+
+void paint(List<int> classes, int from, int stop, int class_value) {
+    int limit = stop;
+    if (limit > classes.size()) {
+        limit = classes.size();
+    }
+    for (int index in from .. limit) {
+        classes[index] = class_value;
+    }
+}
+
+// The end (exclusive) of a quoted string starting at `from` (the opening
+// quote), or the line end when it is not closed; `closed` is false then.
+int string_end(str line, int from, int quote) {
+    int index = from + 1;
+    while (index < line.size()) {
+        int byte = line.byte_at(index);
+        if (byte == 92) {
+            index = index + 2;
+            continue;
+        }
+        if (byte == quote) {
+            return index + 1;
+        }
+        index = index + 1;
+    }
+    return line.size();
+}
+
+int number_end(str line, int from) {
+    int index = from;
+    if (index + 1 < line.size() && line.byte_at(index) == 48) {
+        int next = line.byte_at(index + 1);
+        if (next == 120 || next == 88 || next == 98 || next == 66 || next == 111 || next == 79) {
+            index = index + 2;
+            while (index < line.size() && (is_word_byte(line.byte_at(index)))) {
+                index = index + 1;
+            }
+            return index;
+        }
+    }
+    while (index < line.size()) {
+        int byte = line.byte_at(index);
+        if (is_digit_byte(byte) || byte == 95) {
+            index = index + 1;
+        } else if (byte == 46 && index + 1 < line.size() && is_digit_byte(line.byte_at(index + 1))) {
+            index = index + 1;
+        } else if ((byte == 101 || byte == 69) && index + 1 < line.size() && (is_digit_byte(line.byte_at(index + 1)) || line.byte_at(index + 1) == 45 || line.byte_at(index + 1) == 43)) {
+            index = index + 2;
+        } else if (is_word_start(byte)) {
+            // a suffix (u8, f32, UL ...)
+            index = index + 1;
+        } else {
+            break;
+        }
+    }
+    return index;
+}
+
+Tokens classify_code(str lang, str line, int state) {
+    Tokens out = Tokens();
+    for (int index in 0 .. line.size()) {
+        out.classes.push(NORMAL);
+    }
+    bool is_c_like = lang == "c" || lang == "cpp" || lang == "rust" || lang == "go" || lang == "javascript" || lang == "m31";
+    bool is_hash = lang == "python" || lang == "sh" || lang == "toml" || lang == "yaml";
+    List<str> keywords = keywords_of(lang);
+    List<str> types = types_of(lang);
+    List<str> constants = constants_of(lang);
+    int index = 0;
+    int current = state;
+    // inside a construct that began on an earlier line
+    if (current == IN_BLOCK_COMMENT) {
+        int stop = line.index_of("*/").or(-1);
+        if (stop < 0) {
+            paint(out.classes, 0, line.size(), COMMENT);
+            out.state = IN_BLOCK_COMMENT;
+            return out;
+        }
+        paint(out.classes, 0, stop + 2, COMMENT);
+        index = stop + 2;
+        current = 0;
+    } else if (current == IN_TRIPLE_SINGLE || current == IN_TRIPLE_DOUBLE) {
+        str closing = "'''";
+        if (current == IN_TRIPLE_DOUBLE) {
+            closing = "\"\"\"";
+        }
+        int stop = line.index_of(closing).or(-1);
+        if (stop < 0) {
+            paint(out.classes, 0, line.size(), STRING);
+            out.state = current;
+            return out;
+        }
+        paint(out.classes, 0, stop + 3, STRING);
+        index = stop + 3;
+        current = 0;
+    } else if (current == IN_BACKTICK) {
+        int stop = -1;
+        int scan = 0;
+        while (scan < line.size()) {
+            if (line.byte_at(scan) == 92) {
+                scan = scan + 2;
+                continue;
+            }
+            if (line.byte_at(scan) == 96) {
+                stop = scan;
+                break;
+            }
+            scan = scan + 1;
+        }
+        if (stop < 0) {
+            paint(out.classes, 0, line.size(), STRING);
+            out.state = IN_BACKTICK;
+            return out;
+        }
+        paint(out.classes, 0, stop + 1, STRING);
+        index = stop + 1;
+        current = 0;
+    }
+    // a preprocessor line (#include, #define) or a shebang
+    if (lang == "c" || lang == "cpp") {
+        int first = 0;
+        while (first < line.size() && (line.byte_at(first) == 32 || line.byte_at(first) == 9)) {
+            first = first + 1;
+        }
+        if (index == 0 && first < line.size() && line.byte_at(first) == 35) {
+            paint(out.classes, first, line.size(), PREPROC);
+            return out;
+        }
+    }
+    while (index < line.size()) {
+        int byte = line.byte_at(index);
+        int next = 0;
+        if (index + 1 < line.size()) {
+            next = line.byte_at(index + 1);
+        }
+        if (is_c_like && byte == 47 && next == 47) {
+            paint(out.classes, index, line.size(), COMMENT);
+            return out;
+        }
+        if (is_hash && byte == 35) {
+            // # starts a comment unless it is inside a word (sh: $#, ${#x})
+            bool is_comment = index == 0 || line.byte_at(index - 1) == 32 || line.byte_at(index - 1) == 9 || lang != "sh";
+            if (is_comment) {
+                paint(out.classes, index, line.size(), COMMENT);
+                return out;
+            }
+        }
+        if (is_c_like && lang != "go" && byte == 47 && next == 42) {
+            int stop = -1;
+            int scan = index + 2;
+            while (scan + 1 < line.size()) {
+                if (line.byte_at(scan) == 42 && line.byte_at(scan + 1) == 47) {
+                    stop = scan;
+                    break;
+                }
+                scan = scan + 1;
+            }
+            if (stop < 0) {
+                paint(out.classes, index, line.size(), COMMENT);
+                out.state = IN_BLOCK_COMMENT;
+                return out;
+            }
+            paint(out.classes, index, stop + 2, COMMENT);
+            index = stop + 2;
+            continue;
+        }
+        if (lang == "go" && byte == 47 && next == 42) {
+            int stop = line.substr(index + 2, line.size()).index_of("*/").or(-1);
+            if (stop < 0) {
+                paint(out.classes, index, line.size(), COMMENT);
+                out.state = IN_BLOCK_COMMENT;
+                return out;
+            }
+            paint(out.classes, index, index + 2 + stop + 2, COMMENT);
+            index = index + 2 + stop + 2;
+            continue;
+        }
+        if (lang == "python" && (byte == 34 || byte == 39) && line.substr(index, line.size()).starts_with(str.from_chars([byte, byte, byte]))) {
+            str closing = str.from_chars([byte, byte, byte]);
+            int stop = line.substr(index + 3, line.size()).index_of(closing).or(-1);
+            int quote_state = IN_TRIPLE_SINGLE;
+            if (byte == 34) {
+                quote_state = IN_TRIPLE_DOUBLE;
+            }
+            if (stop < 0) {
+                paint(out.classes, index, line.size(), STRING);
+                out.state = quote_state;
+                return out;
+            }
+            paint(out.classes, index, index + 3 + stop + 3, STRING);
+            index = index + 3 + stop + 3;
+            continue;
+        }
+        if (byte == 34 || (byte == 39 && lang != "rust" && lang != "m31")) {
+            int stop = string_end(line, index, byte);
+            paint(out.classes, index, stop, STRING);
+            index = stop;
+            continue;
+        }
+        if (byte == 39 && (lang == "rust" || lang == "m31")) {
+            // a character literal ('a', '\n'), else a lifetime
+            int stop = -1;
+            if (index + 2 < line.size() && line.byte_at(index + 1) == 92) {
+                stop = line.substr(index + 2, line.size()).index_of("'").or(-1);
+                if (stop >= 0) {
+                    stop = index + 2 + stop + 1;
+                }
+            } else if (index + 2 < line.size() && line.byte_at(index + 2) == 39) {
+                stop = index + 3;
+            }
+            if (stop > 0) {
+                paint(out.classes, index, stop, STRING);
+                index = stop;
+                continue;
+            }
+        }
+        if (byte == 96 && (lang == "javascript" || lang == "go")) {
+            int stop = -1;
+            int scan = index + 1;
+            while (scan < line.size()) {
+                if (line.byte_at(scan) == 92) {
+                    scan = scan + 2;
+                    continue;
+                }
+                if (line.byte_at(scan) == 96) {
+                    stop = scan;
+                    break;
+                }
+                scan = scan + 1;
+            }
+            if (stop < 0) {
+                paint(out.classes, index, line.size(), STRING);
+                out.state = IN_BACKTICK;
+                return out;
+            }
+            paint(out.classes, index, stop + 1, STRING);
+            index = stop + 1;
+            continue;
+        }
+        if (is_digit_byte(byte) || (byte == 46 && is_digit_byte(next) && index > 0 && !is_word_byte(line.byte_at(index - 1)))) {
+            int stop = number_end(line, index);
+            paint(out.classes, index, stop, NUMBER);
+            index = stop;
+            continue;
+        }
+        if (is_word_start(byte)) {
+            int stop = index;
+            while (stop < line.size() && is_word_byte(line.byte_at(stop))) {
+                stop = stop + 1;
+            }
+            str word = line.substr(index, stop);
+            int after = stop;
+            while (after < line.size() && line.byte_at(after) == 32) {
+                after = after + 1;
+            }
+            int class_value = NORMAL;
+            if (is_listed(keywords, word)) {
+                class_value = KEYWORD;
+            } else if (is_listed(types, word)) {
+                class_value = TYPE;
+            } else if (is_listed(constants, word)) {
+                class_value = CONSTANT;
+            } else if (lang == "yaml" || lang == "toml") {
+                if (after < line.size() && (line.byte_at(after) == 58 || line.byte_at(after) == 61)) {
+                    class_value = TYPE;
+                }
+            } else if (stop < line.size() && line.byte_at(stop) == 40) {
+                class_value = FUNCTION;
+            } else if (lang == "rust" && stop < line.size() && line.byte_at(stop) == 33) {
+                class_value = FUNCTION;
+            } else if (word.byte_at(0) >= 65 && word.byte_at(0) <= 90 && word.size() > 1 && lang != "sh") {
+                bool has_lower = false;
+                for (int scan in 1 .. word.size()) {
+                    if (word.byte_at(scan) >= 97 && word.byte_at(scan) <= 122) {
+                        has_lower = true;
+                    }
+                }
+                if (has_lower) {
+                    class_value = TYPE;
+                } else {
+                    class_value = CONSTANT;
+                }
+            }
+            paint(out.classes, index, stop, class_value);
+            index = stop;
+            continue;
+        }
+        if (lang == "sh" && byte == 36 && index + 1 < line.size()) {
+            int stop = index + 1;
+            if (line.byte_at(stop) == 123) {
+                int close_at = line.substr(stop, line.size()).index_of("}").or(-1);
+                if (close_at >= 0) {
+                    stop = stop + close_at + 1;
+                }
+            } else {
+                while (stop < line.size() && is_word_byte(line.byte_at(stop))) {
+                    stop = stop + 1;
+                }
+                if (stop == index + 1) {
+                    stop = stop + 1;
+                }
+            }
+            paint(out.classes, index, stop, SPECIAL);
+            index = stop;
+            continue;
+        }
+        if (lang == "python" && byte == 64 && next != 0 && is_word_start(next) && (index == 0 || line.byte_at(index - 1) == 32)) {
+            int stop = index + 1;
+            while (stop < line.size() && is_word_byte(line.byte_at(stop))) {
+                stop = stop + 1;
+            }
+            paint(out.classes, index, stop, PREPROC);
+            index = stop;
+            continue;
+        }
+        index = index + 1;
+    }
+    return out;
+}
+
+Tokens classify_markdown(str line, int state) {
+    Tokens out = Tokens();
+    for (int index in 0 .. line.size()) {
+        out.classes.push(NORMAL);
+    }
+    str trimmed = line.trim();
+    bool is_fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+    if (state == IN_FENCE) {
+        paint(out.classes, 0, line.size(), STRING);
+        if (is_fence) {
+            out.state = 0;
+        } else {
+            out.state = IN_FENCE;
+        }
+        return out;
+    }
+    if (is_fence) {
+        paint(out.classes, 0, line.size(), SPECIAL);
+        out.state = IN_FENCE;
+        return out;
+    }
+    if (line.starts_with("#")) {
+        int hashes = 0;
+        while (hashes < line.size() && line.byte_at(hashes) == 35) {
+            hashes = hashes + 1;
+        }
+        if (hashes <= 6 && (hashes == line.size() || line.byte_at(hashes) == 32)) {
+            paint(out.classes, 0, line.size(), TITLE);
+            return out;
+        }
+    }
+    if (trimmed.starts_with(">")) {
+        paint(out.classes, 0, line.size(), COMMENT);
+        return out;
+    }
+    int start = 0;
+    while (start < line.size() && (line.byte_at(start) == 32 || line.byte_at(start) == 9)) {
+        start = start + 1;
+    }
+    if (start < line.size() && (line.byte_at(start) == 45 || line.byte_at(start) == 42 || line.byte_at(start) == 43) && start + 1 < line.size() && line.byte_at(start + 1) == 32) {
+        out.classes[start] = SPECIAL;
+        start = start + 2;
+    } else if (start < line.size() && is_digit_byte(line.byte_at(start))) {
+        int stop = start;
+        while (stop < line.size() && is_digit_byte(line.byte_at(stop))) {
+            stop = stop + 1;
+        }
+        if (stop < line.size() && (line.byte_at(stop) == 46 || line.byte_at(stop) == 41) && stop + 1 < line.size() && line.byte_at(stop + 1) == 32) {
+            paint(out.classes, start, stop + 1, SPECIAL);
+            start = stop + 2;
+        }
+    }
+    int index = start;
+    while (index < line.size()) {
+        int byte = line.byte_at(index);
+        if (byte == 96) {
+            int stop = line.substr(index + 1, line.size()).index_of("`").or(-1);
+            if (stop >= 0) {
+                paint(out.classes, index, index + 1 + stop + 1, STRING);
+                index = index + 1 + stop + 1;
+                continue;
+            }
+        }
+        if (byte == 91) {
+            int close_text = line.substr(index, line.size()).index_of("](").or(-1);
+            if (close_text > 0) {
+                int close_url = line.substr(index + close_text, line.size()).index_of(")").or(-1);
+                if (close_url > 0) {
+                    paint(out.classes, index, index + close_text + 1, FUNCTION);
+                    paint(out.classes, index + close_text + 1, index + close_text + close_url + 1, COMMENT);
+                    index = index + close_text + close_url + 1;
+                    continue;
+                }
+            }
+        }
+        if ((byte == 42 || byte == 95) && index + 1 < line.size() && line.byte_at(index + 1) == byte) {
+            int stop = line.substr(index + 2, line.size()).index_of(str.from_chars([byte, byte])).or(-1);
+            if (stop >= 0) {
+                paint(out.classes, index, index + 2 + stop + 2, KEYWORD);
+                index = index + 2 + stop + 2;
+                continue;
+            }
+        }
+        index = index + 1;
+    }
+    return out;
+}
+
+Tokens classify_json(str line) {
+    Tokens out = Tokens();
+    for (int index in 0 .. line.size()) {
+        out.classes.push(NORMAL);
+    }
+    int index = 0;
+    while (index < line.size()) {
+        int byte = line.byte_at(index);
+        if (byte == 34) {
+            int stop = string_end(line, index, 34);
+            int after = stop;
+            while (after < line.size() && line.byte_at(after) == 32) {
+                after = after + 1;
+            }
+            int class_value = STRING;
+            if (after < line.size() && line.byte_at(after) == 58) {
+                class_value = TYPE;
+            }
+            paint(out.classes, index, stop, class_value);
+            index = stop;
+            continue;
+        }
+        if (is_digit_byte(byte) || (byte == 45 && index + 1 < line.size() && is_digit_byte(line.byte_at(index + 1)))) {
+            int stop = number_end(line, index + 1);
+            paint(out.classes, index, stop, NUMBER);
+            index = stop;
+            continue;
+        }
+        if (is_word_start(byte)) {
+            int stop = index;
+            while (stop < line.size() && is_word_byte(line.byte_at(stop))) {
+                stop = stop + 1;
+            }
+            str word = line.substr(index, stop);
+            if (word == "true" || word == "false" || word == "null") {
+                paint(out.classes, index, stop, CONSTANT);
+            }
+            index = stop;
+            continue;
+        }
+        if (byte == 47 && index + 1 < line.size() && line.byte_at(index + 1) == 47) {
+            paint(out.classes, index, line.size(), COMMENT);
+            return out;
+        }
+        index = index + 1;
+    }
+    return out;
+}
+
+/// Classify one `line` of language `lang` that begins in `state` (0 for the
+/// first line, else the previous line's `Tokens.state`). An unknown `lang`
+/// is plain code: every class NORMAL, and a state of 0.
+pub Tokens classify(str lang, str line, int state) {
+    if (lang == "markdown") {
+        return classify_markdown(line, state);
+    }
+    if (lang == "json") {
+        return classify_json(line);
+    }
+    return classify_code(lang, line, state);
+}
+
+/// True when `$COLORFGBG` (`"15;0"`: foreground;background palette indexes)
+/// names a dark background, or says nothing (dark is the common default).
+/// Backgrounds 0..6 and 8 are dark; 7 and 9..15 are light.
+pub bool is_dark(str colorfgbg) {
+    if (colorfgbg == "") {
+        return true;
+    }
+    int semicolon = -1;
+    for (int index in 0 .. colorfgbg.size()) {
+        if (colorfgbg.byte_at(index) == 59) {
+            semicolon = index;
+        }
+    }
+    str last = colorfgbg.substr(semicolon + 1, colorfgbg.size());
+    if (last.size() == 0 || last.size() > 2) {
+        return true;
+    }
+    int value = 0;
+    for (int index in 0 .. last.size()) {
+        int byte = last.byte_at(index);
+        if (!is_digit_byte(byte)) {
+            return true;
+        }
+        value = value * 10 + byte - 48;
+    }
+    if (value == 7 || (value >= 9 && value <= 15)) {
+        return false;
+    }
+    return true;
+}
+
+/// The style of a class, in the terminal's own 16 colours. NORMAL is the
+/// plain style.
+pub TUI_style.Style class_style(int class_value, bool is_dark) {
+    int colour = -1;
+    int attrs = 0;
+    if (class_value == COMMENT) {
+        colour = 8;
+    } else if (class_value == STRING) {
+        colour = 2;
+    } else if (class_value == NUMBER) {
+        colour = 1;
+        if (is_dark) {
+            colour = 3;
+        }
+    } else if (class_value == KEYWORD) {
+        colour = 5;
+        attrs = TUI_style.BOLD;
+    } else if (class_value == TYPE) {
+        colour = 6;
+        if (!is_dark) {
+            colour = 4;
+        }
+    } else if (class_value == FUNCTION) {
+        colour = 4;
+        if (is_dark) {
+            colour = 12;
+        }
+    } else if (class_value == PREPROC) {
+        colour = 5;
+    } else if (class_value == CONSTANT) {
+        colour = 3;
+        if (!is_dark) {
+            colour = 1;
+        }
+    } else if (class_value == SPECIAL) {
+        colour = 6;
+    } else if (class_value == TITLE) {
+        colour = 3;
+        attrs = TUI_style.BOLD;
+        if (!is_dark) {
+            colour = 1;
+        }
+    }
+    if (colour < 0) {
+        return TUI_style.Style();
+    }
+    return TUI_style.Style(foreground: TUI_style.Colour.Indexed(colour), attrs: attrs);
+}
+
+/// `text` as styled spans, one per run of equal class. NORMAL runs take
+/// `base` as it is; a classified run takes `base` with the class's style laid
+/// over it (so a background in `base` survives and, on a line whose `base`
+/// has a foreground, only tokens the highlighter recognised change colour).
+/// `classes` is per byte, as `classify` answers; a run never splits a UTF-8
+/// sequence, and an empty or short `classes` leaves the rest NORMAL.
+pub List<TUI_widget.Span> spans(str text, List<int> classes, TUI_style.Style base, bool is_dark) {
+    List<TUI_widget.Span> out = [];
+    int size = text.size();
+    int start = 0;
+    while (start < size) {
+        int class_value = NORMAL;
+        if (start < classes.size()) {
+            class_value = classes[start];
+        }
+        int stop = start + 1;
+        while (stop < size) {
+            int other = NORMAL;
+            if (stop < classes.size()) {
+                other = classes[stop];
+            }
+            bool is_continuation = text.byte_at(stop) >= 128 && text.byte_at(stop) < 192;
+            if (other != class_value && !is_continuation) {
+                break;
+            }
+            stop = stop + 1;
+        }
+        TUI_style.Style style = base;
+        if (class_value != NORMAL) {
+            style = base.merged(class_style(class_value, is_dark));
+        }
+        out.push(TUI_widget.Span(text.substr(start, stop), style: style));
+        start = stop;
+    }
+    return out;
+}
+
+/// Write `text` at `x`, `y`, at most `width` columns, coloured by `classes`
+/// (see `spans`), with `over` laid on every span (a cursor row's reverse
+/// video). Text that does not fit ends in the ellipsis, as `TUI_text.truncate`
+/// does. Answers the columns used.
+pub int draw(TUI_buffer.Buffer buffer, int x, int y, int width, str text, List<int> classes, TUI_style.Style base, bool is_dark, TUI_style.Style over = TUI_style.Style()) {
+    if (width <= 0) {
+        return 0;
+    }
+    int total = TUI_text.width(text);
+    int room = width;
+    if (total > width) {
+        room = width - 1;
+    }
+    int column = x;
+    TUI_style.Style last = base.merged(over);
+    List<TUI_widget.Span> runs = spans(text, classes, base, is_dark);
+    for (TUI_widget.Span run in runs) {
+        int left = room - (column - x);
+        if (left <= 0) {
+            break;
+        }
+        TUI_style.Style style = run.style.merged(over);
+        last = style;
+        column = column + buffer.set_str(column, y, run.text, style, max: left);
+    }
+    if (total > width) {
+        buffer.set_str(x + width - 1, y, TUI_text.ELLIPSIS, last, max: 1);
+        return width;
+    }
+    return column - x;
+}
+
+/// Lines of one file, fed in order, classified lazily and remembered: a
+/// 5000-line file costs one `classify` per line the first time each is
+/// asked for, and nothing on a redraw. The state carried from line to line
+/// (an open comment, a fence) is kept, so `classes(i)` is right even when
+/// only line `i` is on screen.
+pub type Highlighter {
+    pub str language;
+    pub List<str> lines = [];
+    pub List<List<int>> done = [];
+    pub int state = 0;
+}
+
+/// Append the next line of the file.
+pub void Highlighter.add(str text) {
+    lines.push(text);
+}
+
+/// The class of every byte of line `index` (empty when the highlighter has
+/// no language, or `index` is outside the lines added so far).
+pub List<int> Highlighter.classes(int index) {
+    if (language == "" || index < 0 || index >= lines.size()) {
+        return [];
+    }
+    while (done.size() <= index) {
+        Tokens tokens = classify(language, lines[done.size()], state);
+        done.push(tokens.classes);
+        state = tokens.state;
+    }
+    return done[index];
+}
