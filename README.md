@@ -32,7 +32,7 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.6.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
+version (0.7.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
 a program moving from 0.4.0 or from m31 0.3.x has to change.
 
     name myapp
@@ -79,7 +79,7 @@ buffer.
 | `TUI_outline` | `widgets/` | `Node`, `Outline` — the collapsible primary-view document |
 | `TUI_jump_list` | `widgets/` | `Entry`, `JumpList` — a flat index synced two ways to an `Outline` |
 | `TUI_menu` | `widgets/` | `Popup`, `WhichKey`, `Switch`, `Transient` — one base, two overlays |
-| `TUI_diff_view` | `widgets/` | `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line, optionally syntax-coloured (`language`) |
+| `TUI_diff_view` | `widgets/` | `Kind`, `Line`, `Hunk`, `DiffView` — a diff with a cursor addressable to the line, optionally syntax-coloured (`language`), hunks that fold (`Hunk.is_collapsed`, `DiffView.toggle_hunk`) |
 | `TUI_footer` | `widgets/` | `split`, `Footer` — a screen band reserved regardless of the main view |
 | `TUI_gauge` | `widgets/` | `Gauge` — a ratio as a filled bar with a label, in eighths of a cell |
 | `TUI_sparkline` | `widgets/` | `Sparkline` — a series as a row of vertical eighth-blocks |

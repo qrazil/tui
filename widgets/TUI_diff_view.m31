@@ -68,6 +68,17 @@ pub static Line Line.removed(str text) {
 pub type Hunk {
     pub str header;
     pub List<Line> lines;
+    /// Folded: the header row shows, the body rows do not (they are not in
+    /// `rows()` or `count()`, and the cursor cannot land on them).
+    pub bool is_collapsed = false;
+}
+
+/// How many body rows the hunk shows: all its lines, or none when folded.
+pub int Hunk.visible_lines() {
+    if (is_collapsed) {
+        return 0;
+    }
+    return lines.size();
 }
 
 /// Which kind of row the flattened view holds: a hunk's own header line, or
@@ -117,7 +128,7 @@ pub List<Row> DiffView.rows() {
     while (hunk_index < hunks.size()) {
         out.push(Row(RowKind.Header, hunk_index, -1));
         int line_index = 0;
-        while (line_index < hunks[hunk_index].lines.size()) {
+        while (line_index < hunks[hunk_index].lines.size() && !hunks[hunk_index].is_collapsed) {
             out.push(Row(RowKind.Body, hunk_index, line_index));
             line_index = line_index + 1;
         }
@@ -135,7 +146,7 @@ pub List<Row> DiffView.rows() {
 pub int DiffView.count() {
     int row_count = 0;
     for (Hunk hunk in hunks) {
-        row_count = row_count + 1 + hunk.lines.size();
+        row_count = row_count + 1 + hunk.visible_lines();
     }
     return row_count;
 }
@@ -153,7 +164,7 @@ Option<Row> DiffView.row_at(int index) {
             return Option<Row>.Some(Row(RowKind.Header, hunk_index, -1));
         }
         left = left - 1;
-        int line_count = hunks[hunk_index].lines.size();
+        int line_count = hunks[hunk_index].visible_lines();
         if (left < line_count) {
             return Option<Row>.Some(Row(RowKind.Body, hunk_index, left));
         }
@@ -185,6 +196,71 @@ pub void DiffView.move(int delta) {
         target = row_count - 1;
     }
     cursor = target;
+}
+
+/// The index into the flattened rows of hunk `hunk_index`'s header, or -1
+/// for a hunk that does not exist. Walks the hunks, not the rows.
+pub int DiffView.header_row(int hunk_index) {
+    if (hunk_index < 0 || hunk_index >= hunks.size()) {
+        return -1;
+    }
+    int row_index = 0;
+    for (int index in 0 .. hunk_index) {
+        row_index = row_index + 1 + hunks[index].visible_lines();
+    }
+    return row_index;
+}
+
+/// The hunk the cursor is in (on its header or on one of its lines), or -1
+/// when the view is empty.
+pub int DiffView.current_hunk() {
+    match (at()) {
+        case Some(Row row): {
+            return row.hunk;
+        }
+        case None: {
+            return -1;
+        }
+    }
+}
+
+/// Put the cursor back on `before` after folds changed which rows exist: the
+/// same line of the same hunk, or that hunk's header when the line is gone.
+void DiffView.keep_row(Option<Row> before) {
+    match (before) {
+        case Some(Row row): {
+            int base = header_row(row.hunk);
+            if (row.line >= 0 && !hunks[row.hunk].is_collapsed) {
+                base = base + 1 + row.line;
+            }
+            cursor = base;
+        }
+        case None: {
+            cursor = 0;
+        }
+    }
+}
+
+/// Fold or unfold hunk `hunk_index`. A cursor that was on one of its body
+/// rows moves to its header, so it never rests on a row that is gone.
+pub void DiffView.toggle_hunk(int hunk_index) {
+    if (hunk_index < 0 || hunk_index >= hunks.size()) {
+        return;
+    }
+    Option<Row> before = at();
+    hunks[hunk_index].is_collapsed = !hunks[hunk_index].is_collapsed;
+    keep_row(before);
+}
+
+/// Fold every hunk (`is_collapsed` true) or unfold every one; the cursor
+/// goes to the header of the hunk it was in when they fold, and stays on
+/// its line when they unfold.
+pub void DiffView.set_all_collapsed(bool is_collapsed) {
+    Option<Row> before = at();
+    for (int index in 0 .. hunks.size()) {
+        hunks[index].is_collapsed = is_collapsed;
+    }
+    keep_row(before);
 }
 
 // The token streams of hunk `hunk_index`, built the first time it is asked
@@ -353,7 +429,11 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
                 row_style = row_style.merged(highlight_style);
                 buffer.fill(TUI_geometry.Rect(area.x, y, area.width, 1), " ", row_style);
             }
-            buffer.set_str(area.x, y, TUI_text.truncate(hunks[hunk_index].header, area.width), row_style, max: area.width);
+            str header_text = hunks[hunk_index].header;
+            if (hunks[hunk_index].is_collapsed) {
+                header_text = header_text + "  \u{2026} (" + hunks[hunk_index].lines.size().to_str() + " lines)";
+            }
+            buffer.set_str(area.x, y, TUI_text.truncate(header_text, area.width), row_style, max: area.width);
         } else {
             Line line = hunks[hunk_index].lines[line_index];
             row_style = line_style(line);
@@ -370,7 +450,7 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
                 TUI_syntax.draw(buffer, area.x + 1, y, area.width - 1, line.text, classes_of(hunk_index, line_index), line_style(line), is_dark, over: over);
             }
         }
-        if (line_index + 1 < hunks[hunk_index].lines.size()) {
+        if (line_index + 1 < hunks[hunk_index].visible_lines()) {
             line_index = line_index + 1;
         } else {
             hunk_index = hunk_index + 1;

@@ -1,3 +1,17 @@
+# tui 0.7.0: foldable diff hunks
+
+Version 0.7.0, from 0.6.0 (ce8050c). **Nothing was renamed or removed**; this
+is an addition, so a program that depends on tui changes nothing but its pin.
+
+- `TUI_diff_view.Hunk` gains `is_collapsed` (default false). A collapsed hunk
+  keeps its header row and loses its body rows: they are not in `rows()` or
+  `count()`, `at()` never answers one, and the header is drawn with
+  `... (N lines)` after it.
+- `TUI_diff_view.DiffView` gains `header_row(hunk)` (the flattened index of a
+  hunk's header, -1 for none), `current_hunk()` (the hunk under the cursor),
+  `toggle_hunk(hunk)` and `set_all_collapsed(bool)`. They keep the cursor on
+  the same line, or on the hunk's header when its line is folded away.
+
 # tui 0.6.0: syntax highlighting (`TUI_syntax`)
 
 Version 0.6.0, from master 5327361 (v0.5.1). **Nothing was renamed or

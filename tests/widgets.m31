@@ -1085,6 +1085,36 @@ void mouse_tests(Tally tally) {
     check(tally, "back to the top", row_text(diff_view), "header 0");
     check(tally, "the wheel at the top is ignored", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.ScrollUp, 5, 2), diff_area).to_str(), "ignored");
     check(tally, "a click is not for it", diff_view.handle_mouse(TUI_mouse.Gesture(TUI_mouse.Kind.Click, 5, 2, clicks: 2), diff_area).to_str(), "ignored");
+    head("diff view: folding hunks");
+    TUI_diff_view.DiffView fold_view = TUI_diff_view.DiffView([first_hunk, second_hunk]);
+    check_int(tally, "unfolded: five body rows and two headers", fold_view.count(), 7);
+    check_int(tally, "header row of hunk 1", fold_view.header_row(1), 5);
+    check_int(tally, "header row of a missing hunk", fold_view.header_row(2), -1);
+    fold_view.cursor = 2;
+    check_int(tally, "the cursor is in hunk 0", fold_view.current_hunk(), 0);
+    fold_view.toggle_hunk(0);
+    check_int(tally, "hunk 0 folded: one header and the second hunk", fold_view.count(), 3);
+    check(tally, "the cursor went to the folded header", row_text(fold_view), "header 0");
+    check(tally, "rows: header, header, body", str(fold_view.rows().size()), "3");
+    check_int(tally, "header row of hunk 1 moves up", fold_view.header_row(1), 1);
+    fold_view.move(1);
+    check(tally, "next row is the second hunk's header", row_text(fold_view), "header 1");
+    fold_view.move(1);
+    check(tally, "then its line", row_text(fold_view), "body 1.0");
+    fold_view.toggle_hunk(0);
+    check(tally, "unfolding the first keeps the cursor on its line", row_text(fold_view), "body 1.0");
+    check_int(tally, "all rows again", fold_view.count(), 7);
+    fold_view.set_all_collapsed(true);
+    check_int(tally, "all folded: two headers", fold_view.count(), 2);
+    check(tally, "cursor on the header of the hunk it was in", row_text(fold_view), "header 1");
+    TUI_buffer.Buffer fold_buffer = TUI_buffer.Buffer.sized(40, 3);
+    fold_view.render(fold_buffer, TUI_geometry.Rect(0, 0, 40, 3));
+    check(tally, "a folded header says how many lines it hides", fold_buffer.row_text(0).trim(), "@@ -1,2 +1,3 @@  \u{2026} (4 lines)");
+    fold_view.set_all_collapsed(false);
+    check_int(tally, "all unfolded", fold_view.count(), 7);
+    check(tally, "toggle out of range is ignored", str(fold_view.hunks.size()), "2");
+    fold_view.toggle_hunk(9);
+    check_int(tally, "and changes nothing", fold_view.count(), 7);
 }
 
 TUI_outline.Outline sample_outline() {

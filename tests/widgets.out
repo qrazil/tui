@@ -1240,6 +1240,26 @@ ok   back to the top
 ok   the wheel at the top is ignored
 ok   a click is not for it
 
+== diff view: folding hunks ====================================
+ok   unfolded: five body rows and two headers
+ok   header row of hunk 1
+ok   header row of a missing hunk
+ok   the cursor is in hunk 0
+ok   hunk 0 folded: one header and the second hunk
+ok   the cursor went to the folded header
+ok   rows: header, header, body
+ok   header row of hunk 1 moves up
+ok   next row is the second hunk's header
+ok   then its line
+ok   unfolding the first keeps the cursor on its line
+ok   all rows again
+ok   all folded: two headers
+ok   cursor on the header of the hunk it was in
+ok   a folded header says how many lines it hides
+ok   all unfolded
+ok   toggle out of range is ignored
+ok   and changes nothing
+
 == app: sequences, timer, fold =================================
 ok   a default loop enters as before
 ok   and leaves as before
@@ -1324,4 +1344,4 @@ ok   no data still has a width
 ok   pinned ends win
 ok   reversed pins are repaired
 
--- 421 passed, 0 failed
+-- 439 passed, 0 failed
