@@ -5,7 +5,8 @@ ok   c header
 ok   cpp
 ok   rust
 ok   go
-ok   typescript is javascript
+ok   typescript
+ok   jsx is javascript
 ok   json
 ok   m31
 ok   markdown
@@ -20,8 +21,10 @@ ok   shebang sh
 ok   shebang node
 ok   unknown
 ok   dot in a directory is no extension
+ok   a well-known file name
 ok   dotfile name
-ok   twelve languages
+ok   at least the original twelve
+ok   html is known
 
 == classify ====================================================
 ok   keyword
@@ -47,7 +50,7 @@ ok   json constant
 ok   json string value
 ok   markdown heading
 ok   fence opens
-ok   code in a fence
+ok   code in a fence is highlighted in its language
 ok   fence closes
 ok   shell keyword
 ok   shell string
@@ -121,4 +124,4 @@ ok   cursor row keeps the token colour
 ok   only lines up to the screen are classified
 ok   scrolling one row classifies one line
 
--- 110 passed, 0 failed
+-- 113 passed, 0 failed

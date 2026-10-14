@@ -44,7 +44,8 @@ void language_tests(Tally tally) {
     check(tally, "cpp", TUI_syntax.language_of("x.hpp", ""), "cpp");
     check(tally, "rust", TUI_syntax.language_of("main.rs", ""), "rust");
     check(tally, "go", TUI_syntax.language_of("main.go", ""), "go");
-    check(tally, "typescript is javascript", TUI_syntax.language_of("a.tsx", ""), "javascript");
+    check(tally, "typescript", TUI_syntax.language_of("a.tsx", ""), "typescript");
+    check(tally, "jsx is javascript", TUI_syntax.language_of("a.jsx", ""), "javascript");
     check(tally, "json", TUI_syntax.language_of("a.json", ""), "json");
     check(tally, "m31", TUI_syntax.language_of("m3d1tor.m31", ""), "m31");
     check(tally, "markdown", TUI_syntax.language_of("README.md", ""), "markdown");
@@ -58,9 +59,11 @@ void language_tests(Tally tally) {
     check(tally, "shebang sh", TUI_syntax.language_of("tool", "#!/bin/bash"), "sh");
     check(tally, "shebang node", TUI_syntax.language_of("tool", "#!/usr/bin/env node"), "javascript");
     check(tally, "unknown", TUI_syntax.language_of("notes.txt", ""), "");
-    check(tally, "dot in a directory is no extension", TUI_syntax.language_of("a.d/Makefile", ""), "");
+    check(tally, "dot in a directory is no extension", TUI_syntax.language_of("a.d/notes", ""), "");
+    check(tally, "a well-known file name", TUI_syntax.language_of("a.d/Makefile", ""), "makefile");
     check(tally, "dotfile name", TUI_syntax.language_of("/home/u/.bashrc", ""), "sh");
-    check_int(tally, "twelve languages", TUI_syntax.languages().size(), 12);
+    check(tally, "at least the original twelve", str(TUI_syntax.languages().size() >= 12), "true");
+    check(tally, "html is known", str(TUI_syntax.languages().contains("html")), "true");
 }
 
 void classify_tests(Tally tally) {
@@ -98,7 +101,7 @@ void classify_tests(Tally tally) {
     TUI_syntax.Tokens fence = TUI_syntax.classify("markdown", "```rust", 0);
     check(tally, "fence opens", str(fence.state != 0), "true");
     TUI_syntax.Tokens inside = TUI_syntax.classify("markdown", "fn main() {}", fence.state);
-    check_int(tally, "code in a fence", inside.classes[0], TUI_syntax.STRING);
+    check_int(tally, "code in a fence is highlighted in its language", inside.classes[0], TUI_syntax.KEYWORD);
     TUI_syntax.Tokens fence_end = TUI_syntax.classify("markdown", "```", fence.state);
     check_int(tally, "fence closes", fence_end.state, 0);
     TUI_syntax.Tokens shell = TUI_syntax.classify("sh", "echo \"$HOME\" # c", 0);
@@ -165,13 +168,13 @@ void highlighter_tests(Tally tally) {
     highlighter.add("end */ return 0;");
     check_int(tally, "state carried to the last line", highlighter.classes(2)[0], TUI_syntax.COMMENT);
     check_int(tally, "and out of the comment", highlighter.classes(2)[7], TUI_syntax.KEYWORD);
-    check_int(tally, "all three classified", highlighter.done.size(), 3);
+    check_int(tally, "all three classified", highlighter.inner.valid, 3);
     TUI_syntax.Highlighter lazy = TUI_syntax.Highlighter("c");
     for (int index in 0 .. 50) {
         lazy.add("int a" + str(index) + ";");
     }
-    check_int(tally, "line 4 classifies only lines 0..4", lazy.classes(4).size() + lazy.done.size(), 7 + 5);
-    check_int(tally, "asking again classifies nothing more", lazy.classes(2).size() + lazy.done.size(), 7 + 5);
+    check_int(tally, "line 4 classifies only lines 0..4", lazy.classes(4).size() + lazy.inner.valid, 7 + 5);
+    check_int(tally, "asking again classifies nothing more", lazy.classes(2).size() + lazy.inner.valid, 7 + 5);
     check_int(tally, "out of range is empty", lazy.classes(99).size(), 0);
     TUI_syntax.Highlighter none = TUI_syntax.Highlighter("");
     none.add("int x;");
@@ -241,10 +244,10 @@ void diff_view_tests(Tally tally) {
     TUI_buffer.Buffer screen = TUI_buffer.Buffer.sized(60, 20);
     big.cursor = 2500;
     big.render(screen, screen.area());
-    check_int(tally, "only lines up to the screen are classified", big.syntax[0].new_side.done.size(), 2500);
+    check_int(tally, "only lines up to the screen are classified", big.syntax[0].new_side.inner.valid, 2500);
     big.move(1);
     big.render(screen, screen.area());
-    check_int(tally, "scrolling one row classifies one line", big.syntax[0].new_side.done.size(), 2501);
+    check_int(tally, "scrolling one row classifies one line", big.syntax[0].new_side.inner.valid, 2501);
 }
 
 Tally score = Tally();

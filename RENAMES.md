@@ -1,3 +1,24 @@
+# tui 0.8.0: TUI_syntax is an adapter over the `syntax` library
+
+Version 0.8.0, from 0.7.0 (2e1f7f5). **Nothing was renamed or removed**: the
+`TUI_syntax` API is the same (`language_of`, `languages`, `classify`,
+`Highlighter`, `class_style`, `spans`, `draw`, the twelve classes). The
+tokenizing now lives in github.com/qrazil/syntax (a new dependency, pinned in
+`deps`), which also backs the editor. Behaviour that changes with it:
+
+- `languages()` answers every language `syntax` knows (about sixty), not the
+  twelve it did; `language_of` knows more file names (Makefile, Dockerfile,
+  CMakeLists.txt, go.mod, .gitignore, ...), modelines and shebangs.
+- TypeScript and TSX are the language `typescript` (they were `javascript`);
+  `.jsonc` is `jsonc` (was `json`).
+- Fenced code in markdown is highlighted in the fence's language (it was one
+  string colour); strings and comments are classified the same way as before
+  and escapes inside strings are SPECIAL.
+- `classify` folds the library's richer classes (keys, calls, tags, diff
+  lines...) onto the original twelve, so styles are unchanged.
+- `Highlighter.done` is gone; `Highlighter.inner` is the `syntax` highlighter
+  (`inner.valid` is how many lines have a known start state).
+
 # tui 0.7.0: foldable diff hunks
 
 Version 0.7.0, from 0.6.0 (ce8050c). **Nothing was renamed or removed**; this
