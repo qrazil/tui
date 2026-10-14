@@ -16,6 +16,14 @@ tokenizing now lives in github.com/qrazil/syntax (a new dependency, pinned in
   and escapes inside strings are SPECIAL.
 - `classify` folds the library's richer classes (keys, calls, tags, diff
   lines...) onto the original twelve, so styles are unchanged.
+- The pinned `syntax` (v0.4.2) classifies where tree-sitter's parsers were
+  measurably different from the old lexer; the ones a TUI_syntax consumer
+  sees as class numbers: `#include` is KEYWORD (`#define` stays PREPROC);
+  shell commands (`echo`, `printf`, user functions) are FUNCTION, `$` and
+  lowercase variable names plain, `$NAME` a CONSTANT; a markdown heading's
+  `#` marker is TITLE (was SPECIAL), a link's url FUNCTION (was COMMENT),
+  list markers and task boxes SPECIAL; keys in YAML/INI/TOML/JSON are TYPE as
+  before. The full list is the library's RENAMES.md (0.2.0 and 0.3.0).
 - `Highlighter.done` is gone; `Highlighter.inner` is the `syntax` highlighter
   (`inner.valid` is how many lines have a known start state).
 

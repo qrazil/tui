@@ -89,8 +89,10 @@ void classify_tests(Tally tally) {
     check_int(tally, "comment ends", after.classes[4], TUI_syntax.COMMENT);
     check_int(tally, "keyword after", after.classes[7], TUI_syntax.KEYWORD);
     check_int(tally, "closed again", after.state, 0);
-    TUI_syntax.Tokens preproc = TUI_syntax.classify("c", "#include <stdio.h>", 0);
+    TUI_syntax.Tokens preproc = TUI_syntax.classify("c", "#define X 1", 0);
     check_int(tally, "preprocessor", preproc.classes[3], TUI_syntax.PREPROC);
+    TUI_syntax.Tokens include = TUI_syntax.classify("c", "#include <stdio.h>", 0);
+    check_int(tally, "include is the import keyword", include.classes[3], TUI_syntax.KEYWORD);
     TUI_syntax.Tokens json = TUI_syntax.classify("json", "{\"a\": [1, true, \"s\"]}", 0);
     check_int(tally, "json key", json.classes[2], TUI_syntax.TYPE);
     check_int(tally, "json number", json.classes[7], TUI_syntax.NUMBER);
@@ -105,11 +107,11 @@ void classify_tests(Tally tally) {
     TUI_syntax.Tokens fence_end = TUI_syntax.classify("markdown", "```", fence.state);
     check_int(tally, "fence closes", fence_end.state, 0);
     TUI_syntax.Tokens shell = TUI_syntax.classify("sh", "echo \"$HOME\" # c", 0);
-    check_int(tally, "shell keyword", shell.classes[0], TUI_syntax.KEYWORD);
-    check_int(tally, "shell string", shell.classes[6], TUI_syntax.STRING);
+    check_int(tally, "shell command", shell.classes[0], TUI_syntax.FUNCTION);
+    check_int(tally, "shell string", shell.classes[5], TUI_syntax.STRING);
     check_int(tally, "shell comment", shell.classes[15], TUI_syntax.COMMENT);
     TUI_syntax.Tokens variable = TUI_syntax.classify("sh", "x=$HOME/a", 0);
-    check_int(tally, "shell variable", variable.classes[2], TUI_syntax.SPECIAL);
+    check_int(tally, "shell variable name", variable.classes[3], TUI_syntax.CONSTANT);
     TUI_syntax.Tokens rust = TUI_syntax.classify("rust", "let c = 'a'; // x", 0);
     check_int(tally, "rust char", rust.classes[8], TUI_syntax.STRING);
     check_int(tally, "rust comment", rust.classes[14], TUI_syntax.COMMENT);

@@ -444,7 +444,10 @@ believe an older copy of this README that says otherwise.
 language is picked from a file name, every line is classified byte by byte
 from the state the line before it left behind, and the classes are turned into
 `TUI_style` styles in the terminal's own 16 colours (so they follow the user's
-scheme and are right at every `Depth`).
+scheme and are right at every `Depth`). The tokenizer and the language
+definitions (about eighty languages) are the shared
+[`syntax`](https://github.com/qrazil/syntax) library, a dependency of this one
+(pinned in `deps`); `TUI_syntax` is the adapter and the styling.
 
 ```c
 str lang = TUI_syntax.language_of("src/main.rs", "");   // "rust"; "" when unknown

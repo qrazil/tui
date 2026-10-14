@@ -44,6 +44,7 @@ ok   comment ends
 ok   keyword after
 ok   closed again
 ok   preprocessor
+ok   include is the import keyword
 ok   json key
 ok   json number
 ok   json constant
@@ -52,10 +53,10 @@ ok   markdown heading
 ok   fence opens
 ok   code in a fence is highlighted in its language
 ok   fence closes
-ok   shell keyword
+ok   shell command
 ok   shell string
 ok   shell comment
-ok   shell variable
+ok   shell variable name
 ok   rust char
 ok   rust comment
 ok   a lifetime is not a string
@@ -124,4 +125,4 @@ ok   cursor row keeps the token colour
 ok   only lines up to the screen are classified
 ok   scrolling one row classifies one line
 
--- 113 passed, 0 failed
+-- 114 passed, 0 failed

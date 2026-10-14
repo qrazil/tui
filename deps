@@ -3,4 +3,4 @@
 # dependency, and the examples/ and tests/ entries here import them by bare name.
 name tui
 version 0.8.0
-syntax https://github.com/qrazil/syntax 55907e6456db0f2319a16a74fabbc1df98b4771b
+syntax https://github.com/qrazil/syntax e49e01c32fba95d23b9ad2267a3cfaa967fb758b
