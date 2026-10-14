@@ -47,7 +47,16 @@ ok   json constant
 ok   json string value
 ok   markdown heading
 ok   fence opens
-ok   code in a fence
+ok   rust keyword in a rust fence
+ok   python def in a python fence
+ok   py is python
+ok   unknown fence language is plain code
+ok   markdown emphasis
+ok   markdown strong
+ok   markdown inline code
+ok   markdown link text
+ok   markdown rule
+ok   markdown table pipe
 ok   fence closes
 ok   shell keyword
 ok   shell string
@@ -121,4 +130,4 @@ ok   cursor row keeps the token colour
 ok   only lines up to the screen are classified
 ok   scrolling one row classifies one line
 
--- 110 passed, 0 failed
+-- 119 passed, 0 failed

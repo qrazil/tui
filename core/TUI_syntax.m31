@@ -546,44 +546,407 @@ Tokens classify_code(str lang, str line, int state) {
     return out;
 }
 
+// Markdown states: 0 outside a fence, IN_FENCE inside a fence of unknown
+// language (plain code colour), FENCE_BASE + 8 * n + inner inside a fence whose
+// language is injectable_languages()[n]; `inner` is that language's own state.
+const int FENCE_BASE = 100;
+
+List<str> injectable_languages() {
+    List<str> out = [];
+    for (str name in languages()) {
+        if (name != "markdown") {
+            out.push(name);
+        }
+    }
+    return out;
+}
+
+/// The language named by a fence's info string ("" when unknown), e.g. the
+/// "rust" of "```rust", "rs", "{.python}", "python title=x".
+str fence_language(str trimmed) {
+    int start = 0;
+    while (start < trimmed.size() && (trimmed.byte_at(start) == 96 || trimmed.byte_at(start) == 126)) {
+        start = start + 1;
+    }
+    str info = trimmed.substr(start, trimmed.size()).trim();
+    while (info.starts_with("{") || info.starts_with(".")) {
+        info = info.substr(1, info.size());
+    }
+    int stop = 0;
+    while (stop < info.size()) {
+        int byte = info.byte_at(stop);
+        if (byte == 32 || byte == 9 || byte == 44 || byte == 125 || byte == 123 || byte == 59) {
+            break;
+        }
+        stop = stop + 1;
+    }
+    str tag = info.substr(0, stop).to_lower();
+    if (tag.size() == 0) {
+        return "";
+    }
+    if (tag == "shell" || tag == "console" || tag == "terminal") {
+        return "sh";
+    }
+    if (tag == "c++") {
+        return "cpp";
+    }
+    if (tag == "golang") {
+        return "go";
+    }
+    if (tag == "python3") {
+        return "python";
+    }
+    if (tag == "typescript") {
+        return "javascript";
+    }
+    for (str name in injectable_languages()) {
+        if (name == tag) {
+            return name;
+        }
+    }
+    str by_extension = language_of("x." + tag, "");
+    if (by_extension == "markdown") {
+        return "";
+    }
+    return by_extension;
+}
+
+bool is_fence_line(str trimmed) {
+    return trimmed.starts_with("```") || trimmed.starts_with("~~~");
+}
+
+bool is_rule_line(str trimmed) {
+    if (trimmed.size() < 3) {
+        return false;
+    }
+    int marker = trimmed.byte_at(0);
+    if (marker != 45 && marker != 42 && marker != 95 && marker != 61) {
+        return false;
+    }
+    int count = 0;
+    for (int index in 0 .. trimmed.size()) {
+        int byte = trimmed.byte_at(index);
+        if (byte == marker) {
+            count = count + 1;
+        } else if (byte != 32 && byte != 9) {
+            return false;
+        }
+    }
+    return count >= 3;
+}
+
+// A table delimiter row: only | : - and spaces, with a dash and a pipe.
+bool is_table_delimiter(str trimmed) {
+    bool has_dash = false;
+    bool has_pipe = false;
+    for (int index in 0 .. trimmed.size()) {
+        int byte = trimmed.byte_at(index);
+        if (byte == 45) {
+            has_dash = true;
+        } else if (byte == 124) {
+            has_pipe = true;
+        } else if (byte != 58 && byte != 32 && byte != 9) {
+            return false;
+        }
+    }
+    return has_dash && has_pipe;
+}
+
+// The index just past the run of `byte` starting at `from`.
+int run_end(str line, int from, int byte) {
+    int index = from;
+    while (index < line.size() && line.byte_at(index) == byte) {
+        index = index + 1;
+    }
+    return index;
+}
+
+// Inline spans of [from, stop): code, links, images, autolinks, bare URLs,
+// emphasis (TYPE), strong (KEYWORD), strikethrough, HTML comments. Text that
+// matches nothing keeps the class painted before the call.
+void markdown_inline(List<int> classes, str line, int from, int stop) {
+    int index = from;
+    while (index < stop) {
+        int byte = line.byte_at(index);
+        int before = 0;
+        if (index > 0) {
+            before = line.byte_at(index - 1);
+        }
+        int next = 0;
+        if (index + 1 < line.size()) {
+            next = line.byte_at(index + 1);
+        }
+        if (byte == 92 && index + 1 < stop) {
+            index = index + 2;
+            continue;
+        }
+        if (byte == 96) {
+            int ticks = run_end(line, index, 96) - index;
+            int scan = index + ticks;
+            int found = -1;
+            while (scan < stop) {
+                if (line.byte_at(scan) == 96) {
+                    int length = run_end(line, scan, 96) - scan;
+                    if (length == ticks) {
+                        found = scan;
+                        break;
+                    }
+                    scan = scan + length;
+                } else {
+                    scan = scan + 1;
+                }
+            }
+            if (found >= 0) {
+                paint(classes, index, found + ticks, STRING);
+                index = found + ticks;
+            } else {
+                index = index + ticks;
+            }
+            continue;
+        }
+        if (byte == 60) {
+            if (line.substr(index, stop).starts_with("<!--")) {
+                int shut = line.substr(index, stop).index_of("-->").or(-1);
+                int end = stop;
+                if (shut >= 0) {
+                    end = index + shut + 3;
+                }
+                paint(classes, index, end, COMMENT);
+                index = end;
+                continue;
+            }
+            int shut = line.substr(index, stop).index_of(">").or(-1);
+            if (shut > 1) {
+                str inner = line.substr(index + 1, index + shut);
+                if (inner.starts_with("http://") || inner.starts_with("https://") || inner.starts_with("mailto:")) {
+                    paint(classes, index, index + shut + 1, FUNCTION);
+                    index = index + shut + 1;
+                    continue;
+                }
+            }
+        }
+        if (byte == 91 || (byte == 33 && next == 91)) {
+            int open = index;
+            if (byte == 33) {
+                open = index + 1;
+            }
+            int depth = 0;
+            int shut = -1;
+            int scan = open;
+            while (scan < stop) {
+                int c = line.byte_at(scan);
+                if (c == 92) {
+                    scan = scan + 2;
+                    continue;
+                }
+                if (c == 91) {
+                    depth = depth + 1;
+                } else if (c == 93) {
+                    depth = depth - 1;
+                    if (depth == 0) {
+                        shut = scan;
+                        break;
+                    }
+                }
+                scan = scan + 1;
+            }
+            if (shut > 0 && shut + 1 < stop && (line.byte_at(shut + 1) == 40 || line.byte_at(shut + 1) == 91)) {
+                int closer = 41;
+                if (line.byte_at(shut + 1) == 91) {
+                    closer = 93;
+                }
+                int url_end = -1;
+                int url_scan = shut + 2;
+                int parens = 0;
+                while (url_scan < stop) {
+                    int c = line.byte_at(url_scan);
+                    if (c == 40 && closer == 41) {
+                        parens = parens + 1;
+                    } else if (c == closer) {
+                        if (parens == 0) {
+                            url_end = url_scan;
+                            break;
+                        }
+                        parens = parens - 1;
+                    }
+                    url_scan = url_scan + 1;
+                }
+                if (url_end > 0) {
+                    paint(classes, index, shut + 1, FUNCTION);
+                    paint(classes, shut + 1, url_end + 1, COMMENT);
+                    index = url_end + 1;
+                    continue;
+                }
+            }
+            if (shut > 0 && line.substr(open + 1, shut).trim().size() > 0) {
+                // [text] on its own: a shortcut reference link, or a task box
+                str word = line.substr(open + 1, shut);
+                if (word != " " && word != "x" && word != "X") {
+                    paint(classes, index, shut + 1, FUNCTION);
+                    index = shut + 1;
+                    continue;
+                }
+            }
+            index = index + 1;
+            continue;
+        }
+        if (byte == 104 && (line.substr(index, stop).starts_with("http://") || line.substr(index, stop).starts_with("https://")) && !is_word_byte(before)) {
+            int end = index;
+            while (end < stop && line.byte_at(end) != 32 && line.byte_at(end) != 41 && line.byte_at(end) != 62 && line.byte_at(end) != 9) {
+                end = end + 1;
+            }
+            paint(classes, index, end, FUNCTION);
+            index = end;
+            continue;
+        }
+        if (byte == 126 && next == 126) {
+            int shut = line.substr(index + 2, stop).index_of("~~").or(-1);
+            if (shut > 0) {
+                paint(classes, index, index + 2 + shut + 2, COMMENT);
+                index = index + 2 + shut + 2;
+                continue;
+            }
+        }
+        if (byte == 42 || byte == 95) {
+            int length = run_end(line, index, byte) - index;
+            bool can_open = index + length < stop && line.byte_at(index + length) != 32 && line.byte_at(index + length) != 9;
+            if (byte == 95 && is_word_byte(before) && before != 95) {
+                can_open = false;
+            }
+            if (can_open && length <= 3) {
+                // find the closing run of the same length
+                int scan = index + length;
+                int found = -1;
+                while (scan < stop) {
+                    int c = line.byte_at(scan);
+                    if (c == 92) {
+                        scan = scan + 2;
+                        continue;
+                    }
+                    if (c == 96) {
+                        // skip a code span so `a*b` does not shut emphasis
+                        int ticks = run_end(line, scan, 96) - scan;
+                        int skip = line.substr(scan + ticks, stop).index_of(str.from_chars([96])).or(-1);
+                        if (skip >= 0) {
+                            scan = scan + ticks + skip + 1;
+                            continue;
+                        }
+                    }
+                    if (c == byte) {
+                        int run = run_end(line, scan, byte) - scan;
+                        bool closes = run >= length && line.byte_at(scan - 1) != 32 && scan > index + length;
+                        if (closes && byte == 95 && scan + length < line.size() && is_word_byte(line.byte_at(scan + length))) {
+                            closes = false;
+                        }
+                        if (closes) {
+                            found = scan;
+                            break;
+                        }
+                        scan = scan + run;
+                        continue;
+                    }
+                    scan = scan + 1;
+                }
+                if (found >= 0) {
+                    int class_value = TYPE;
+                    if (length >= 2) {
+                        class_value = KEYWORD;
+                    }
+                    paint(classes, index, found + length, class_value);
+                    index = found + length;
+                    continue;
+                }
+            }
+            index = index + length;
+            continue;
+        }
+        index = index + 1;
+    }
+}
+
 Tokens classify_markdown(str line, int state) {
     Tokens out = Tokens();
     for (int index in 0 .. line.size()) {
         out.classes.push(NORMAL);
     }
     str trimmed = line.trim();
-    bool is_fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+    bool is_fence = is_fence_line(trimmed);
     if (state == IN_FENCE) {
         paint(out.classes, 0, line.size(), STRING);
         if (is_fence) {
+            paint(out.classes, 0, line.size(), SPECIAL);
             out.state = 0;
         } else {
             out.state = IN_FENCE;
         }
         return out;
     }
+    if (state >= FENCE_BASE) {
+        if (is_fence) {
+            paint(out.classes, 0, line.size(), SPECIAL);
+            out.state = 0;
+            return out;
+        }
+        int slot = (state - FENCE_BASE) / 8;
+        int inner = (state - FENCE_BASE) - slot * 8;
+        List<str> names = injectable_languages();
+        if (slot >= names.size()) {
+            paint(out.classes, 0, line.size(), STRING);
+            out.state = state;
+            return out;
+        }
+        Tokens code = classify(names[slot], line, inner);
+        out.classes = code.classes;
+        out.state = FENCE_BASE + slot * 8 + code.state;
+        return out;
+    }
     if (is_fence) {
         paint(out.classes, 0, line.size(), SPECIAL);
+        str lang = fence_language(trimmed);
         out.state = IN_FENCE;
+        if (lang.size() > 0) {
+            int slot = 0;
+            List<str> names = injectable_languages();
+            for (int index in 0 .. names.size()) {
+                if (names[index] == lang) {
+                    slot = index;
+                }
+            }
+            out.state = FENCE_BASE + slot * 8;
+            int info_start = line.index_of(trimmed.substr(0, 1)).or(0);
+            info_start = run_end(line, info_start, trimmed.byte_at(0));
+            paint(out.classes, info_start, line.size(), TYPE);
+        }
         return out;
     }
     if (line.starts_with("#")) {
-        int hashes = 0;
-        while (hashes < line.size() && line.byte_at(hashes) == 35) {
-            hashes = hashes + 1;
-        }
+        int hashes = run_end(line, 0, 35);
         if (hashes <= 6 && (hashes == line.size() || line.byte_at(hashes) == 32)) {
             paint(out.classes, 0, line.size(), TITLE);
+            paint(out.classes, 0, hashes, SPECIAL);
+            markdown_inline(out.classes, line, hashes, line.size());
             return out;
         }
     }
-    if (trimmed.starts_with(">")) {
-        paint(out.classes, 0, line.size(), COMMENT);
+    if (is_rule_line(trimmed) || is_table_delimiter(trimmed)) {
+        paint(out.classes, 0, line.size(), SPECIAL);
         return out;
     }
     int start = 0;
     while (start < line.size() && (line.byte_at(start) == 32 || line.byte_at(start) == 9)) {
         start = start + 1;
+    }
+    if (start < line.size() && line.byte_at(start) == 62) {
+        int index = start;
+        while (index < line.size() && (line.byte_at(index) == 62 || line.byte_at(index) == 32)) {
+            if (line.byte_at(index) == 62) {
+                out.classes[index] = SPECIAL;
+            }
+            index = index + 1;
+        }
+        paint(out.classes, index, line.size(), COMMENT);
+        markdown_inline(out.classes, line, index, line.size());
+        return out;
     }
     if (start < line.size() && (line.byte_at(start) == 45 || line.byte_at(start) == 42 || line.byte_at(start) == 43) && start + 1 < line.size() && line.byte_at(start + 1) == 32) {
         out.classes[start] = SPECIAL;
@@ -598,38 +961,21 @@ Tokens classify_markdown(str line, int state) {
             start = stop + 2;
         }
     }
-    int index = start;
-    while (index < line.size()) {
-        int byte = line.byte_at(index);
-        if (byte == 96) {
-            int stop = line.substr(index + 1, line.size()).index_of("`").or(-1);
-            if (stop >= 0) {
-                paint(out.classes, index, index + 1 + stop + 1, STRING);
-                index = index + 1 + stop + 1;
-                continue;
+    // task list box: "- [ ] x" / "- [x] x"
+    if (start + 3 <= line.size() && line.byte_at(start) == 91 && line.byte_at(start + 2) == 93 && (start + 3 == line.size() || line.byte_at(start + 3) == 32)) {
+        int mark = line.byte_at(start + 1);
+        if (mark == 32 || mark == 120 || mark == 88) {
+            paint(out.classes, start, start + 3, CONSTANT);
+            start = start + 3;
+        }
+    }
+    markdown_inline(out.classes, line, start, line.size());
+    if (trimmed.starts_with("|")) {
+        for (int index in 0 .. line.size()) {
+            if (line.byte_at(index) == 124 && out.classes[index] == NORMAL) {
+                out.classes[index] = SPECIAL;
             }
         }
-        if (byte == 91) {
-            int close_text = line.substr(index, line.size()).index_of("](").or(-1);
-            if (close_text > 0) {
-                int close_url = line.substr(index + close_text, line.size()).index_of(")").or(-1);
-                if (close_url > 0) {
-                    paint(out.classes, index, index + close_text + 1, FUNCTION);
-                    paint(out.classes, index + close_text + 1, index + close_text + close_url + 1, COMMENT);
-                    index = index + close_text + close_url + 1;
-                    continue;
-                }
-            }
-        }
-        if ((byte == 42 || byte == 95) && index + 1 < line.size() && line.byte_at(index + 1) == byte) {
-            int stop = line.substr(index + 2, line.size()).index_of(str.from_chars([byte, byte])).or(-1);
-            if (stop >= 0) {
-                paint(out.classes, index, index + 2 + stop + 2, KEYWORD);
-                index = index + 2 + stop + 2;
-                continue;
-            }
-        }
-        index = index + 1;
     }
     return out;
 }
