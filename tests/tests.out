@@ -111,6 +111,32 @@ ok   buffers of one size diff
 the bytes of a small frame, readably:
   \e[0m\e[1;1Hhello\e[K\e[2;1H\e[K\e[3;1H\e[1mbye\e[22m\e[K
 
+== renderer: scrolled regions, synchronized output =============
+ok   scrolling up is shorter than rewriting
+ok   found: moves up two rows
+ok   found: region top
+ok   found: region bottom
+ok   scroll up: margins, line feeds on the last row, then only the two new rows
+ok   found: moves down one row
+ok   scroll down: reverse index on the first row, then the one new row
+ok   a text region above a status line: moves up three
+ok   and stops above the status row
+ok   a vertical split with one side scrolling is not a scroll
+ok   so diff_scrolled equals diff there
+ok   one cell: the same bytes as diff
+ok   unchanged frames: nothing
+ok   in place: the same bytes as the copying version
+ok   in place: previous now shows the scrolled screen
+ok   in place, downward
+ok   scrolled picture: rows 3,4 went up to 1,2; 3,4 blank; the rest stay
+ok   reply: mode 2026 is reset (supported)
+ok   reply: mode 2026 is set
+ok   reply: not recognised
+ok   reply: permanently reset
+ok   not a reply: another mode
+ok   not a reply: a key
+ok   the markers
+
 == block =======================================================
 +--------------------------------------------+
 |┌single───┐╔double═══╗╭──round──╮┏━━━━thick┓|
@@ -345,4 +371,4 @@ full redraw: 1210 bytes
 ok   a full frame is not empty
 ok   a diff against a blank frame is smaller than a full redraw
 
--- 175 passed, 0 failed
+-- 199 passed, 0 failed

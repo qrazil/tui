@@ -51,6 +51,18 @@ force instead is written up in `docs/FRICTION.md` §1.
 
 ---
 
+## 0.9.0: the renderer for smooth output
+
+* `TUI_diff.diff_scrolled` / `diff_scrolled_in_place`: a view that moved by a few lines is scrolled with a terminal
+  region (`CSI t;b r`, line feeds / reverse index, `CSI r`) and only the rows that opened up are written. It matches
+  whole identical rows only, so a vertical split or a sidebar that did not move falls back to `diff`.
+  `Buffer.scrolled`, `scroll_rows`, `copy`, `is_row_like`, `is_blank_row` support it.
+* `TUI_app.Loop`: synchronized output (DEC 2026) asked with DECRQM and used only when the terminal answers
+  (`should_sync`, `is_sync`); the real cursor and its DECSCUSR shape (`cursor`, `should_manage_cursor`); focus reports
+  (`should_report_focus`, `has_focus`); `is_input_queued` while a callback runs; `frame_count`, `last_frame_bytes`,
+  `last_frame_us`; `animate_ms` may be changed by a callback and is read every pass; the clock is `timer.monotonic_ns`
+  (it was the wall clock). Needs m31 0.5.0 (`timer`).
+
 ## The modules
 
 Twenty-eight, in three folders (see "Layout" below). They are all prefixed `TUI_` because module

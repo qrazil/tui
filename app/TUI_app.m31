@@ -90,9 +90,9 @@
 // them. That is a gap in `term`, recorded in docs/FRICTION.md section 23, not
 // something this module can close.
 
-import date;
 import io;
 import term;
+import timer;
 import core.TUI_buffer;
 import app.TUI_diff;
 import core.TUI_mouse;
@@ -185,6 +185,33 @@ pub type Loop {
     /// replayed keys or a paste costs one frame, not one per event. 0 draws
     /// after every event, as the loop did before.
     pub int drain_events = 512;
+    /// (Off by default, like every mode here: a program asks for it.)
+    /// Ask the terminal whether it does synchronized output (DEC mode 2026,
+    /// DECRQM) and, when it says yes, wrap every frame in it so a frame is
+    /// never seen half drawn. A terminal that does not answer gets plain frames.
+    pub bool should_sync = false;
+    /// Let the renderer scroll a region of the terminal (`TUI_diff.diff_scrolled`)
+    /// when that is shorter than rewriting it.
+    pub bool should_scroll = false;
+    /// Ask for focus reports (`\e[?1004h`); `has_focus` follows them.
+    pub bool should_report_focus = false;
+    /// Read-only state, kept by the loop: the terminal confirmed mode 2026.
+    pub bool is_sync = false;
+    /// Read-only: the terminal has focus (always true without focus reports).
+    pub bool has_focus = true;
+    /// Read-only: while a callback runs, whether more input is already waiting,
+    /// so an animation can be skipped rather than started against a queue.
+    pub bool is_input_queued = false;
+    /// Read-only: frames written so far, the last frame's size in bytes, and
+    /// how long it took (microseconds, drawing to the end of the write).
+    pub int frame_count = 0;
+    pub int last_frame_bytes = 0;
+    pub int last_frame_us = 0;
+    /// The real terminal cursor, set by the view while it draws: `x` < 0 hides it.
+    /// Shared like `router`. Without it the cursor stays hidden, as before.
+    pub Cursor cursor = Cursor();
+    /// The program sets `cursor` (and so its shape): put the shape back on the way out.
+    pub bool should_manage_cursor = false;
 }
 
 /// The bytes written on entry: `enter`, then the modes asked for.
@@ -198,6 +225,12 @@ pub str Loop.enter_sequence() {
     }
     if (should_report_paste) {
         modes = modes + term.PASTE_ON;
+    }
+    if (should_report_focus) {
+        modes = modes + "\x1b[?1004h";
+    }
+    if (should_sync) {
+        modes = modes + TUI_diff.SYNC_QUERY;
     }
     return enter + modes;
 }
@@ -214,6 +247,13 @@ pub str Loop.leave_sequence() {
             modes = modes + TUI_mouse.HOVER_OFF;
         }
         modes = modes + term.MOUSE_OFF;
+    }
+    if (should_report_focus) {
+        modes = modes + "\x1b[?1004l";
+    }
+    if (should_manage_cursor) {
+        // the cursor's shape is the user's again
+        modes = modes + "\x1b[0 q";
     }
     return modes + leave;
 }
@@ -234,6 +274,13 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
 
 /// `run`, with a timer (`animate_ms`, `on_tick`) and routed mouse gestures
 /// (`should_report_mouse`, `on_mouse`); see the header.
+///
+/// Each pass: wait for input (or the next tick), handle everything that has
+/// already arrived (`drain_events`), give the timer its turn, and only then
+/// draw -- once. So input is always handled before the next animation frame, and
+/// a burst of keys costs one frame. `animate_ms` and `tick_ms` are read every
+/// pass, so a callback may change them (an animation asks for 16 ms while it
+/// runs and gives it back).
 pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_event, Ticker on_tick, MouseHandler on_mouse) {
     if (!term.is_terminal(0)) {
         return Result<int, term.Error>.Err(term.Error.NotATerminal);
@@ -255,30 +302,58 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             // frame needs the last one's memory gone.
             TUI_buffer.Buffer previous = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
             TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
+            Shown shown = Shown();
             view.render(previous, previous.area());
-            writer.put_bytes(TUI_diff.full(previous, depth));
-            flush(writer);
+            present(writer, previous, previous, true, shown);
             bool is_running = true;
             int last_tick_ms = now_ms();
             while (is_running) {
                 bool should_redraw = false;
-                bool did_get_event = false;
+                is_input_queued = false;
                 match (reader.read(read_timeout_ms(tick_ms, animate_ms, now_ms() - last_tick_ms))) {
                     case Ok(term.Input inp): {
                         match (inp) {
                             case Got(term.Event event): {
-                                did_get_event = true;
-                                Action answer = dispatch(event, on_event, on_mouse);
-                                match (answer) {
-                                    case Continue: {
+                                // This event and every one already waiting, up to a
+                                // budget, before anything is drawn. One event of
+                                // look-ahead says whether input is queued behind
+                                // the one being handled.
+                                term.Event current = event;
+                                int batch_start_ms = now_ms();
+                                int handled = 0;
+                                bool is_more = true;
+                                bool was_cut = false;
+                                while (is_more && is_running) {
+                                    Option<term.Event> ahead = Option<term.Event>.None;
+                                    bool is_cut = true;
+                                    if (should_keep_draining(handled, drain_events) && now_ms() - batch_start_ms < BATCH_MS) {
+                                        ahead = read_ahead(reader);
+                                        is_cut = false;
                                     }
-                                    case Redraw: {
-                                        should_redraw = true;
+                                    // a batch cut short by its budget leaves input behind
+                                    is_input_queued = ahead.is_some() || (is_cut && drain_events > 0);
+                                    was_cut = is_cut && drain_events > 0;
+                                    match (dispatch(current, on_event, on_mouse)) {
+                                        case Continue: {
+                                        }
+                                        case Redraw: {
+                                            should_redraw = true;
+                                        }
+                                        case Quit: {
+                                            is_running = false;
+                                        }
                                     }
-                                    case Quit: {
-                                        is_running = false;
+                                    handled = handled + 1;
+                                    match (ahead) {
+                                        case Some(term.Event more): {
+                                            current = more;
+                                        }
+                                        case None: {
+                                            is_more = false;
+                                        }
                                     }
                                 }
+                                is_input_queued = was_cut;
                             }
                             case Timeout: {
                             }
@@ -289,38 +364,6 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     }
                     case Err(term.Error error): {
                         is_running = false;
-                    }
-                }
-                int drained = 0;
-                while (is_running && did_get_event && should_keep_draining(drained, drain_events)) {
-                    // What has already arrived, with a timeout of 0: no wait.
-                    match (reader.read(0)) {
-                        case Ok(term.Input more): {
-                            match (more) {
-                                case Got(term.Event event): {
-                                    drained = drained + 1;
-                                    match (dispatch(event, on_event, on_mouse)) {
-                                        case Continue: {
-                                        }
-                                        case Redraw: {
-                                            should_redraw = true;
-                                        }
-                                        case Quit: {
-                                            is_running = false;
-                                        }
-                                    }
-                                }
-                                case Timeout: {
-                                    drained = drain_events;
-                                }
-                                case End: {
-                                    is_running = false;
-                                }
-                            }
-                        }
-                        case Err(term.Error error): {
-                            is_running = false;
-                        }
                     }
                 }
                 if (is_running && animate_ms > 0) {
@@ -348,6 +391,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     bool did_resize = has_resized(window_size, now);
                     window_size = now;
                     if (should_redraw || did_resize) {
+                        int started_ns = timer.monotonic_ns();
                         if (did_resize) {
                             // A resize is the one time the buffers are
                             // replaced: the old pair is the wrong shape.
@@ -357,21 +401,70 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                             next.clear();
                         }
                         view.render(next, next.area());
-                        if (did_resize) {
-                            writer.put_bytes(TUI_diff.full(next, depth));
-                        } else {
-                            writer.put_bytes(TUI_diff.diff(previous, next, depth));
-                        }
-                        flush(writer);
-                        TUI_buffer.Buffer shown = previous;
+                        present(writer, previous, next, did_resize, shown);
+                        last_frame_us = (timer.monotonic_ns() - started_ns) / 1000;
+                        TUI_buffer.Buffer shown_buffer = previous;
                         previous = next;
-                        next = shown;
+                        next = shown_buffer;
                     }
                 }
             }
         }
     }
     return Result<int, term.Error>.Ok(0);
+}
+
+// Draw one frame: `next` against `previous` (or all of it), the cursor, and
+// the synchronized-output markers, as ONE write. Nothing is written for a frame
+// that changes nothing.
+void Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
+    bytes body = [];
+    if (is_full) {
+        body = TUI_diff.full(next, depth);
+    } else if (should_scroll) {
+        body = TUI_diff.diff_scrolled_in_place(previous, next, depth);
+    } else {
+        body = TUI_diff.diff(previous, next, depth);
+    }
+    bool is_cursor_wanted = cursor.x >= 0 && cursor.y >= 0;
+    bool did_cursor_change = is_cursor_wanted != shown.is_visible || (is_cursor_wanted && (cursor.x != shown.x || cursor.y != shown.y || cursor.shape != shown.shape));
+    if (body.size() == 0 && !did_cursor_change) {
+        last_frame_bytes = 0;
+        return;
+    }
+    bytes out = [];
+    if (is_sync) {
+        out.extend(TUI_diff.SYNC_BEGIN.to_bytes);
+    }
+    if (shown.is_visible && (body.size() > 0 || !is_cursor_wanted)) {
+        // never see the cursor wander while the frame is drawn
+        TUI_diff.hide_cursor(out);
+        shown.is_visible = false;
+    }
+    out.extend(body);
+    if (is_cursor_wanted) {
+        if (cursor.shape != shown.shape) {
+            TUI_style.push_csi(out);
+            TUI_style.push_int(out, cursor.shape);
+            out.push(' ');
+            out.push('q');
+            shown.shape = cursor.shape;
+        }
+        TUI_diff.move_to(out, cursor.x, cursor.y);
+        if (!shown.is_visible) {
+            TUI_diff.show_cursor(out);
+            shown.is_visible = true;
+        }
+        shown.x = cursor.x;
+        shown.y = cursor.y;
+    }
+    if (is_sync) {
+        out.extend(TUI_diff.SYNC_END.to_bytes);
+    }
+    last_frame_bytes = out.size();
+    frame_count = frame_count + 1;
+    writer.put_bytes(out);
+    flush(writer);
 }
 
 // One decoded event to the right callback: a mouse report to the router (when
@@ -395,9 +488,60 @@ Action Loop.dispatch(term.Event event, Handler on_event, MouseHandler on_mouse) 
             return on_event.handle(event);
         }
         case Unknown(bytes raw): {
+            int reply = TUI_diff.sync_reply(raw);
+            if (reply >= 0) {
+                // the answer to the mode 2026 question: the loop's own business
+                is_sync = reply == 1 && should_sync;
+                return Action.Continue;
+            }
+            if (should_report_focus && raw.size() == 3 && raw[0] == 27 && raw[1] == '[' && (raw[2] == 'I' || raw[2] == 'O')) {
+                has_focus = raw[2] == 'I';
+                return Action.Redraw;
+            }
             return on_event.handle(event);
         }
     }
+}
+
+/// Where the terminal's own cursor should be after a frame, and its shape:
+/// 0 the terminal's default, 1 / 2 block (blinking / steady), 3 / 4 underline,
+/// 5 / 6 bar (DECSCUSR). `x` < 0 means hidden.
+pub type Cursor {
+    pub int x = -1;
+    pub int y = -1;
+    pub int shape = 0;
+}
+
+/// What the loop has already told the terminal about the cursor.
+type Shown {
+    int x = -1;
+    int y = -1;
+    int shape = -1;
+    bool is_visible = false;
+}
+
+/// How long one pass may keep handling already-arrived events before it
+/// draws, whatever `drain_events` allows: a storm of input still gets frames.
+const int BATCH_MS = 8;
+
+// The next event if one has already arrived; never waits.
+Option<term.Event> read_ahead(term.Reader reader) {
+    match (reader.read(0)) {
+        case Ok(term.Input inp): {
+            match (inp) {
+                case Got(term.Event event): {
+                    return Option<term.Event>.Some(event);
+                }
+                case Timeout: {
+                }
+                case End: {
+                }
+            }
+        }
+        case Err(term.Error error): {
+        }
+    }
+    return Option<term.Event>.None;
 }
 
 /// How long a read may wait, in milliseconds: `tick_ms`, or less when a timer
@@ -436,7 +580,7 @@ pub int clamp_elapsed(int elapsed_ms) {
 }
 
 int now_ms() {
-    return date.now_ns() / 1000000;
+    return timer.monotonic_ns() / 1000000;
 }
 
 /// Two answers as one: Quit wins, then Redraw, then Continue.

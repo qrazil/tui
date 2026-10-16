@@ -452,6 +452,126 @@ pub void Buffer.clear() {
     }
 }
 
+/// Is row `y` of this buffer cell for cell the same as row `other_y` of
+/// `other`? Both buffers must be the same width (**traps** otherwise). This is
+/// what finds a scrolled region: row `y` of the new frame against row
+/// `y + d` of the one before it. A pass over three integer lists, ending at
+/// the first difference.
+pub bool Buffer.is_row_like(Buffer other, int y, int other_y) {
+    if (box.width != other.box.width) {
+        trap("TUI_buffer.Buffer.is_row_like: the buffers are not the same width");
+    }
+    if (y < box.y || y >= box.bottom() || other_y < other.box.y || other_y >= other.box.bottom()) {
+        trap("TUI_buffer.Buffer.is_row_like: outside the buffer");
+    }
+    int index = (y - box.y) * box.width;
+    int other_index = (other_y - other.box.y) * box.width;
+    int end = index + box.width;
+    while (index < end) {
+        if (styles[index] != other.styles[other_index] || widths[index] != other.widths[other_index] || symbols[index] != other.symbols[other_index]) {
+            return false;
+        }
+        index = index + 1;
+        other_index = other_index + 1;
+    }
+    return true;
+}
+
+/// Is row `y` all plain blanks (a space in the reset style in every cell)?
+pub bool Buffer.is_blank_row(int y) {
+    return tail_start(y) == box.x;
+}
+
+/// A copy of this buffer in which the rows `top` ..= `bottom` have moved up by
+/// `rows` (down when `rows` is negative), the way a terminal's scroll region
+/// moves them: the rows that fall off an edge are lost and the rows that open
+/// up at the other are plain blanks. Rows outside the region are copied as
+/// they are. This is the picture of the screen after the terminal has
+/// scrolled, which the renderer then diffs against.
+pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
+    Buffer out = Buffer.empty(box);
+    int width = box.width;
+    int first = top - box.y;
+    int last = bottom - box.y;
+    for (int row in 0 .. box.height) {
+        int source = row;
+        bool is_blank = false;
+        if (row >= first && row <= last) {
+            source = row + rows;
+            if (source < first || source > last) {
+                is_blank = true;
+            }
+        }
+        if (is_blank) {
+            continue;
+        }
+        int from = source * width;
+        int to = row * width;
+        for (int column in 0 .. width) {
+            out.symbols[to + column] = symbols[from + column];
+            out.styles[to + column] = styles[from + column];
+            out.widths[to + column] = widths[from + column];
+        }
+    }
+    return out;
+}
+
+/// An independent copy of this buffer: what a frame looked like before something
+/// was drawn over it (a fade-in needs the picture under the popup).
+pub Buffer Buffer.copy() {
+    return scrolled(box.y, box.y - 1, 0);
+}
+
+/// `scrolled`, in place: this buffer becomes the picture of the screen after
+/// the terminal scrolled the rows `top` ..= `bottom` up by `rows` (down when
+/// negative). The loop uses it on the frame it has just shown, which it is
+/// finished with, rather than allocating a copy of every cell.
+pub void Buffer.scroll_rows(int top, int bottom, int rows) {
+    int first = top - box.y;
+    int last = bottom - box.y;
+    if (rows > 0) {
+        for (int row in first .. last + 1) {
+            int source = row + rows;
+            if (source <= last) {
+                copy_row(source, row);
+            } else {
+                blank_row(row);
+            }
+        }
+    } else {
+        int row = last;
+        while (row >= first) {
+            int source = row + rows;
+            if (source >= first) {
+                copy_row(source, row);
+            } else {
+                blank_row(row);
+            }
+            row = row - 1;
+        }
+    }
+}
+
+void Buffer.copy_row(int from_row, int to_row) {
+    int width = box.width;
+    int from = from_row * width;
+    int to = to_row * width;
+    for (int column in 0 .. width) {
+        symbols[to + column] = symbols[from + column];
+        styles[to + column] = styles[from + column];
+        widths[to + column] = widths[from + column];
+    }
+}
+
+void Buffer.blank_row(int row) {
+    int to = row * box.width;
+    for (int column in 0 .. box.width) {
+        symbols[to + column] = " ";
+        styles[to + column] = 0;
+        widths[to + column] = 1;
+    }
+}
+
 /// Row `y` as text. A continuation contributes nothing, so the text's
 /// display width is the buffer's width.
 pub str Buffer.row_text(int y) {

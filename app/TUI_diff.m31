@@ -149,6 +149,217 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
     return out;
 }
 
+// --- scrolling a region instead of rewriting it ---------------------------------
+//
+// A view that moves by a few lines changes nearly every row of its window, and
+// plain `diff` writes nearly all of them. The terminal can move them itself: set
+// a scroll region (`\e[top;bottom r`), then a line feed at its last row scrolls it
+// up and a reverse index (`\eM`) at its first row scrolls it down. Those are the
+// oldest controls there are (VT100; GNU screen, tmux, ssh, every emulator) -- the
+// newer `CSI n S` / `CSI n T` are left alone because not all of them have those.
+//
+// `diff_scrolled` looks for a vertical shift `s` and a run of rows where row `y`
+// of the new frame is, cell for cell, row `y + s` of the old one and not blank.
+// If it finds one it emits the scroll, then diffs against the picture of the
+// screen the scroll leaves (`Buffer.scrolled`: the shifted rows, blanks where the
+// region opened up). A frame whose rows are only equal across the whole width
+// can be scrolled, so a vertical split or a sidebar that did not move too
+// never matches and falls back to `diff`: nothing here needs to know about
+// windows. It is taken only when the matching rows hold enough text to pay for the
+// escapes (`SCROLL_MIN_CELLS`), so it costs less than rewriting them.
+
+/// How many changed rows make a scroll worth looking for.
+const int SCROLL_MIN_CHANGED = 6;
+/// How many matching rows make a scroll worth its escapes.
+const int SCROLL_MIN_MATCHED = 4;
+/// How many cells of text those rows hold together: a row is at least a byte a cell,
+/// and the scroll costs about thirty bytes.
+const int SCROLL_MIN_CELLS = 48;
+
+/// What `find_scroll` found: the region and how far it moves (`rows` > 0: up).
+pub type Scroll {
+    pub int top = 0;
+    pub int bottom = 0;
+    pub int rows = 0;
+}
+
+/// The best vertical shift of `next` against `previous`, or a `Scroll` with
+/// `rows` 0 when there is none worth taking.
+pub Scroll find_scroll(TUI_buffer.Buffer previous, TUI_buffer.Buffer next) {
+    TUI_geometry.Rect area = next.area();
+    int height = area.height;
+    if (height < 8 || area.width < 1) {
+        return Scroll();
+    }
+    List<int> changed = [];
+    for (int y in area.y .. area.bottom()) {
+        if (!previous.is_same_row(next, y)) {
+            changed.push(y);
+        }
+    }
+    if (changed.size() < SCROLL_MIN_CHANGED) {
+        return Scroll();
+    }
+    List<bool> blank = [];
+    for (int y in area.y .. area.bottom()) {
+        blank.push(next.is_blank_row(y));
+    }
+    // Candidate shifts come from a few anchor rows (the first, middle and last
+    // changed non-blank rows): wherever the same row sits in the old frame is a
+    // shift worth counting. Trying every shift would cost rows x shifts.
+    List<int> candidates = [];
+    List<int> anchors = [];
+    for (int y in changed) {
+        if (!blank[y - area.y]) {
+            anchors.push(y);
+        }
+    }
+    if (anchors.size() < SCROLL_MIN_MATCHED) {
+        return Scroll();
+    }
+    List<int> picked = [anchors[0], anchors[anchors.size() / 2], anchors[anchors.size() - 1]];
+    for (int anchor in picked) {
+        for (int source in area.y .. area.bottom()) {
+            if (source != anchor && next.is_row_like(previous, anchor, source) && !candidates.contains(source - anchor)) {
+                candidates.push(source - anchor);
+            }
+        }
+    }
+    int best_matched = 0;
+    Scroll best = Scroll();
+    for (int shift in candidates) {
+        int matched = 0;
+        int cells = 0;
+        int first = -1;
+        int last = -1;
+        for (int y in changed) {
+            int source = y + shift;
+            if (source < area.y || source >= area.bottom() || blank[y - area.y]) {
+                continue;
+            }
+            if (next.is_row_like(previous, y, source)) {
+                matched = matched + 1;
+                cells = cells + next.tail_start(y) - area.x;
+                if (first < 0) {
+                    first = y;
+                }
+                last = y;
+            }
+        }
+        if (matched > best_matched && cells >= SCROLL_MIN_CELLS) {
+            best_matched = matched;
+            if (shift > 0) {
+                best = Scroll(top: first, bottom: last + shift, rows: shift);
+            } else {
+                best = Scroll(top: first + shift, bottom: last, rows: shift);
+            }
+        }
+    }
+    if (best_matched < SCROLL_MIN_MATCHED) {
+        return Scroll();
+    }
+    return best;
+}
+
+/// The bytes that make the terminal scroll `scroll`'s region, leaving the pen
+/// plain and the cursor wherever (the caller moves it absolutely).
+pub void push_scroll(bytes out, Scroll scroll) {
+    TUI_style.push_reset(out);
+    TUI_style.push_csi(out);
+    TUI_style.push_int(out, scroll.top + 1);
+    out.push(';');
+    TUI_style.push_int(out, scroll.bottom + 1);
+    out.push('r');
+    if (scroll.rows > 0) {
+        // a line feed on the region's last row scrolls it up
+        move_to(out, 0, scroll.bottom);
+        for (int i in 0 .. scroll.rows) {
+            out.push('\n');
+        }
+    } else {
+        // a reverse index on its first row scrolls it down
+        move_to(out, 0, scroll.top);
+        for (int i in 0 .. -scroll.rows) {
+            out.push(27);
+            out.push('M');
+        }
+    }
+    // no region again (and the cursor home, which nothing relies on)
+    TUI_style.push_csi(out);
+    out.push('r');
+}
+
+/// `diff`, but scrolling a region of the terminal when that is shorter than
+/// rewriting it. Same contract as `diff`: the pen starts and ends plain.
+pub bytes diff_scrolled(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Depth depth) {
+    Scroll scroll = find_scroll(previous, next);
+    if (scroll.rows == 0) {
+        return diff(previous, next, depth);
+    }
+    // Four or more whole rows that match is always worth the dozen bytes of
+    // escapes (a row costs at least that to write), so the plain diff is not
+    // computed to compare.
+    bytes out = [];
+    push_scroll(out, scroll);
+    out.extend(diff(previous.scrolled(scroll.top, scroll.bottom, scroll.rows), next, depth));
+    return out;
+}
+
+/// `diff_scrolled`, but `previous` is turned into the picture of the screen
+/// after the scroll instead of copied (it is the frame the caller has just
+/// shown and is about to throw away): the same bytes, without a copy of every
+/// cell. When nothing scrolls it is left as it was.
+pub bytes diff_scrolled_in_place(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Depth depth) {
+    Scroll scroll = find_scroll(previous, next);
+    if (scroll.rows == 0) {
+        return diff(previous, next, depth);
+    }
+    bytes out = [];
+    push_scroll(out, scroll);
+    previous.scroll_rows(scroll.top, scroll.bottom, scroll.rows);
+    out.extend(diff(previous, next, depth));
+    return out;
+}
+
+// --- synchronized output ----------------------------------------------------------
+//
+// DEC private mode 2026: between `\e[?2026h` and `\e[?2026l` the terminal holds
+// what it is given and shows it as one frame, so a frame is never seen half
+// drawn. A terminal that does not know the mode ignores the sequences, so
+// writing them is harmless; the loop still asks first (DECRQM, `\e[?2026$p`),
+// because a terminal that answers is a terminal that means it.
+
+/// Begin and end a synchronized update.
+pub const str SYNC_BEGIN = "\x1b[?2026h";
+pub const str SYNC_END = "\x1b[?2026l";
+/// The question: is mode 2026 supported?
+pub const str SYNC_QUERY = "\x1b[?2026$p";
+
+/// What a terminal's answer to `SYNC_QUERY` says: 1 supported (set or
+/// reset), 0 not supported (unknown or permanently reset), -1 these bytes are not
+/// that answer. The reply is `\e[?2026;Ps$y`: Ps 0 not recognised, 1 set, 2
+/// reset, 3 permanently set, 4 permanently reset.
+pub int sync_reply(bytes raw) {
+    str head = "\x1b[?2026;";
+    int n = head.size();
+    if (raw.size() < n + 3) {
+        return -1;
+    }
+    for (int i in 0 .. n) {
+        if (raw[i] != head.byte_at(i)) {
+            return -1;
+        }
+    }
+    int status = raw[n];
+    if (raw[n + 1] != '$' || raw[n + 2] != 'y' || raw.size() != n + 3) {
+        return -1;
+    }
+    if (status == '1' || status == '2' || status == '3') {
+        return 1;
+    }
+    return 0;
+}
+
 /// Does the cell at `x`, `y` have to be written again?
 bool has_changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int y) {
     return !previous.is_same_cell(next, x, y);

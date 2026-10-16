@@ -311,6 +311,83 @@ void text_tests(Tally tally) {
     check(tally, "drop_columns then cut reproduces a scrolled window", TUI_text.cut(TUI_text.drop_columns("the quick brown fox", 4), 5), "quick");
 }
 
+// --- 5b. scrolling a region instead of rewriting it ---------------------------
+
+// A frame of `rows` rows of 30 columns whose row r says "line <first + r> ...".
+TUI_buffer.Buffer numbered(int rows, int first) {
+    TUI_buffer.Buffer frame = TUI_buffer.Buffer.sized(30, rows);
+    for (int r in 0 .. rows) {
+        frame.set_str(0, r, "line " + str(first + r) + " " + str(first + r).repeat(6) + " fox", TUI_style.Style());
+    }
+    return frame;
+}
+
+void region_tests(Tally tally) {
+    head("renderer: scrolled regions, synchronized output");
+    TUI_style.Depth depth = TUI_style.Depth.Ansi16;
+    // the window moved down two lines: rows 2.. went up, two new rows at the bottom
+    TUI_buffer.Buffer before = numbered(10, 0);
+    TUI_buffer.Buffer after = numbered(10, 2);
+    bytes plain = TUI_diff.diff(before, after, depth);
+    bytes scrolled = TUI_diff.diff_scrolled(before, after, depth);
+    ok(tally, "scrolling up is shorter than rewriting", scrolled.size() < plain.size());
+    TUI_diff.Scroll found = TUI_diff.find_scroll(before, after);
+    check_int(tally, "found: moves up two rows", found.rows, 2);
+    check_int(tally, "found: region top", found.top, 0);
+    check_int(tally, "found: region bottom", found.bottom, 9);
+    check(tally, "scroll up: margins, line feeds on the last row, then only the two new rows", TUI_diff.show(scrolled), "\\e[0m\\e[1;10r\\e[10;1H\\n\\n\\e[r\\e[9;1Hline 10 101010101010 fox\\e[10;1Hline 11 111111111111 fox");
+    // the other way: reverse index on the first row
+    TUI_buffer.Buffer back = numbered(10, 0);
+    TUI_buffer.Buffer start = numbered(10, 1);
+    TUI_diff.Scroll down = TUI_diff.find_scroll(start, back);
+    check_int(tally, "found: moves down one row", down.rows, -1);
+    check(tally, "scroll down: reverse index on the first row, then the one new row", TUI_diff.show(TUI_diff.diff_scrolled(start, back, depth)), "\\e[0m\\e[1;10r\\e[1;1H\\eM\\e[r\\e[1;1Hline 0 000000 fox");
+    // a status row and a message row that did not move stay out of the region
+    TUI_buffer.Buffer framed_before = numbered(12, 0);
+    TUI_buffer.Buffer framed_after = numbered(12, 3);
+    framed_before.set_str(0, 10, "STATUS", TUI_style.Style(attrs: TUI_style.REVERSE));
+    framed_after.set_str(0, 10, "STATUS", TUI_style.Style(attrs: TUI_style.REVERSE));
+    framed_before.set_str(0, 11, "message", TUI_style.Style());
+    framed_after.set_str(0, 11, "message", TUI_style.Style());
+    TUI_diff.Scroll framed = TUI_diff.find_scroll(framed_before, framed_after);
+    check_int(tally, "a text region above a status line: moves up three", framed.rows, 3);
+    ok(tally, "and stops above the status row", framed.bottom <= 9);
+    // one half of the row changing (a split) is no shift: plain diff
+    TUI_buffer.Buffer left_before = TUI_buffer.Buffer.sized(30, 10);
+    TUI_buffer.Buffer left_after = TUI_buffer.Buffer.sized(30, 10);
+    for (int r in 0 .. 10) {
+        left_before.set_str(0, r, "left" + str(r) + "     |", TUI_style.Style());
+        left_before.set_str(14, r, "R" + str(r) + "-pane-static", TUI_style.Style());
+        left_after.set_str(0, r, "left" + str(r + 1) + "     |", TUI_style.Style());
+        left_after.set_str(14, r, "R" + str(r) + "-pane-static", TUI_style.Style());
+    }
+    check_int(tally, "a vertical split with one side scrolling is not a scroll", TUI_diff.find_scroll(left_before, left_after).rows, 0);
+    check(tally, "so diff_scrolled equals diff there", TUI_diff.show(TUI_diff.diff_scrolled(left_before, left_after, depth)), TUI_diff.show(TUI_diff.diff(left_before, left_after, depth)));
+    // a single changed cell is never a scroll
+    TUI_buffer.Buffer edited = numbered(10, 0);
+    edited.set_str(3, 4, "X", TUI_style.Style());
+    check(tally, "one cell: the same bytes as diff", TUI_diff.show(TUI_diff.diff_scrolled(numbered(10, 0), edited, depth)), TUI_diff.show(TUI_diff.diff(numbered(10, 0), edited, depth)));
+    check_int(tally, "unchanged frames: nothing", TUI_diff.diff_scrolled(numbered(10, 0), numbered(10, 0), depth).size(), 0);
+    // the in-place version gives the same bytes and leaves the picture behind
+    TUI_buffer.Buffer shown_before = numbered(10, 0);
+    check(tally, "in place: the same bytes as the copying version", TUI_diff.show(TUI_diff.diff_scrolled_in_place(shown_before, numbered(10, 2), depth)), TUI_diff.show(scrolled));
+    check(tally, "in place: previous now shows the scrolled screen", shown_before.to_str(), numbered(10, 0).scrolled(0, 9, 2).to_str());
+    TUI_buffer.Buffer shown_down = numbered(10, 1);
+    TUI_diff.diff_scrolled_in_place(shown_down, numbered(10, 0), depth);
+    check(tally, "in place, downward", shown_down.to_str(), numbered(10, 1).scrolled(0, 9, -1).to_str());
+    // Buffer.scrolled is the picture of the screen after the terminal's scroll
+    TUI_buffer.Buffer picture = numbered(6, 0).scrolled(1, 4, 2);
+    check(tally, "scrolled picture: rows 3,4 went up to 1,2; 3,4 blank; the rest stay", picture.to_str(), "line 0 000000 fox             \nline 3 333333 fox             \nline 4 444444 fox             \n                              \n                              \nline 5 555555 fox             ");
+    // synchronized output: the answer to the question
+    check_int(tally, "reply: mode 2026 is reset (supported)", TUI_diff.sync_reply("\x1b[?2026;2$y".to_bytes()), 1);
+    check_int(tally, "reply: mode 2026 is set", TUI_diff.sync_reply("\x1b[?2026;1$y".to_bytes()), 1);
+    check_int(tally, "reply: not recognised", TUI_diff.sync_reply("\x1b[?2026;0$y".to_bytes()), 0);
+    check_int(tally, "reply: permanently reset", TUI_diff.sync_reply("\x1b[?2026;4$y".to_bytes()), 0);
+    check_int(tally, "not a reply: another mode", TUI_diff.sync_reply("\x1b[?2004;1$y".to_bytes()), -1);
+    check_int(tally, "not a reply: a key", TUI_diff.sync_reply("\x1b[A".to_bytes()), -1);
+    check(tally, "the markers", TUI_diff.SYNC_BEGIN + TUI_diff.SYNC_END + TUI_diff.SYNC_QUERY, "\x1b[?2026h\x1b[?2026l\x1b[?2026$p");
+}
+
 // --- 5. the diffing renderer ------------------------------------------------
 
 void diff_tests(Tally tally) {
@@ -872,6 +949,7 @@ layout_tests(score);
 property_tests(score);
 text_tests(score);
 diff_tests(score);
+region_tests(score);
 block_tests(score);
 paragraph_tests(score);
 list_tests(score);
