@@ -210,6 +210,10 @@ pub type Loop {
     /// The real terminal cursor, set by the view while it draws: `x` < 0 hides it.
     /// Shared like `router`. Without it the cursor stays hidden, as before.
     pub Cursor cursor = Cursor();
+    /// Set by the program (or by a focus-in report) to have the next frame written in
+    /// full, not as a difference: the way to repair a screen something else wrote
+    /// on. The loop clears it after that frame.
+    pub bool should_repaint = false;
     /// The program sets `cursor` (and so its shape): put the shape back on the way out.
     pub bool should_manage_cursor = false;
 }
@@ -390,7 +394,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     term.Size now = screen_size();
                     bool did_resize = has_resized(window_size, now);
                     window_size = now;
-                    if (should_redraw || did_resize) {
+                    if (should_redraw || did_resize || should_repaint) {
                         int started_ns = timer.monotonic_ns();
                         if (did_resize) {
                             // A resize is the one time the buffers are
@@ -401,7 +405,8 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                             next.clear();
                         }
                         view.render(next, next.area());
-                        present(writer, previous, next, did_resize, shown);
+                        present(writer, previous, next, did_resize || should_repaint, shown);
+                        should_repaint = false;
                         last_frame_us = (timer.monotonic_ns() - started_ns) / 1000;
                         TUI_buffer.Buffer shown_buffer = previous;
                         previous = next;
@@ -496,6 +501,10 @@ Action Loop.dispatch(term.Event event, Handler on_event, MouseHandler on_mouse) 
             }
             if (should_report_focus && raw.size() == 3 && raw[0] == 27 && raw[1] == '[' && (raw[2] == 'I' || raw[2] == 'O')) {
                 has_focus = raw[2] == 'I';
+                if (has_focus) {
+                    // the terminal may have been drawn on while it was away
+                    should_repaint = true;
+                }
                 return Action.Redraw;
             }
             return on_event.handle(event);

@@ -262,6 +262,10 @@ pub void Buffer.set(int x, int y, Cell cell) {
     if (!box.has_point(x, y)) {
         return;
     }
+    if (has_control(cell.symbol)) {
+        set_str(x, y, cell.symbol, cell.style, max: 1);
+        return;
+    }
     int packed_style = cell.style.pack();
     if (cell.width >= 2) {
         if (x + 1 >= box.right()) {
@@ -341,7 +345,13 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
     int column = x;
     int used = 0;
     int last = -1;
-    for (str grapheme in unicode.graphemes(text)) {
+    for (str cluster in unicode.graphemes(text)) {
+        // a control character is never written to the terminal (it would be obeyed:
+        // a tab moves the cursor, ESC starts a sequence): its picture takes its cell
+        str grapheme = cluster;
+        if (is_control_cluster(cluster)) {
+            grapheme = control_picture(cluster);
+        }
         int grapheme_width = unicode.width(grapheme);
         if (grapheme_width == 0) {
             if (last >= 0) {
@@ -398,7 +408,11 @@ int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
 /// Fill `rect` with `symbol`, in `style`. Only the part inside the buffer is
 /// written.
 /// **Traps** on a symbol of no width, which would never finish the row.
-pub void Buffer.fill(TUI_geometry.Rect rect, str symbol, TUI_style.Style style) {
+pub void Buffer.fill(TUI_geometry.Rect rect, str symbol_in, TUI_style.Style style) {
+    str symbol = symbol_in;
+    if (has_control(symbol_in)) {
+        symbol = control_picture(symbol_in);
+    }
     int symbol_width = unicode.width(symbol);
     if (symbol_width <= 0) {
         trap("TUI_buffer.Buffer.fill: the fill symbol has no width");
@@ -608,6 +622,47 @@ pub str Buffer.frame() {
     }
     out.push(bar);
     return out.join("\n");
+}
+
+/// Does the cluster start with a C0 control, DEL or a C1 control (U+0080 to U+009F)?
+/// Those are the bytes a terminal acts on instead of drawing.
+bool is_control_cluster(str cluster) {
+    if (cluster.size() == 0) {
+        return false;
+    }
+    int first = cluster.byte_at(0);
+    if (first < 32 || first == 127) {
+        return true;
+    }
+    return first == 194 && cluster.size() >= 2 && cluster.byte_at(1) < 160;
+}
+
+/// Is there a control character anywhere in `text`?
+bool has_control(str text) {
+    int length = text.size();
+    for (int i in 0 .. length) {
+        int byte_value = text.byte_at(i);
+        if (byte_value < 32 || byte_value == 127) {
+            return true;
+        }
+        if (byte_value == 194 && i + 1 < length && text.byte_at(i + 1) < 160) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// What stands for a control character on screen: its Control Picture (U+2400 + the
+/// code, U+2421 for DEL), or U+FFFD for a C1 control. One column each.
+str control_picture(str cluster) {
+    int first = cluster.byte_at(0);
+    if (first < 32) {
+        return str.from_chars([9216 + first]);
+    }
+    if (first == 127) {
+        return str.from_chars([9249]);
+    }
+    return "\u{FFFD}";
 }
 
 /// Is every byte of `text`'s first `upto` bytes printable ASCII? Then every

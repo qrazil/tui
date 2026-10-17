@@ -80,12 +80,32 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             pen = write_style(out, pen, next.style_at(x, y), depth);
             next.append_symbol(out, x, y);
             x = x + cell_width;
+            if (is_uncertain(next, x - cell_width, y)) {
+                move_to(out, x, y);
+            }
         }
     }
     if (pen != TUI_style.RESET_STYLE) {
         TUI_style.push_reset(out);
     }
     return out;
+}
+
+/// How many columns after a cluster of uncertain width are written again.
+const int UNCERTAIN_REACH = 2;
+
+/// Is the cell at `x`, `y` a two-column cluster made of several code points (an emoji
+/// ZWJ sequence, a flag, a skin-tone or variation-selector emoji)? Terminals disagree on
+/// its width: those that segment grapheme clusters draw it in two columns, the others
+/// add up the code points (a family is 6, a flag 2 to 4). Every cell after it in the row
+/// is then in a different column on one of them. So the cursor is put back with an absolute
+/// move after it, and the two columns after it are always written again, which repairs
+/// the cells it overdrew -- on a terminal that agrees this costs a few bytes.
+pub bool is_uncertain(TUI_buffer.Buffer buffer, int x, int y) {
+    if (buffer.width_at(x, y) != 2) {
+        return false;
+    }
+    return buffer.symbol_at(x, y).size() > 4;
 }
 
 /// What has to be written to turn a terminal showing `previous` into one showing
@@ -113,13 +133,14 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
         }
         int tail = tail_start(next, y);
         int x = area.x;
+        int forced_until = -1;
         while (x < area.right()) {
             int cell_width = next.width_at(x, y);
             if (cell_width == 0) {
                 x = x + 1;
                 continue;
             }
-            if (!has_changed(previous, next, x, y)) {
+            if (x >= forced_until && !has_changed(previous, next, x, y)) {
                 x = x + cell_width;
                 continue;
             }
@@ -140,6 +161,13 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             pen = write_style(out, pen, next.style_at(x, y), depth);
             next.append_symbol(out, x, y);
             current_x = x + cell_width;
+            if (is_uncertain(next, x, y) || is_uncertain(previous, x, y)) {
+                // terminals disagree on how wide this cluster is (see `is_uncertain`):
+                // the cursor is not where it is believed to be, and the cells after it
+                // may have been overdrawn (or still hold the leftovers of the old one)
+                current_x = -1;
+                forced_until = x + cell_width + UNCERTAIN_REACH;
+            }
             x = x + cell_width;
         }
     }
@@ -382,7 +410,9 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
             x = x + 1;
             continue;
         }
-        if (next.style_at(x, y) != pen) {
+        if (next.style_at(x, y) != pen || is_uncertain(next, x, y)) {
+            // a style change costs more than a jump, and a cluster of uncertain width
+            // is never drawn again just to get across: the cursor would end up elsewhere
             is_same_style = false;
             x = target;
             continue;

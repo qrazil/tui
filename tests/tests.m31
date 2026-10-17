@@ -388,6 +388,61 @@ void region_tests(Tally tally) {
     check(tally, "the markers", TUI_diff.SYNC_BEGIN + TUI_diff.SYNC_END + TUI_diff.SYNC_QUERY, "\x1b[?2026h\x1b[?2026l\x1b[?2026$p");
 }
 
+// --- 5b. what is never written to a terminal, and clusters of uncertain width ----
+
+void safety_tests(Tally tally) {
+    head("control characters and uncertain widths");
+    TUI_style.Depth depth = TUI_style.Depth.Ansi16;
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(16, 2);
+    buffer.set_str(0, 0, "a\tb\x1b[31mc\x07\x7fd\r\ne", TUI_style.Style());
+    check(tally, "controls are drawn as pictures, one column each", buffer.row_text(0), "a\u{2409}b\u{241B}[31mc\u{2407}\u{2421}d\u{240D}e  ");
+    bytes frame = TUI_diff.full(buffer, depth);
+    ok(tally, "so no escape sequence is smuggled into the frame", !TUI_diff.show(frame).contains("\\e[31m"));
+    ok(tally, "and the bytes the text had stay text", TUI_diff.show(frame).contains("[31mc"));
+    TUI_buffer.Buffer c1 = TUI_buffer.Buffer.sized(8, 1);
+    c1.set_str(0, 0, "x\u{85}\u{9B}y", TUI_style.Style());
+    check(tally, "C1 controls become U+FFFD", c1.row_text(0), "x\u{FFFD}\u{FFFD}y    ");
+    TUI_buffer.Buffer one = TUI_buffer.Buffer.sized(4, 1);
+    one.set(0, 0, TUI_buffer.Cell("\x1b", style: TUI_style.Style(), width: 1));
+    check(tally, "a Cell holding ESC is drawn as a picture", one.row_text(0), "\u{241B}   ");
+    TUI_buffer.Buffer filled = TUI_buffer.Buffer.sized(3, 1);
+    filled.fill(TUI_geometry.Rect(0, 0, 3, 1), "\t", TUI_style.Style());
+    check(tally, "fill with a control", filled.row_text(0), "\u{2409}\u{2409}\u{2409}");
+    // a ZWJ family, a flag and a keycap: two columns by cluster, more on terminals that count code points
+    TUI_buffer.Buffer family = TUI_buffer.Buffer.sized(10, 1);
+    family.set_str(0, 0, "ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}cd|", TUI_style.Style());
+    TUI_buffer.Buffer blank = TUI_buffer.Buffer.sized(10, 1);
+    ok(tally, "a ZWJ family is uncertain", TUI_diff.is_uncertain(family, 2, 0));
+    ok(tally, "a plain wide character is not", !TUI_diff.is_uncertain(wide_cell(), 0, 0));
+    ok(tally, "text is not", !TUI_diff.is_uncertain(family, 0, 0));
+    check(tally, "full: the cursor is placed again after it", TUI_diff.show(TUI_diff.full(family, depth)), "\\e[0m\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|   ");
+    check(tally, "diff: placed again, and the two columns after it are written", TUI_diff.show(TUI_diff.diff(blank, family, depth)), "\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|");
+    TUI_buffer.Buffer same = TUI_buffer.Buffer.sized(10, 1);
+    same.set_str(0, 0, "ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}cd|", TUI_style.Style());
+    same.set_str(9, 0, "!", TUI_style.Style());
+    TUI_buffer.Buffer moved = TUI_buffer.Buffer.sized(10, 1);
+    moved.set_str(0, 0, "ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}cd|", TUI_style.Style());
+    moved.set_str(9, 0, "?", TUI_style.Style());
+    check(tally, "an unchanged cluster before a change is not written", TUI_diff.show(TUI_diff.diff(same, moved, depth)), "\\e[1;10H?");
+    TUI_buffer.Buffer gone = TUI_buffer.Buffer.sized(10, 1);
+    gone.set_str(0, 0, "abxxcd|", TUI_style.Style());
+    check(tally, "a cluster that goes away repaints the columns it overdrew", TUI_diff.show(TUI_diff.diff(family, gone, depth)), "\\e[1;3Hx\\e[1;4Hxc");
+    // a walk across unchanged cells never redraws such a cluster
+    TUI_buffer.Buffer flags = TUI_buffer.Buffer.sized(12, 1);
+    flags.set_str(1, 0, "\u{1F1E9}\u{1F1EA}", TUI_style.Style());
+    TUI_buffer.Buffer flags_edited = TUI_buffer.Buffer.sized(12, 1);
+    flags_edited.set_str(1, 0, "\u{1F1E9}\u{1F1EA}", TUI_style.Style());
+    flags_edited.set_str(0, 0, ">", TUI_style.Style());
+    flags_edited.set_str(4, 0, "<", TUI_style.Style());
+    check(tally, "the cluster is jumped, not walked", TUI_diff.show(TUI_diff.diff(flags, flags_edited, depth)), "\\e[1;1H>\\e[3C<");
+}
+
+TUI_buffer.Buffer wide_cell() {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(4, 1);
+    buffer.set_str(0, 0, "\u{6F22}", TUI_style.Style());
+    return buffer;
+}
+
 // --- 5. the diffing renderer ------------------------------------------------
 
 void diff_tests(Tally tally) {
@@ -949,6 +1004,7 @@ layout_tests(score);
 property_tests(score);
 text_tests(score);
 diff_tests(score);
+safety_tests(score);
 region_tests(score);
 block_tests(score);
 paragraph_tests(score);

@@ -111,6 +111,22 @@ ok   buffers of one size diff
 the bytes of a small frame, readably:
   \e[0m\e[1;1Hhello\e[K\e[2;1H\e[K\e[3;1H\e[1mbye\e[22m\e[K
 
+== control characters and uncertain widths =====================
+ok   controls are drawn as pictures, one column each
+ok   so no escape sequence is smuggled into the frame
+ok   and the bytes the text had stay text
+ok   C1 controls become U+FFFD
+ok   a Cell holding ESC is drawn as a picture
+ok   fill with a control
+ok   a ZWJ family is uncertain
+ok   a plain wide character is not
+ok   text is not
+ok   full: the cursor is placed again after it
+ok   diff: placed again, and the two columns after it are written
+ok   an unchanged cluster before a change is not written
+ok   a cluster that goes away repaints the columns it overdrew
+ok   the cluster is jumped, not walked
+
 == renderer: scrolled regions, synchronized output =============
 ok   scrolling up is shorter than rewriting
 ok   found: moves up two rows
@@ -371,4 +387,4 @@ full redraw: 1210 bytes
 ok   a full frame is not empty
 ok   a diff against a blank frame is smaller than a full redraw
 
--- 199 passed, 0 failed
+-- 213 passed, 0 failed
