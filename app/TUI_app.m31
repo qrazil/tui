@@ -201,6 +201,13 @@ pub type Loop {
     pub bool is_sync = false;
     /// Read-only: the terminal has focus (always true without focus reports).
     pub bool has_focus = true;
+    /// Read-only: how many focus reports (in or out) have arrived, so a program can
+    /// tell, in any callback, that focus moved since it last looked.
+    pub int focus_changes = 0;
+    /// A focus-in report has the next frame written in full (`should_repaint`):
+    /// whatever ran in the terminal while it was away may have drawn on the screen.
+    /// On by default, as it was; turn it off for a terminal that never does.
+    pub bool should_repaint_on_focus = true;
     /// Read-only: while a callback runs, whether more input is already waiting,
     /// so an animation can be skipped rather than started against a queue.
     pub bool is_input_queued = false;
@@ -690,9 +697,11 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
                 is_sync = reply == 1 && should_sync;
                 return Action.Continue;
             }
-            if (should_report_focus && raw.size() == 3 && raw[0] == 27 && raw[1] == '[' && (raw[2] == 'I' || raw[2] == 'O')) {
-                has_focus = raw[2] == 'I';
-                if (has_focus) {
+            int focus = focus_report(raw);
+            if (should_report_focus && focus >= 0) {
+                has_focus = focus == 1;
+                focus_changes = focus_changes + 1;
+                if (has_focus && should_repaint_on_focus) {
                     // the terminal may have been drawn on while it was away
                     should_repaint = true;
                 }
@@ -701,6 +710,21 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
             return on_event.handle(event);
         }
     }
+}
+
+/// What a focus report says: 1 the terminal gained focus (`CSI I`), 0 it lost it
+/// (`CSI O`), -1 these bytes are not one. Reports are sent after `CSI ? 1004 h`, which
+/// `should_report_focus` writes; a program with a loop of its own reads them with this.
+pub int focus_report(bytes raw) {
+    if (raw.size() == 3 && raw[0] == 27 && raw[1] == '[') {
+        if (raw[2] == 'I') {
+            return 1;
+        }
+        if (raw[2] == 'O') {
+            return 0;
+        }
+    }
+    return -1;
 }
 
 /// Where the terminal's own cursor should be after a frame, and its shape:

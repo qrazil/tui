@@ -604,11 +604,67 @@ str mok(str text) {
     }
 }
 
+// --- 5. focus reports (mode 1004) ------------------------------------------------------
+
+void focus_tests(Tally tally) {
+    head("focus reports");
+    check_int(tally, "report: focus in", TUI_app.focus_report("\x1b[I".to_bytes()), 1);
+    check_int(tally, "report: focus out", TUI_app.focus_report("\x1b[O".to_bytes()), 0);
+    check_int(tally, "report: an arrow is not one", TUI_app.focus_report("\x1b[A".to_bytes()), -1);
+    check_int(tally, "report: a longer sequence is not one", TUI_app.focus_report("\x1b[1;5I".to_bytes()), -1);
+    check_int(tally, "report: text is not one", TUI_app.focus_report("abc".to_bytes()), -1);
+    check_int(tally, "report: nothing is not one", TUI_app.focus_report([]), -1);
+    TUI_app.Loop loop = TUI_app.Loop(should_report_focus: true);
+    TST_emulator.Screen terminal = TST_emulator.Screen.sized(10, 2);
+    check_int(tally, "oracle: before the loop starts nothing is reported", terminal.focus(true).size(), 0);
+    terminal.feed(loop.enter_sequence().to_bytes());
+    ok(tally, "oracle: the enter sequence turns focus reporting on", terminal.is_focus_reporting);
+    Recorder recorder = Recorder();
+    for (term.Event event in term.decode(terminal.focus(false))) {
+        loop.dispatch(event, recorder, TUI_app.NoMouse());
+    }
+    ok(tally, "focus out: the loop knows", !loop.has_focus);
+    check_int(tally, "focus out: counted", loop.focus_changes, 1);
+    ok(tally, "focus out: no repaint", !loop.should_repaint);
+    check(tally, "focus out: the program's handler is not bothered", recorder.seen.join(","), "");
+    for (term.Event event in term.decode(terminal.focus(true))) {
+        loop.dispatch(event, recorder, TUI_app.NoMouse());
+    }
+    ok(tally, "focus in: the loop knows", loop.has_focus);
+    check_int(tally, "focus in: counted", loop.focus_changes, 2);
+    ok(tally, "focus in: the next frame is written in full", loop.should_repaint);
+    terminal.feed(loop.leave_sequence().to_bytes());
+    ok(tally, "oracle: the leave sequence turns it off", !terminal.is_focus_reporting);
+    ok(tally, "oracle: and a terminal not reporting says nothing", terminal.focus(true).size() == 0);
+    // something wrote on the screen while it was away: a full frame is what repairs it
+    TUI_buffer.Buffer shown = scene("old top", "old bottom");
+    TST_emulator.Screen away = TST_emulator.Screen.sized(12, 3);
+    away.show(shown);
+    away.feed("\x1b[1;3HXXXXXX\x1b[3;1HYYYY".to_bytes());
+    ok(tally, "oracle: the screen was drawn on", away.differs_from(shown) != "");
+    ok(tally, "oracle: a diff against what was believed to be shown writes nothing", TUI_diff.diff(shown, shown, TUI_style.Depth.Ansi16).size() == 0);
+    away.feed(TUI_diff.full(shown, TUI_style.Depth.Ansi16));
+    check(tally, "oracle: the full frame repairs it", away.differs_from(shown), "");
+    // the switch, and a program that did not ask
+    TUI_app.Loop calm = TUI_app.Loop(should_report_focus: true, should_repaint_on_focus: false);
+    calm.dispatch(term.decode("\x1b[I".to_bytes())[0], Recorder(), TUI_app.NoMouse());
+    ok(tally, "should_repaint_on_focus off: focus in repaints nothing", !calm.should_repaint);
+    check_int(tally, "should_repaint_on_focus off: but is counted", calm.focus_changes, 1);
+    TUI_app.Loop unasked = TUI_app.Loop();
+    Recorder own = Recorder();
+    unasked.dispatch(term.decode("\x1b[O".to_bytes())[0], own, TUI_app.NoMouse());
+    check(tally, "not asked: the report is the program's", own.seen.join(","), "unknown[1b5b4f]");
+    ok(tally, "not asked: has_focus stays true", unasked.has_focus);
+    check_int(tally, "not asked: not counted", unasked.focus_changes, 0);
+    ok(tally, "defaults: no focus mode in the enter or leave bytes", !(TUI_app.Loop().enter_sequence() + TUI_app.Loop().leave_sequence()).contains("1004"));
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
 hyperlink_tests(score);
 key_tests(score);
+focus_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

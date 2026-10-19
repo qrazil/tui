@@ -204,4 +204,32 @@ ok   unasked: Ctrl-i is Tab, Shift-Tab is BackTab, as always
 ok   late kitty answer after the attributes: still classic
 ok   late kitty answer: nothing queued
 
--- 197 passed, 0 failed
+== focus reports ===============================================
+ok   report: focus in
+ok   report: focus out
+ok   report: an arrow is not one
+ok   report: a longer sequence is not one
+ok   report: text is not one
+ok   report: nothing is not one
+ok   oracle: before the loop starts nothing is reported
+ok   oracle: the enter sequence turns focus reporting on
+ok   focus out: the loop knows
+ok   focus out: counted
+ok   focus out: no repaint
+ok   focus out: the program's handler is not bothered
+ok   focus in: the loop knows
+ok   focus in: counted
+ok   focus in: the next frame is written in full
+ok   oracle: the leave sequence turns it off
+ok   oracle: and a terminal not reporting says nothing
+ok   oracle: the screen was drawn on
+ok   oracle: a diff against what was believed to be shown writes nothing
+ok   oracle: the full frame repairs it
+ok   should_repaint_on_focus off: focus in repaints nothing
+ok   should_repaint_on_focus off: but is counted
+ok   not asked: the report is the program's
+ok   not asked: has_focus stays true
+ok   not asked: not counted
+ok   defaults: no focus mode in the enter or leave bytes
+
+-- 223 passed, 0 failed

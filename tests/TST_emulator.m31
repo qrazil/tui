@@ -416,6 +416,20 @@ pub bytes Screen.take_replies() {
     return taken;
 }
 
+/// What the terminal says when its window gains or loses focus: nothing unless
+/// focus reporting (mode 1004) is on.
+pub bytes Screen.focus(bool is_gained) {
+    bytes out = [];
+    if (!is_focus_reporting) {
+        return out;
+    }
+    out.extend("\x1b[I".to_bytes());
+    if (!is_gained) {
+        out = "\x1b[O".to_bytes();
+    }
+    return out;
+}
+
 /// The bytes this terminal sends when a key is pressed, under the keyboard mode
 /// it is in. `code` is a code point (9 Tab, 13 Enter, 27 Escape, 127 Backspace, or
 /// a character as it is typed) and `mods` the bits Shift 1, Alt 2, Ctrl 4. Written
