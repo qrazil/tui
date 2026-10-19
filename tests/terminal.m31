@@ -10,11 +10,13 @@
 // for byte. Like the other corpora: a `check` line prints `ok` or `FAIL`, and
 // what is printed is compared against tests/terminal.out.
 
+import encoding.base64;
 import os;
 import term;
 import app.TUI_app;
 import core.TUI_buffer;
 import app.TUI_diff;
+import core.TUI_osc;
 import core.TUI_style;
 import tests.TST_emulator;
 
@@ -120,8 +122,96 @@ void sync_tests(Tally tally) {
     check(tally, "default leave sequence", TUI_diff.show(today.leave_sequence().to_bytes()), "\\e[?25h\\e[0m\\e[?1049l");
 }
 
+// --- 2. the clipboard (OSC 52) -------------------------------------------------
+
+/// What base64 `data` says, as text; "<bad base64>" when it is not.
+str decoded(str data) {
+    match (base64.decode(data)) {
+        case Ok(bytes raw): {
+            match (raw.utf8()) {
+                case Some(str text): {
+                    return text;
+                }
+                case None: {
+                    return "<not utf-8>";
+                }
+            }
+        }
+        case Err(base64.Error error): {
+            return "<bad base64>";
+        }
+    }
+}
+
+/// What the clipboard holds after a terminal is fed `sequence`.
+str copied(bytes sequence) {
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(4, 1);
+    screen.feed(sequence);
+    return decoded(screen.clipboard_data);
+}
+
+void clipboard_tests(Tally tally) {
+    head("clipboard (OSC 52)");
+    check(tally, "the bytes, byte for byte", TUI_diff.show(TUI_osc.clipboard_sequence("hi")), "\\e]52;c;aGk=\\x07");
+    check(tally, "another target", TUI_diff.show(TUI_osc.clipboard_sequence("hi", target: "p")), "\\e]52;p;aGk=\\x07");
+    check_int(tally, "no text, nothing", TUI_osc.clipboard_sequence("").size(), 0);
+    check_int(tally, "a target that is not a clipboard, nothing", TUI_osc.clipboard_sequence("hi", target: "x").size(), 0);
+    check_int(tally, "a target of two letters, nothing", TUI_osc.clipboard_sequence("hi", target: "cc").size(), 0);
+    check_int(tally, "a limit of 0, nothing", TUI_osc.clipboard_sequence("hi", target: "c", limit: 0).size(), 0);
+    ok(tally, "the default limit keeps base64 under xterm's 100000", TUI_osc.CLIPBOARD_LIMIT / 3 * 4 + 4 <= 100000);
+    bytes huge = TUI_osc.clipboard_sequence("a".repeat(200000));
+    ok(tally, "a 200000-byte text is cut so the whole sequence stays under 100000 bytes", huge.size() <= 100000 && huge.size() > 90000);
+    // text is cut before it is encoded, and never inside a character or a cluster
+    check_int(tally, "fit: all of it", TUI_osc.clipboard_fit("hello", 100), 5);
+    check_int(tally, "fit: ascii cut at the limit", TUI_osc.clipboard_fit("hello", 3), 3);
+    check_int(tally, "fit: e-acute is 2 bytes, a cut of 2 keeps the h only", TUI_osc.clipboard_fit("h\u{E9}llo", 2), 1);
+    check_int(tally, "fit: a cut of 3 keeps h and e-acute", TUI_osc.clipboard_fit("h\u{E9}llo", 3), 3);
+    str family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    check_int(tally, "fit: a family is one cluster, 18 bytes: a cut inside it keeps none of it", TUI_osc.clipboard_fit("ab" + family, 10), 2);
+    check_int(tally, "fit: and a cut after it keeps all of it", TUI_osc.clipboard_fit("ab" + family, 20), 20);
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(10, 2);
+    screen.feed(TUI_osc.clipboard_sequence("h\u{E9}llo w\u{F6}rld", target: "c", limit: 4));
+    check(tally, "oracle: the terminal gets the cut text, valid UTF-8", decoded(screen.clipboard_data), "h\u{E9}l");
+    check(tally, "oracle: for the clipboard asked", screen.clipboard_target, "c");
+    check_int(tally, "oracle: one write", screen.clipboard_writes, 1);
+    ok(tally, "oracle: nothing else", screen.unknown.size() == 0);
+    // what is in the text cannot become a sequence
+    TST_emulator.Screen hostile = TST_emulator.Screen.sized(10, 2);
+    hostile.feed(TUI_osc.clipboard_sequence("a\x07\x1b]52;c;ZXZpbA==\x07\x1b[2Jb"));
+    check_int(tally, "oracle: ESC, BEL and a second OSC inside the text are data: one write", hostile.clipboard_writes, 1);
+    check(tally, "oracle: and arrive as they were", decoded(hostile.clipboard_data), "a\x07\x1b]52;c;ZXZpbA==\x07\x1b[2Jb");
+    ok(tally, "oracle: nothing was cleared, nothing unknown", hostile.unknown.size() == 0 && hostile.row_text(0) == "          ");
+    // the loop: a queue, an off switch, a cap
+    TUI_app.Loop loop = TUI_app.Loop();
+    check_int(tally, "loop: nothing queued at first", loop.take_output().size(), 0);
+    check_int(tally, "loop: copy answers the bytes it sent", loop.copy("hello"), 5);
+    bytes queued = loop.take_output();
+    check(tally, "loop: the queue holds the sequence", TUI_diff.show(queued), "\\e]52;c;aGVsbG8=\\x07");
+    check_int(tally, "loop: taking forgets", loop.take_output().size(), 0);
+    loop.copy("one");
+    loop.copy("two");
+    TST_emulator.Screen two = TST_emulator.Screen.sized(10, 2);
+    two.feed(loop.take_output());
+    check_int(tally, "loop: two copies are two writes, in order", two.clipboard_writes, 2);
+    check(tally, "loop: the last one wins", decoded(two.clipboard_data), "two");
+    loop.is_copy_allowed = false;
+    check_int(tally, "loop: with the switch off, copy sends 0", loop.copy("secret"), 0);
+    check_int(tally, "loop: and queues nothing", loop.take_output().size(), 0);
+    loop.is_copy_allowed = true;
+    loop.copy_limit = 3;
+    check_int(tally, "loop: a limit of 3 sends 3 of 5", loop.copy("hello"), 3);
+    check(tally, "loop: the terminal gets the cut", copied(loop.take_output()), "hel");
+    loop.copy_limit = 0;
+    check_int(tally, "loop: a limit of 0 sends nothing", loop.copy("hello"), 0);
+    loop.queue_output("\x1b[?25h".to_bytes());
+    check(tally, "loop: queue_output is written as it is", TUI_diff.show(loop.take_output()), "\\e[?25h");
+    // defaults keep today's bytes
+    ok(tally, "default enter and leave have no clipboard in them", !(TUI_app.Loop().enter_sequence() + TUI_app.Loop().leave_sequence()).contains("]52"));
+}
+
 Tally score = Tally();
 sync_tests(score);
+clipboard_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

@@ -96,6 +96,7 @@ import timer;
 import core.TUI_buffer;
 import app.TUI_diff;
 import core.TUI_mouse;
+import core.TUI_osc;
 import core.TUI_style;
 import core.TUI_widget;
 
@@ -216,6 +217,49 @@ pub type Loop {
     pub bool should_repaint = false;
     /// The program sets `cursor` (and so its shape): put the shape back on the way out.
     pub bool should_manage_cursor = false;
+    /// The off switch of `copy`: false and a copy writes nothing (a setting, a
+    /// policy, a terminal known not to take OSC 52). On by default, because a copy
+    /// is only ever written when the program calls `copy`.
+    pub bool is_copy_allowed = true;
+    /// The most bytes of text one `copy` puts on the clipboard (see `TUI_osc`).
+    pub int copy_limit = TUI_osc.CLIPBOARD_LIMIT;
+    /// Bytes to write as they are, in order, before the next frame (see `queue_output`).
+    bytes outbox = [];
+}
+
+/// Put `text` on the system clipboard (OSC 52, see `TUI_osc`): written before the
+/// next frame, even when nothing is redrawn, and still written when the same
+/// callback answers `Quit`. At most `copy_limit` bytes of it go, cut at a grapheme
+/// cluster. Answers how many bytes went: 0 when `is_copy_allowed` is false, when
+/// there is no text, or when `copy_limit` is not above 0, so a program can say
+/// "copied 3 lines" or "copy is off" truthfully, and compare with `text.size()` to
+/// say "truncated".
+pub int Loop.copy(str text) {
+    if (!is_copy_allowed) {
+        return 0;
+    }
+    bytes sequence = TUI_osc.clipboard_sequence(text, target: "c", limit: copy_limit);
+    if (sequence.size() == 0) {
+        return 0;
+    }
+    outbox.extend(sequence);
+    return TUI_osc.clipboard_fit(text, copy_limit);
+}
+
+/// Have `data` written to the terminal as it is, before the next frame, without
+/// going through the cell buffer: a sequence the program builds itself. The loop
+/// does not look at it; nothing here keeps it from moving the cursor or changing
+/// a mode, so it is for sequences the program means.
+pub void Loop.queue_output(bytes data) {
+    outbox.extend(data);
+}
+
+/// The queued output, which is forgotten: what the loop writes before a frame.
+/// A program with a loop of its own writes it the same way.
+pub bytes Loop.take_output() {
+    bytes taken = outbox;
+    outbox = [];
+    return taken;
 }
 
 /// The bytes written on entry: `enter`, then the modes asked for.
@@ -393,6 +437,12 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                             }
                         }
                     }
+                }
+                if (outbox.size() > 0) {
+                    // a copy, or other queued output, goes out even if the same
+                    // callback asked to quit
+                    writer.put_bytes(take_output());
+                    flush(writer);
                 }
                 if (is_running) {
                     term.Size now = screen_size();

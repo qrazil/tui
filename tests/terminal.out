@@ -19,4 +19,40 @@ ok   oracle: the leave sequence releases a screen held by a killed frame
 ok   default enter sequence
 ok   default leave sequence
 
--- 18 passed, 0 failed
+== clipboard (OSC 52) ==========================================
+ok   the bytes, byte for byte
+ok   another target
+ok   no text, nothing
+ok   a target that is not a clipboard, nothing
+ok   a target of two letters, nothing
+ok   a limit of 0, nothing
+ok   the default limit keeps base64 under xterm's 100000
+ok   a 200000-byte text is cut so the whole sequence stays under 100000 bytes
+ok   fit: all of it
+ok   fit: ascii cut at the limit
+ok   fit: e-acute is 2 bytes, a cut of 2 keeps the h only
+ok   fit: a cut of 3 keeps h and e-acute
+ok   fit: a family is one cluster, 18 bytes: a cut inside it keeps none of it
+ok   fit: and a cut after it keeps all of it
+ok   oracle: the terminal gets the cut text, valid UTF-8
+ok   oracle: for the clipboard asked
+ok   oracle: one write
+ok   oracle: nothing else
+ok   oracle: ESC, BEL and a second OSC inside the text are data: one write
+ok   oracle: and arrive as they were
+ok   oracle: nothing was cleared, nothing unknown
+ok   loop: nothing queued at first
+ok   loop: copy answers the bytes it sent
+ok   loop: the queue holds the sequence
+ok   loop: taking forgets
+ok   loop: two copies are two writes, in order
+ok   loop: the last one wins
+ok   loop: with the switch off, copy sends 0
+ok   loop: and queues nothing
+ok   loop: a limit of 3 sends 3 of 5
+ok   loop: the terminal gets the cut
+ok   loop: a limit of 0 sends nothing
+ok   loop: queue_output is written as it is
+ok   default enter and leave have no clipboard in them
+
+-- 52 passed, 0 failed
