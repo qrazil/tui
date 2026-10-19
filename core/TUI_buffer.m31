@@ -266,8 +266,10 @@ pub int Buffer.tail_start(int y) {
 ///
 /// `out.extend(b.symbol_at(x, y).to_bytes())` says the same thing and allocates
 /// a whole `bytes` object per cell to do it; this is the same loop without
-/// the allocation.
-pub void Buffer.append_symbol(bytes out, int x, int y) {
+/// the allocation. Answers how many bytes it appended, so a caller that
+/// needs to know whether the symbol is a long cluster (more than 3 bytes: not
+/// ASCII, Latin, Hangul, CJK or a box) does not ask the buffer again.
+pub int Buffer.append_symbol(bytes out, int x, int y) {
     if (!box.has_point(x, y)) {
         trap("TUI_buffer.Buffer.append_symbol: outside the buffer");
     }
@@ -276,6 +278,7 @@ pub void Buffer.append_symbol(bytes out, int x, int y) {
     for (int i in 0 .. byte_count) {
         out.push(text.byte_at(i));
     }
+    return byte_count;
 }
 
 /// The size in bytes of the symbol at `x`, `y`, without handing the symbol out (a
