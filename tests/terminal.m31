@@ -1,0 +1,129 @@
+// The 0.10.0 terminal features: synchronized output, the clipboard, hyperlinks,
+// the keyboard protocols, focus reports and the width of emoji.
+//
+//   bash tests/test.sh
+//
+// Nothing here needs a terminal. The bytes the library writes are applied to
+// `TST_emulator.Screen`, a small terminal emulator, and the screen is what is
+// checked: the terminal is the oracle, not the encoder's own idea of what it
+// meant. Where a feature is a pure encoder or decoder it is also checked byte
+// for byte. Like the other corpora: a `check` line prints `ok` or `FAIL`, and
+// what is printed is compared against tests/terminal.out.
+
+import os;
+import term;
+import app.TUI_app;
+import core.TUI_buffer;
+import app.TUI_diff;
+import core.TUI_style;
+import tests.TST_emulator;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void check_int(Tally tally, str name, int got, int want) {
+    check(tally, name, str(got), str(want));
+}
+
+void ok(Tally tally, str name, bool is_condition_true) {
+    check(tally, name, str(is_condition_true), "true");
+}
+
+void head(str text) {
+    print("");
+    print("== " + text + " " + "=".repeat(60 - text.size()));
+}
+
+/// A buffer with `text` on row 0 and `other` on row 2, 12 columns by 3 rows.
+TUI_buffer.Buffer scene(str text, str other) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(12, 3);
+    buffer.set_str(0, 0, text, TUI_style.Style());
+    buffer.set_str(0, 2, other, TUI_style.Style());
+    return buffer;
+}
+
+/// The bytes from `start` up to (not including) `stop`.
+bytes slice(bytes data, int start, int stop) {
+    bytes out = [];
+    for (int index in start .. stop) {
+        out.push(data[index]);
+    }
+    return out;
+}
+
+// --- 1. synchronized output (DEC mode 2026) -----------------------------------
+
+void sync_tests(Tally tally) {
+    head("synchronized output");
+    TUI_style.Depth depth = TUI_style.Depth.Ansi16;
+    TUI_buffer.Buffer before = scene("old top", "old bottom");
+    TUI_buffer.Buffer after = scene("new top", "new bottom");
+    bytes body = TUI_diff.diff(before, after, depth);
+    // the loop's frame: plain by default, wrapped once the terminal said yes
+    TUI_app.Loop loop = TUI_app.Loop();
+    bytes plain = loop.compose_frame(body, TUI_app.Shown());
+    check(tally, "not confirmed: the frame is the renderer's bytes, nothing around them", TUI_diff.show(plain), TUI_diff.show(body));
+    loop.is_sync = true;
+    bytes wrapped = loop.compose_frame(body, TUI_app.Shown());
+    check(tally, "confirmed: begin, the same bytes, end", TUI_diff.show(wrapped), "\\e[?2026h" + TUI_diff.show(body) + "\\e[?2026l");
+    check(tally, "TUI_diff.synchronized is the same wrapping", TUI_diff.show(TUI_diff.synchronized(body)), TUI_diff.show(wrapped));
+    check_int(tally, "an empty frame is not wrapped", TUI_diff.synchronized([]).size(), 0);
+    check_int(tally, "a frame that changes nothing writes nothing, confirmed or not", loop.compose_frame([], TUI_app.Shown()).size(), 0);
+    // the terminal as oracle: a screen that is shown half a frame
+    int middle = body.size() / 2;
+    while (middle < body.size() && body[middle] != 27) {
+        middle = middle + 1;
+    }
+    TST_emulator.Screen unsynced = TST_emulator.Screen.sized(12, 3);
+    unsynced.show(before);
+    unsynced.feed(slice(body, 0, middle));
+    ok(tally, "oracle: without the markers, half a frame is on show (a torn screen)", unsynced.differs_from(before) != "" && unsynced.differs_from(after) != "");
+    unsynced.feed(slice(body, middle, body.size()));
+    check(tally, "oracle: and the rest completes it", unsynced.differs_from(after), "");
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(12, 3);
+    screen.show(before);
+    int cut = wrapped.size() - 8 - (body.size() - middle);
+    screen.feed(slice(wrapped, 0, cut));
+    check(tally, "oracle: inside a synchronized update the viewer still sees the old frame", screen.differs_from(before), "");
+    ok(tally, "oracle: and the terminal is holding", screen.is_sync);
+    screen.feed(slice(wrapped, cut, wrapped.size() - 8));
+    check(tally, "oracle: even with the whole body written", screen.differs_from(before), "");
+    screen.feed(slice(wrapped, wrapped.size() - 8, wrapped.size()));
+    check(tally, "oracle: the end marker shows the new frame, whole", screen.differs_from(after), "");
+    check_int(tally, "oracle: one update ended", screen.sync_count, 1);
+    ok(tally, "oracle: no sequence the emulator did not understand", screen.unknown.size() == 0);
+    // a terminal killed in the middle of a frame is not left holding its screen
+    TUI_app.Loop asked = TUI_app.Loop(should_sync: true);
+    ok(tally, "leave: with sync asked, the first thing written on the way out ends it", asked.leave_sequence().starts_with("\x1b[?2026l"));
+    ok(tally, "enter: with sync asked, the question is written after the modes", asked.enter_sequence().ends_with("\x1b[?2026$p"));
+    TST_emulator.Screen held = TST_emulator.Screen.sized(12, 3);
+    held.feed("\x1b[?2026h".to_bytes());
+    held.feed(asked.leave_sequence().to_bytes());
+    ok(tally, "oracle: the leave sequence releases a screen held by a killed frame", !held.is_sync);
+    // defaults keep today's bytes
+    TUI_app.Loop today = TUI_app.Loop();
+    check(tally, "default enter sequence", TUI_diff.show(today.enter_sequence().to_bytes()), "\\e[?1049h\\e[?25l");
+    check(tally, "default leave sequence", TUI_diff.show(today.leave_sequence().to_bytes()), "\\e[?25h\\e[0m\\e[?1049l");
+}
+
+Tally score = Tally();
+sync_tests(score);
+print("");
+print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
+if (score.fail > 0) {
+    os.exit(1);
+}

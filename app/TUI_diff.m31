@@ -388,6 +388,20 @@ pub int sync_reply(bytes raw) {
     return 0;
 }
 
+/// `body` as one synchronized update: begin, the bytes, end. An empty `body` stays
+/// empty (a frame that changes nothing is not written at all). Write the result with
+/// ONE write, and only when the terminal has answered `SYNC_QUERY` (`sync_reply`).
+pub bytes synchronized(bytes body) {
+    bytes out = [];
+    if (body.size() == 0) {
+        return out;
+    }
+    out.extend(SYNC_BEGIN.to_bytes());
+    out.extend(body);
+    out.extend(SYNC_END.to_bytes());
+    return out;
+}
+
 /// Does the cell at `x`, `y` have to be written again?
 bool has_changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int y) {
     return !previous.is_same_cell(next, x, y);

@@ -1,0 +1,22 @@
+
+== synchronized output =========================================
+ok   not confirmed: the frame is the renderer's bytes, nothing around them
+ok   confirmed: begin, the same bytes, end
+ok   TUI_diff.synchronized is the same wrapping
+ok   an empty frame is not wrapped
+ok   a frame that changes nothing writes nothing, confirmed or not
+ok   oracle: without the markers, half a frame is on show (a torn screen)
+ok   oracle: and the rest completes it
+ok   oracle: inside a synchronized update the viewer still sees the old frame
+ok   oracle: and the terminal is holding
+ok   oracle: even with the whole body written
+ok   oracle: the end marker shows the new frame, whole
+ok   oracle: one update ended
+ok   oracle: no sequence the emulator did not understand
+ok   leave: with sync asked, the first thing written on the way out ends it
+ok   enter: with sync asked, the question is written after the modes
+ok   oracle: the leave sequence releases a screen held by a killed frame
+ok   default enter sequence
+ok   default leave sequence
+
+-- 18 passed, 0 failed

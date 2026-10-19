@@ -1,0 +1,368 @@
+// A small terminal emulator, the oracle the 0.10.0 tests ask what the bytes DO.
+//
+// It reads the bytes a renderer or a loop writes and keeps what a terminal would
+// show: the text of every cell, the hyperlink (OSC 8) of every cell, the cursor,
+// whether synchronized output (mode 2026) is holding the screen, the last OSC 52
+// clipboard write, and the keyboard modes asked for. It understands exactly what
+// this library writes -- cursor moves, erase, the private modes, OSC 8 and OSC 52,
+// SGR (read and ignored) -- and nothing else; a sequence it does not know is
+// counted in `unknown`, so a test can say that the library wrote none.
+//
+// It is not a second renderer: it never decides anything, it only applies bytes.
+// So "apply the diff to a screen showing `previous`, and the screen equals what
+// `next` says" is a real check of the diff, from outside it.
+
+import text.unicode;
+import core.TUI_buffer;
+import core.TUI_geometry;
+
+pub type Screen {
+    pub int columns = 0;
+    pub int rows = 0;
+    List<str> symbols = [];
+    List<str> links = [];
+    List<str> frozen_symbols = [];
+    List<str> frozen_links = [];
+    pub int cursor_x = 0;
+    pub int cursor_y = 0;
+    pub bool is_cursor_visible = true;
+    /// Mode 2026 is on: the screen a viewer sees is the one from when it went on.
+    pub bool is_sync = false;
+    /// How many times a synchronized update ended.
+    pub int sync_count = 0;
+    /// The link that new text is drawn with ("" for none).
+    pub str link = "";
+    /// The last OSC 52 write: its target (`c`, `p`...) and its base64 data.
+    pub str clipboard_target = "";
+    pub str clipboard_data = "";
+    pub int clipboard_writes = 0;
+    /// Kitty keyboard flags pushed and not yet popped, most recent last.
+    pub List<int> kitty_stack = [];
+    /// The last modifyOtherKeys level set (`CSI > 4 ; n m`); 0 when reset.
+    pub int modify_other_keys = 0;
+    pub bool is_focus_reporting = false;
+    /// Sequences it did not recognise, as they were written.
+    pub List<str> unknown = [];
+    /// Bytes that did not make UTF-8 (ignored).
+    pub int bad_bytes = 0;
+}
+
+pub static Screen Screen.sized(int columns, int rows) {
+    Screen screen = Screen(columns: columns, rows: rows);
+    for (int index in 0 .. columns * rows) {
+        screen.symbols.push(" ");
+        screen.links.push("");
+    }
+    return screen;
+}
+
+/// The screen a person looks at: while a synchronized update is open that is the
+/// screen as it was when the update began.
+pub str Screen.row_text(int y) {
+    List<str> parts = [];
+    for (int x in 0 .. columns) {
+        if (is_sync) {
+            parts.push(frozen_symbols[y * columns + x]);
+        } else {
+            parts.push(symbols[y * columns + x]);
+        }
+    }
+    return parts.join("");
+}
+
+/// Every row, joined by newlines (as `Buffer.to_str` prints a buffer).
+pub str Screen.to_str() {
+    List<str> out = [];
+    for (int y in 0 .. rows) {
+        out.push(row_text(y));
+    }
+    return out.join("\n");
+}
+
+pub str Screen.link_at(int x, int y) {
+    if (is_sync) {
+        return frozen_links[y * columns + x];
+    }
+    return links[y * columns + x];
+}
+
+/// Does this screen show exactly what `buffer` holds: the same text in every
+/// row, and the same link on every cell? Returns "" when it does, else what
+/// differs first.
+pub str Screen.differs_from(TUI_buffer.Buffer buffer) {
+    TUI_geometry.Rect area = buffer.area();
+    for (int y in 0 .. rows) {
+        if (row_text(y) != buffer.row_text(y + area.y)) {
+            return "row " + str(y) + ": screen [" + row_text(y) + "] buffer [" + buffer.row_text(y + area.y) + "]";
+        }
+    }
+    return "";
+}
+
+/// Put `buffer` on the screen the way a first frame would: every cell, with its link.
+pub void Screen.show(TUI_buffer.Buffer buffer) {
+    TUI_geometry.Rect area = buffer.area();
+    for (int y in 0 .. rows) {
+        for (int x in 0 .. columns) {
+            symbols[y * columns + x] = buffer.symbol_at(x + area.x, y + area.y);
+        }
+    }
+}
+
+pub void Screen.feed(bytes data) {
+    match (data.utf8()) {
+        case Some(str text): {
+            run(text.chars());
+        }
+        case None: {
+            bad_bytes = bad_bytes + 1;
+        }
+    }
+}
+
+void Screen.run(List<int> chars) {
+    int count = chars.size();
+    int index = 0;
+    while (index < count) {
+        int code = chars[index];
+        if (code == 27 && index + 1 < count) {
+            int kind = chars[index + 1];
+            if (kind == '[') {
+                index = csi(chars, index + 2);
+                continue;
+            }
+            if (kind == ']') {
+                index = osc(chars, index + 2);
+                continue;
+            }
+            if (kind == 'M') {
+                unknown.push("ESC M");
+                index = index + 2;
+                continue;
+            }
+            unknown.push("ESC " + str.from_chars([kind]));
+            index = index + 2;
+            continue;
+        }
+        if (code == 27) {
+            unknown.push("ESC at the end");
+            index = index + 1;
+            continue;
+        }
+        if (code < 32 || code == 127) {
+            unknown.push("control " + str(code));
+            index = index + 1;
+            continue;
+        }
+        print_char(code);
+        index = index + 1;
+    }
+}
+
+void Screen.print_char(int code) {
+    str symbol = str.from_chars([code]);
+    int width = unicode.width(symbol);
+    if (width == 0) {
+        // a combining mark or a joiner: it belongs to the cell before the cursor
+        int before = cursor_y * columns + cursor_x - 1;
+        if (cursor_x > 0 && before >= 0) {
+            int target = before;
+            if (symbols[target] == "" && target > 0) {
+                target = target - 1;
+            }
+            symbols[target] = symbols[target] + symbol;
+        }
+        return;
+    }
+    if (cursor_x + width > columns) {
+        return;
+    }
+    int index = cursor_y * columns + cursor_x;
+    symbols[index] = symbol;
+    links[index] = link;
+    if (width == 2) {
+        symbols[index + 1] = "";
+        links[index + 1] = link;
+    }
+    cursor_x = cursor_x + width;
+}
+
+// One CSI sequence starting at `from` (just past ESC [); the index after it.
+int Screen.csi(List<int> chars, int from) {
+    int count = chars.size();
+    int index = from;
+    int marker = 0;
+    if (index < count && chars[index] >= '<' && chars[index] <= '?') {
+        marker = chars[index];
+        index = index + 1;
+    }
+    List<int> parameters = [];
+    int current = -1;
+    str intermediates = "";
+    while (index < count) {
+        int code = chars[index];
+        if (code >= '0' && code <= '9') {
+            if (current < 0) {
+                current = 0;
+            }
+            current = current * 10 + code - '0';
+            index = index + 1;
+        } else if (code == ';') {
+            parameters.push(current);
+            current = -1;
+            index = index + 1;
+        } else if (code >= 32 && code <= 47) {
+            intermediates = intermediates + str.from_chars([code]);
+            index = index + 1;
+        } else if (code >= 64 && code <= 126) {
+            parameters.push(current);
+            apply_csi(marker, parameters, intermediates, code);
+            return index + 1;
+        } else {
+            unknown.push("bad CSI byte " + str(code));
+            return index + 1;
+        }
+    }
+    unknown.push("unfinished CSI");
+    return index;
+}
+
+void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int final) {
+    str name = "CSI " + str.from_chars([marker]) + intermediates + str.from_chars([final]);
+    if (marker == 0 && intermediates == "") {
+        if (final == 'H' || final == 'f') {
+            cursor_y = clamp(parameter_at(parameters, 0, 1) - 1, rows);
+            cursor_x = clamp(parameter_at(parameters, 1, 1) - 1, columns);
+            return;
+        }
+        if (final == 'C') {
+            cursor_x = clamp(cursor_x + parameter_at(parameters, 0, 1), columns);
+            return;
+        }
+        if (final == 'K') {
+            for (int x in cursor_x .. columns) {
+                symbols[cursor_y * columns + x] = " ";
+                links[cursor_y * columns + x] = "";
+            }
+            return;
+        }
+        if (final == 'J' && parameter_at(parameters, 0, 0) == 2) {
+            for (int index in 0 .. columns * rows) {
+                symbols[index] = " ";
+                links[index] = "";
+            }
+            return;
+        }
+        if (final == 'm') {
+            return;
+        }
+    }
+    if (marker == '?' && intermediates == "" && (final == 'h' || final == 'l')) {
+        bool is_on = final == 'h';
+        for (int mode in parameters) {
+            if (mode == 2026) {
+                set_sync(is_on);
+            } else if (mode == 25) {
+                is_cursor_visible = is_on;
+            } else if (mode == 1004) {
+                is_focus_reporting = is_on;
+            }
+        }
+        return;
+    }
+    if (final == 'q' && intermediates == " ") {
+        return;
+    }
+    if (final == 'u' && marker == '>') {
+        kitty_stack.push(parameter_at(parameters, 0, 0));
+        return;
+    }
+    if (final == 'u' && marker == '<') {
+        int pops = parameter_at(parameters, 0, 1);
+        for (int each in 0 .. pops) {
+            if (kitty_stack.size() > 0) {
+                kitty_stack.pop();
+            }
+        }
+        return;
+    }
+    if (final == 'm' && marker == '>' && parameter_at(parameters, 0, 0) == 4) {
+        modify_other_keys = parameter_at(parameters, 1, 0);
+        return;
+    }
+    unknown.push(name + " " + str(parameters.size()) + " parameters");
+}
+
+void Screen.set_sync(bool is_on) {
+    if (is_on && !is_sync) {
+        frozen_symbols = [];
+        frozen_links = [];
+        for (int index in 0 .. symbols.size()) {
+            frozen_symbols.push(symbols[index]);
+            frozen_links.push(links[index]);
+        }
+    }
+    if (!is_on && is_sync) {
+        sync_count = sync_count + 1;
+    }
+    is_sync = is_on;
+}
+
+// One OSC sequence starting at `from` (just past ESC ]), ended by BEL or ESC \.
+int Screen.osc(List<int> chars, int from) {
+    int count = chars.size();
+    int index = from;
+    List<int> body = [];
+    while (index < count) {
+        int code = chars[index];
+        if (code == 7) {
+            apply_osc(str.from_chars(body));
+            return index + 1;
+        }
+        if (code == 27 && index + 1 < count && chars[index + 1] == '\\') {
+            apply_osc(str.from_chars(body));
+            return index + 2;
+        }
+        body.push(code);
+        index = index + 1;
+    }
+    unknown.push("unfinished OSC");
+    return index;
+}
+
+void Screen.apply_osc(str body) {
+    List<str> parts = body.split(";");
+    if (parts.size() >= 3 && parts[0] == "8") {
+        // 8 ; parameters ; uri -- the uri may hold a ';' itself
+        List<str> rest = [];
+        for (int index in 2 .. parts.size()) {
+            rest.push(parts[index]);
+        }
+        link = rest.join(";");
+        return;
+    }
+    if (parts.size() == 3 && parts[0] == "52") {
+        clipboard_target = parts[1];
+        clipboard_data = parts[2];
+        clipboard_writes = clipboard_writes + 1;
+        return;
+    }
+    unknown.push("OSC " + body);
+}
+
+int parameter_at(List<int> parameters, int position, int fallback) {
+    if (position >= parameters.size() || parameters[position] < 0) {
+        return fallback;
+    }
+    return parameters[position];
+}
+
+int clamp(int value, int limit) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value >= limit) {
+        return limit - 1;
+    }
+    return value;
+}
