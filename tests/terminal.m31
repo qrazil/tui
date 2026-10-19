@@ -896,6 +896,156 @@ void input_tests(Tally tally) {
     check_int(tally, "another descriptor is that one", TUI_app.pick_input_fd(7, false, false), 7);
 }
 
+// --- 8. the after-frame hook and the raw mouse (0.11.0) ----------------------------------
+
+/// An `AfterFrame` that writes down what it was asked and answers a fixed sequence.
+type Painter {
+    bytes answer = [];
+    int calls = 0;
+    bool was_full = false;
+    str corner = "";
+}
+
+bytes Painter.after_frame(TUI_buffer.Buffer frame, bool is_full) {
+    calls = calls + 1;
+    was_full = is_full;
+    corner = frame.symbol_at(0, 0);
+    return answer;
+}
+
+/// A `MouseHandler` that counts the gestures it was given.
+type Counter {
+    int gestures = 0;
+}
+
+TUI_app.Action Counter.handle_mouse(TUI_mouse.Routed routed) {
+    gestures = gestures + 1;
+    return TUI_app.Action.Continue;
+}
+
+/// Where `needle` first occurs in `text`, -1 when it does not.
+int position(str text, str needle) {
+    int last = text.size() - needle.size();
+    for (int from_byte in 0 .. last + 1) {
+        bool is_match = true;
+        for (int offset in 0 .. needle.size()) {
+            if (text.byte_at(from_byte + offset) != needle.byte_at(offset)) {
+                is_match = false;
+                break;
+            }
+        }
+        if (is_match) {
+            return from_byte;
+        }
+    }
+    return -1;
+}
+
+/// Cursor-to-(x, y), then `text` scaled by OSC 66, as a program would write it.
+bytes scaled_at(int x, int y, str text) {
+    bytes out = [];
+    TUI_diff.move_to(out, x, y);
+    out.extend(("\x1b]66;s=2;" + text + "\x1b\\").to_bytes());
+    return out;
+}
+
+void after_frame_tests(Tally tally) {
+    head("after-frame hook");
+    TUI_style.Depth depth = TUI_style.Depth.Ansi16;
+    TUI_buffer.Buffer before = scene("old top", "old bottom");
+    TUI_buffer.Buffer after = scene("new top", "new bottom");
+    bytes body = TUI_diff.diff(before, after, depth);
+    bytes everything = TUI_diff.full(after, depth);
+    // no hook: the bytes of 0.10.0, whatever the loop is doing around them
+    TUI_app.Loop none = TUI_app.Loop(depth: depth);
+    check(tally, "no hook: a diff frame is compose_frame of the diff", TUI_diff.show(none.frame_bytes(before, after, false, TUI_app.Shown())), TUI_diff.show(none.compose_frame(body, TUI_app.Shown())));
+    check(tally, "no hook: a full frame is compose_frame of the full redraw", TUI_diff.show(none.frame_bytes(before, after, true, TUI_app.Shown())), TUI_diff.show(none.compose_frame(everything, TUI_app.Shown())));
+    check(tally, "no hook: compose_frame_with an empty extra is compose_frame", TUI_diff.show(none.compose_frame_with(body, [], TUI_app.Shown())), TUI_diff.show(none.compose_frame(body, TUI_app.Shown())));
+    TUI_app.Loop wanted = TUI_app.Loop(depth: depth, is_sync: true);
+    wanted.cursor.x = 3;
+    wanted.cursor.y = 1;
+    check(tally, "no hook, with sync and a cursor: still compose_frame", TUI_diff.show(wanted.frame_bytes(before, after, false, TUI_app.Shown())), TUI_diff.show(wanted.compose_frame(body, TUI_app.Shown())));
+    check_int(tally, "no hook: a frame that changes nothing writes nothing", none.frame_bytes(after, after, false, TUI_app.Shown()).size(), 0);
+    // a hook: its bytes follow the cells, in the same bytes
+    Painter painter = Painter();
+    painter.answer = scaled_at(2, 1, "hi");
+    TUI_app.Loop hooked = TUI_app.Loop(depth: depth);
+    hooked.after_frame = Option<TUI_app.AfterFrame>.Some(painter);
+    bytes frame = hooked.frame_bytes(before, after, false, TUI_app.Shown());
+    check(tally, "hook: the diff, then the hook's bytes", TUI_diff.show(frame), TUI_diff.show(body) + TUI_diff.show(painter.answer));
+    check_int(tally, "hook: asked once for the frame", painter.calls, 1);
+    ok(tally, "hook: told it was not a full frame", !painter.was_full);
+    check(tally, "hook: given the buffer the frame shows", painter.corner, "n");
+    hooked.frame_bytes(before, after, true, TUI_app.Shown());
+    ok(tally, "hook: told when the frame is a full one", painter.was_full);
+    check_int(tally, "hook: asked again, once", painter.calls, 2);
+    // a frame with no changed cell is written for the hook's bytes
+    check(tally, "hook, no cell changed: the hook's bytes alone", TUI_diff.show(hooked.frame_bytes(after, after, false, TUI_app.Shown())), TUI_diff.show(painter.answer));
+    painter.answer = [];
+    check_int(tally, "hook answering nothing, no cell changed: nothing is written", hooked.frame_bytes(after, after, false, TUI_app.Shown()).size(), 0);
+    check(tally, "hook answering nothing: the bytes are the frame's own", TUI_diff.show(hooked.frame_bytes(before, after, false, TUI_app.Shown())), TUI_diff.show(body));
+    // inside the synchronized update, and before the cursor is put back
+    painter.answer = scaled_at(2, 1, "hi");
+    hooked.is_sync = true;
+    hooked.cursor.x = 3;
+    hooked.cursor.y = 1;
+    str shown_frame = TUI_diff.show(hooked.frame_bytes(before, after, false, TUI_app.Shown()));
+    str sent = TUI_diff.show(painter.answer);
+    ok(tally, "hook with sync: begins with the marker and ends with its end", shown_frame.starts_with("\\e[?2026h") && shown_frame.ends_with("\\e[?2026l"));
+    ok(tally, "hook with sync: the hook's bytes are inside it", shown_frame.contains(sent));
+    int at_hook = position(shown_frame, sent);
+    int at_cursor = position(shown_frame, "\\e[2;4H");
+    ok(tally, "hook with a cursor: the cursor is put back after the hook's bytes", at_hook >= 0 && at_cursor > at_hook);
+    // the terminal as oracle: cells and the sequence arrive in one feed
+    TUI_app.Loop live = TUI_app.Loop(depth: depth);
+    Painter text = Painter();
+    text.answer = scaled_at(0, 1, "big");
+    live.after_frame = Option<TUI_app.AfterFrame>.Some(text);
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(12, 3);
+    live.cursor.x = 4;
+    live.cursor.y = 2;
+    screen.show(before);
+    screen.feed(live.frame_bytes(before, after, false, TUI_app.Shown()));
+    check(tally, "oracle: the cells are drawn", screen.differs_from(after), "");
+    check(tally, "oracle: the OSC 66 reached the terminal with them", screen.unknown.join(","), "OSC 66;s=2;big");
+    check_int(tally, "oracle: and the cursor the view asked for is put back after the hook moved it", screen.cursor_y * 100 + screen.cursor_x, 204);
+}
+
+void raw_mouse_tests(Tally tally) {
+    head("raw mouse");
+    TUI_app.Loop routed = TUI_app.Loop(should_report_mouse: true);
+    TUI_app.Loop raw = TUI_app.Loop(should_report_raw_mouse: true);
+    check(tally, "raw: the same mode bytes on entry as routed", TUI_diff.show(raw.enter_sequence().to_bytes()), TUI_diff.show(routed.enter_sequence().to_bytes()));
+    check(tally, "raw: the same mode bytes on the way out", TUI_diff.show(raw.leave_sequence().to_bytes()), TUI_diff.show(routed.leave_sequence().to_bytes()));
+    ok(tally, "raw: mouse reporting is in the enter sequence", raw.enter_sequence().contains(term.MOUSE_ON));
+    ok(tally, "raw: and taken off in the leave sequence", raw.leave_sequence().contains(term.MOUSE_OFF));
+    TUI_app.Loop hover = TUI_app.Loop(should_report_raw_mouse: true, should_report_hover: true);
+    ok(tally, "raw with hover: motion is asked for", hover.enter_sequence().contains(TUI_mouse.HOVER_ON) && hover.leave_sequence().contains(TUI_mouse.HOVER_OFF));
+    ok(tally, "off by default: no mouse mode in the default sequences", !(TUI_app.Loop().enter_sequence() + TUI_app.Loop().leave_sequence()).contains(term.MOUSE_ON));
+    TST_emulator.Screen terminal = TST_emulator.Screen.sized(12, 3);
+    terminal.feed(raw.enter_sequence().to_bytes());
+    terminal.feed(raw.leave_sequence().to_bytes());
+    ok(tally, "oracle: enter and leave leave nothing the emulator did not understand", terminal.unknown.size() == 0);
+    // dispatch: a report is an event for the program, and the router is not involved
+    term.Event press = term.decode("\x1b[<0;5;2M".to_bytes())[0];
+    Recorder seen = Recorder();
+    Counter gestures = Counter();
+    raw.dispatch(press, seen, gestures);
+    check_int(tally, "raw: the report reaches on_event", seen.seen.size(), 1);
+    check_int(tally, "raw: no gesture is routed", gestures.gestures, 0);
+    Recorder none = Recorder();
+    routed.dispatch(press, none, gestures);
+    check_int(tally, "routed: on_event does not see the report (unchanged)", none.seen.size(), 0);
+    ok(tally, "routed: the gesture goes to on_mouse (unchanged)", gestures.gestures > 0);
+    Recorder off = Recorder();
+    TUI_app.Loop().dispatch(press, off, Counter());
+    check_int(tally, "neither asked: a report is on_event's, as before", off.seen.size(), 1);
+    Recorder both = Recorder();
+    Counter routing = Counter();
+    TUI_app.Loop(should_report_mouse: true, should_report_raw_mouse: true).dispatch(press, both, routing);
+    check_int(tally, "both asked: routing wins, on_event sees nothing", both.seen.size(), 0);
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
@@ -906,6 +1056,8 @@ width_table_tests(score);
 uncertainty_tests(score);
 reply_tests(score);
 input_tests(score);
+after_frame_tests(score);
+raw_mouse_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

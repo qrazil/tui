@@ -16,6 +16,9 @@
 //                                 the same, with a timer and routed mouse gestures
 //   interface TUI_app.Ticker { Action tick(int elapsed_ms); }
 //   interface TUI_app.MouseHandler { Action handle_mouse(TUI_mouse.Routed routed); }
+//   interface TUI_app.AfterFrame { bytes after_frame(TUI_buffer.Buffer frame, bool is_full); }
+//   loop.after_frame = Option.Some(hook)   bytes written in the same write as each frame (v0.11.0)
+//   loop.frame_bytes(previous, next, is_full, shown)   the bytes of one frame, hook included
 //   loop.enter_sequence() / loop.leave_sequence()   the exact bytes written in / out
 //   TUI_app.read_timeout_ms(...)  how long a read may wait; TUI_app.clamp_elapsed(...)
 //   TUI_app.has_resized(a, b)     whether two window sizes differ -- pulled
@@ -80,6 +83,20 @@
 //
 //     router.begin_frame(); router.add("files", files_area); ...
 //
+// **Raw mouse (v0.11.0).** `should_report_raw_mouse` asks for the same reports
+// (and `should_report_hover` adds motion) but does no routing: each report is an
+// `Event.Mouse` for `on_event`, as it came, and `on_mouse` is never called. A
+// program that does its own hit testing gets the mode bytes from the loop (written
+// on entry, taken off on the way out with the rest) instead of writing them in
+// `enter` and `leave`. With both flags on, routing wins.
+//
+// **After a frame (v0.11.0).** `after_frame` holds a hook that is asked, for every
+// frame about to be written, for bytes that are not cells: scaled text (OSC 66),
+// kitty graphics. They are appended to the frame's own bytes, after the cells and
+// before the cursor is put back, so the terminal gets them in the same write (and
+// inside the synchronized-output markers once confirmed). Nothing is set by default
+// and then the bytes of a frame are exactly what they were.
+//
 // **Leaving.** The leave sequence, mouse and paste modes off first, goes to
 // `Session.on_exit` BEFORE the enter sequence is written, so there is no window
 // in which the modes are on and nothing will turn them off. It runs from the
@@ -135,6 +152,21 @@ pub interface MouseHandler {
     Action handle_mouse(TUI_mouse.Routed routed);
 }
 
+/// A hook asked for the extra bytes of a frame (`Loop.after_frame`): called once
+/// per frame, after the diff is composed and before anything is written, with the
+/// buffer the frame shows (`frame`) and whether the frame writes every cell
+/// (`is_full`: the first frame, a resize, a repaint, so whatever the program had on
+/// the screen besides cells is gone and has to be sent again). The bytes it answers
+/// are written after the cells, with the pen reset and the cursor wherever the
+/// cells left it, so a sequence should begin with its own absolute move
+/// (`TUI_diff.move_to`); the cursor is put back after them. An empty answer adds
+/// nothing, and a frame that changed no cell is still written when the hook answers
+/// bytes, so a hook that always answers writes on every drawn frame. The hook may
+/// read `frame` and must not change it.
+pub interface AfterFrame {
+    bytes after_frame(TUI_buffer.Buffer frame, bool is_full);
+}
+
 /// The `Ticker` that does nothing, for a loop with no timer.
 pub type NoTicker {
     pub int unused = 0;
@@ -174,7 +206,12 @@ pub type Loop {
     pub str leave = term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF;
     /// Ask the terminal for mouse reports and route them (see the header).
     pub bool should_report_mouse = false;
-    /// Also report motion with no button down (needs `should_report_mouse`).
+    /// Ask for mouse reports (as `should_report_mouse` does) and deliver each as
+    /// an `Event.Mouse` to `on_event`, with no gesture routing and no `on_mouse`.
+    /// Ignored when `should_report_mouse` is on, which routes.
+    pub bool should_report_raw_mouse = false;
+    /// Also report motion with no button down (needs `should_report_mouse` or
+    /// `should_report_raw_mouse`).
     pub bool should_report_hover = false;
     /// Ask for bracketed paste: a paste is one `Event.Paste`.
     pub bool should_report_paste = false;
@@ -231,6 +268,8 @@ pub type Loop {
     pub bool is_copy_allowed = true;
     /// The most bytes of text one `copy` puts on the clipboard (see `TUI_osc`).
     pub int copy_limit = TUI_osc.CLIPBOARD_LIMIT;
+    /// Asked for bytes to write with each frame, after its cells (see `AfterFrame`).
+    pub Option<AfterFrame> after_frame = Option<AfterFrame>.None;
     /// Bytes to write as they are, in order, before the next frame (see `queue_output`).
     bytes outbox = [];
     /// Ask the terminal for the kitty keyboard protocol (flag 1: Escape, Ctrl-i,
@@ -293,7 +332,7 @@ pub bytes Loop.take_output() {
 /// The bytes written on entry: `enter`, then the modes asked for.
 pub str Loop.enter_sequence() {
     str modes = "";
-    if (should_report_mouse) {
+    if (should_report_mouse || should_report_raw_mouse) {
         modes = modes + term.MOUSE_ON;
         if (should_report_hover) {
             modes = modes + TUI_mouse.HOVER_ON;
@@ -327,7 +366,7 @@ pub str Loop.leave_sequence() {
     if (should_report_paste) {
         modes = modes + term.PASTE_OFF;
     }
-    if (should_report_mouse) {
+    if (should_report_mouse || should_report_raw_mouse) {
         if (should_report_hover) {
             modes = modes + TUI_mouse.HOVER_OFF;
         }
@@ -607,15 +646,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
 // the synchronized-output markers, as ONE write. Nothing is written for a frame
 // that changes nothing.
 void Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
-    bytes body = [];
-    if (is_full) {
-        body = TUI_diff.full(next, depth);
-    } else if (should_scroll) {
-        body = TUI_diff.diff_scrolled_in_place(previous, next, depth);
-    } else {
-        body = TUI_diff.diff(previous, next, depth);
-    }
-    bytes out = compose_frame(body, shown);
+    bytes out = frame_bytes(previous, next, is_full, shown);
     if (out.size() == 0) {
         last_frame_bytes = 0;
         return;
@@ -624,6 +655,30 @@ void Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buf
     frame_count = frame_count + 1;
     writer.put_bytes(out);
     flush(writer);
+}
+
+/// The bytes of one frame, ready to write: `next` against `previous` (or all of it),
+/// then what `after_frame` adds, composed by `compose_frame_with`. Empty when nothing
+/// changed. Public so a test, or a loop of your own, can see exactly what `run_with`
+/// writes.
+pub bytes Loop.frame_bytes(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
+    bytes body = [];
+    if (is_full) {
+        body = TUI_diff.full(next, depth);
+    } else if (should_scroll) {
+        body = TUI_diff.diff_scrolled_in_place(previous, next, depth);
+    } else {
+        body = TUI_diff.diff(previous, next, depth);
+    }
+    bytes extra = [];
+    match (after_frame) {
+        case Some(AfterFrame hook): {
+            extra = hook.after_frame(next, is_full);
+        }
+        case None: {
+        }
+    }
+    return compose_frame_with(body, extra, shown);
 }
 
 /// The bytes of one frame around `body` (what the renderer produced): the cursor
@@ -635,21 +690,30 @@ void Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buf
 /// Public so that a program with a loop of its own can write exactly the frames
 /// `Loop` writes, and so a test can look at them without a terminal.
 pub bytes Loop.compose_frame(bytes body, Shown shown) {
+    return compose_frame_with(body, [], shown);
+}
+
+/// `compose_frame` with `extra` (what an `AfterFrame` hook answered) written after
+/// `body` and before the cursor is put back, inside the same synchronized update. With
+/// `extra` empty it is `compose_frame`, byte for byte. A frame whose `body` is empty is
+/// still written when `extra` is not.
+pub bytes Loop.compose_frame_with(bytes body, bytes extra, Shown shown) {
     bool is_cursor_wanted = cursor.x >= 0 && cursor.y >= 0;
     bool did_cursor_change = is_cursor_wanted != shown.is_visible || (is_cursor_wanted && (cursor.x != shown.x || cursor.y != shown.y || cursor.shape != shown.shape));
     bytes out = [];
-    if (body.size() == 0 && !did_cursor_change) {
+    if (body.size() == 0 && extra.size() == 0 && !did_cursor_change) {
         return out;
     }
     if (is_sync) {
         out.extend(TUI_diff.SYNC_BEGIN.to_bytes);
     }
-    if (shown.is_visible && (body.size() > 0 || !is_cursor_wanted)) {
+    if (shown.is_visible && (body.size() > 0 || extra.size() > 0 || !is_cursor_wanted)) {
         // never see the cursor wander while the frame is drawn
         TUI_diff.hide_cursor(out);
         shown.is_visible = false;
     }
     out.extend(body);
+    out.extend(extra);
     if (is_cursor_wanted) {
         if (cursor.shape != shown.shape) {
             TUI_style.push_csi(out);

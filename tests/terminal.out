@@ -298,4 +298,41 @@ ok   auto, neither: none
 ok   auto, only input a terminal: standard input
 ok   another descriptor is that one
 
--- 281 passed, 0 failed
+== after-frame hook ============================================
+ok   no hook: a diff frame is compose_frame of the diff
+ok   no hook: a full frame is compose_frame of the full redraw
+ok   no hook: compose_frame_with an empty extra is compose_frame
+ok   no hook, with sync and a cursor: still compose_frame
+ok   no hook: a frame that changes nothing writes nothing
+ok   hook: the diff, then the hook's bytes
+ok   hook: asked once for the frame
+ok   hook: told it was not a full frame
+ok   hook: given the buffer the frame shows
+ok   hook: told when the frame is a full one
+ok   hook: asked again, once
+ok   hook, no cell changed: the hook's bytes alone
+ok   hook answering nothing, no cell changed: nothing is written
+ok   hook answering nothing: the bytes are the frame's own
+ok   hook with sync: begins with the marker and ends with its end
+ok   hook with sync: the hook's bytes are inside it
+ok   hook with a cursor: the cursor is put back after the hook's bytes
+ok   oracle: the cells are drawn
+ok   oracle: the OSC 66 reached the terminal with them
+ok   oracle: and the cursor the view asked for is put back after the hook moved it
+
+== raw mouse ===================================================
+ok   raw: the same mode bytes on entry as routed
+ok   raw: the same mode bytes on the way out
+ok   raw: mouse reporting is in the enter sequence
+ok   raw: and taken off in the leave sequence
+ok   raw with hover: motion is asked for
+ok   off by default: no mouse mode in the default sequences
+ok   oracle: enter and leave leave nothing the emulator did not understand
+ok   raw: the report reaches on_event
+ok   raw: no gesture is routed
+ok   routed: on_event does not see the report (unchanged)
+ok   routed: the gesture goes to on_mouse (unchanged)
+ok   neither asked: a report is on_event's, as before
+ok   both asked: routing wins, on_event sees nothing
+
+-- 314 passed, 0 failed
