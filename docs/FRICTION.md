@@ -819,3 +819,50 @@ left the router's capture set, so the next click in another region went to
 the old one. The fix was small (`Gesture.is_press_end`); it was found by a test that
 drove the whole router through a sequence, which a test of one gesture at a
 time would not have done.
+
+## 28. 0.10.0: the terminal features (m31 v0.6.0)
+
+Written against m31 v0.6.0 (`lib/term.m31`, `text.unicode` 16.0). Nothing here stopped the work; each item is
+something `term` or `unicode` could say or do so a library does not have to.
+
+**`term` has no vocabulary for what a modern terminal says.** The decoder reads `CSI u` (so kitty keys arrive
+as `Key`) and nothing else new: a focus report (`CSI I`, `CSI O`), the answer to a mode query (`CSI ? 2026 ; 2 $ y`),
+the kitty flags answer (`CSI ? 0 u`), the device attributes answer (`CSI ? 62 ; 22 c`) and a modifyOtherKeys report
+(`CSI 27 ; 5 ; 105 ~`) are all `Event.Unknown(bytes)`, and `TUI_app` / `TUI_keys` decode each by hand
+(`focus_report`, `sync_reply`, `reply_kind`, `modify_other_key`). An `Event.Focus(bool)` and an `Event.Reply` with the
+private marker, the numbers and the final byte would make four of those five pure `match`es. The sequences
+that turn the modes on and off (`1004`, `2026`, kitty push and pop, `modifyOtherKeys`, OSC 52, OSC 8) are strings in
+this library for the same reason `MOUSE_ON` is one in `term`; some of them belong beside it.
+
+**`Session.on_exit(str)` appends**, so what is written on the way out is fixed in order when raw mode is entered,
+and a mode that is only known later (the kitty protocol, once the terminal has answered) cannot join it in the
+right place: the kitty flags have a stack per screen, so the pop has to come before the alternate screen is left. `Loop`
+writes the pop itself on the normal path (and that is the only path `on_exit` covers anyway, §23). A way to set the
+whole leave string again would fix it.
+
+**`text.unicode.width` against UTS #51** (checked with every fully-qualified sequence of emoji-test.txt 15.1, 3773
+of them, and python-wcwidth as a second opinion; `tests/terminal.m31` pins the numbers):
+
+- an emoji modifier after a text-presentation base (261D 1F3FB and 44 more) is one column; UTS #51 says an emoji modifier
+  sequence has emoji presentation. `wcwidth` says one as well. `TUI_text.cluster_columns` says two.
+- a variation selector alone (U+FE0F) is two columns, and U+3164, U+302E, U+302F and U+16FF0..1 as well (wcwidth: zero).
+  `TUI_text` corrects only the selectors.
+- a regional indicator alone is one (neutral East Asian Width); kitty and WezTerm draw it in two, wcwidth says two.
+- spacing combining marks (Mc, 4358 code points: U+0903, U+093E, ...) are one column; wcwidth says zero. Not an
+  emoji matter and not touched here, but it is the largest disagreement of all.
+- a letter followed by U+FE0F is two columns (`a` + FE0F); VS16 only widens a base that has an emoji variation
+  sequence, so most terminals draw one. Anchored (see `TUI_text.is_uncertain_cluster`), not corrected: that needs the
+  list of emoji variation bases, which `text.unicode` does not expose.
+
+**A pty harness is not in the repository**, so the terminal is the oracle only through `tests/TST_emulator.m31`, a
+small emulator written for this (cursor moves, erase, the private modes, OSC 8 and OSC 52, a keyboard that sends
+what the protocols say, two ways to measure text). The emulator found three real gaps in 0.9.1's handling of clusters of
+uncertain width (see CHANGELOG), which byte-for-byte tests of the encoder could not. A `term`-level fake terminal (a
+`Reader` over a byte list, a `Writer` into one) would let `Loop.run_with` itself be tested, not just its pieces; today
+it is the one function that needs a tty, and `examples/features.m31` was run in a pty by hand.
+
+**Small things.** No ternary (`a ? b : c`); `List<T>` has no `copy`; a parameter with a default can only be passed by
+name (`clipboard_sequence(text, target: "c")`, a clear error); a local may not share a name with a function in the
+module (`cluster_width`), which is clear too and cost a rename; `match` over another module's enum still cannot have a
+`default` (§26), and the four-case match for `Event` is written out wherever an `Event` is passed on. The
+full gate (seven programs, four compiler settings each) takes about four minutes.

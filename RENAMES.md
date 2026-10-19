@@ -1,3 +1,23 @@
+# tui 0.10.0: nothing renamed or removed; what behaves differently
+
+Version 0.10.0, from 0.9.1 (0b132ce). Every new thing is additive and off by default (see
+`CHANGELOG.md`); a program that changes nothing writes the bytes it wrote. These behaviours differ, and each
+is a fix:
+
+- `TUI_text.width`, `Buffer.set_str`, `Cell.of` and `Buffer.fill` measure an emoji modifier sequence on a
+  text-presentation base (a raised hand with a skin tone) as two columns, not one, and a lone U+FE0E / U+FE0F as
+  zero. Text laid out around those clusters moves by a column.
+- `TUI_diff.diff` rewrites more columns after a cluster of uncertain width (as many as a terminal that adds up
+  code points may have overdrawn: a family is 8, not 2) and treats more clusters as uncertain (a lone regional
+  indicator, a letter with U+FE0F, a joined sequence one column wide). A frame with none is unchanged.
+- `TUI_diff.is_uncertain` answers true for those clusters too (it was: two columns and more than four bytes).
+- The loop's reply to the mode 2026 answer is `Redraw` (it was `Continue`), and so are its replies to the
+  keyboard answers: a view that shows `is_sync` or `key_protocol` is drawn again. A frame that changes nothing
+  writes nothing, so a view that shows neither costs no bytes. (`Loop.dispatch`, the function that does this, is
+  public now.)
+- `Cell` and `Span` have one more field, `link`, last and defaulted, so every way of building them still works;
+  `Cell.eq` compares it.
+
 # tui 0.8.0: TUI_syntax is an adapter over the `syntax` library
 
 Version 0.8.0, from 0.7.0 (2e1f7f5). **Nothing was renamed or removed**: the

@@ -32,8 +32,9 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.7.0) is built and tested against m31 v0.4.0; `RENAMES.md` lists what
-a program moving from 0.4.0 or from m31 0.3.x has to change.
+version (0.10.0) is built and tested against m31 v0.6.0 (CI pins the release named by
+`M31_REF`); `RENAMES.md` lists what a program moving from an earlier version has to change and
+`CHANGELOG.md` what each version added.
 
     name myapp
     version 0.1.0
@@ -51,6 +52,90 @@ force instead is written up in `docs/FRICTION.md` §1.
 
 ---
 
+## 0.10.0: terminal features, opt-in and tested against an emulator
+
+Everything below is off until a program asks for it: a `Loop()` with no arguments writes the same bytes it did
+in 0.9.1, and a frame with no hyperlink in it is byte for byte the frame it was. Every escape sequence is written
+only because the program asked (`copy`, `link`, a `should_` flag) or because the terminal answered a question
+first (synchronized output, the kitty keyboard protocol); a terminal that does not answer is never sent what
+would be ignored. `docs/FRICTION.md` §28 is what m31 made hard.
+
+* **Synchronized output (DEC 2026)** was in 0.9.0; it is now composed in one place (`Loop.compose_frame`,
+  `TUI_diff.synchronized`, both usable from a loop of your own), and `leave_sequence()` begins with `CSI ? 2026 l`
+  so a process killed in the middle of a frame does not leave the terminal holding its screen. The first frame
+  is written before the terminal can answer, so it is unsynchronized; the rest are not.
+* **Clipboard (OSC 52).** `loop.copy(text)` queues the write, before the next frame, even when nothing is
+  redrawn and even in the callback that answers `Quit`. It answers how many bytes went: 0 when
+  `is_copy_allowed` (the off switch) is false. The text is cut to `copy_limit` (74994 bytes, what stays under
+  xterm's 100000 of base64) at a grapheme cluster and travels as base64, so nothing in it can end the sequence or
+  start another. There is no encoder for the OSC 52 *read*. `queue_output(bytes)` / `take_output()` are the queue
+  itself. Encoders: `TUI_osc.clipboard_sequence`, `clipboard_fit`. Support is the terminal's (tmux needs
+  `set -g set-clipboard on`); there is no query for it.
+* **Hyperlinks (OSC 8) in the cell model.** A cell has a link: `buffer.link(rect, uri)` marks cells already drawn,
+  `buffer.set_link_str(x, y, text, style, uri)` writes and marks, `TUI_widget.Span(text, link: uri)` does it in a
+  `Line`. `TUI_diff` writes it around the cells that carry it, closes it before an erase and at the end of the
+  frame, and compares links like styles so one that changes is redrawn. A URI is made safe on the way in (bytes
+  outside printable ASCII become `%XX`, so ESC and BEL cannot get in; empty or over 2083 bytes is no link). A
+  buffer that never had a link pays nothing.
+* **Keyboard protocols.** `Loop(should_disambiguate_keys: true)` asks for the kitty keyboard protocol (flag 1
+  only: Escape is `CSI 27 u`, Ctrl-i is `CSI 105;5 u`, Alt-a `CSI 97;3 u`; Tab, Enter and unmodified keys keep
+  their bytes). It writes `CSI ? u` and `CSI c`: a terminal with the protocol answers the first, every terminal
+  answers the second, so the answer to the second arriving alone means no, with no timeout. Only then is the
+  protocol pushed. `should_try_modify_other_keys: true` adds xterm's modifyOtherKeys level 2 as the fallback (it
+  cannot be asked, so it is written when the first question got no answer) or alone (written on entry).
+  `loop.key_protocol` says which is on (`TUI_keys.KEYS_CLASSIC`, `KEYS_KITTY`, `KEYS_MODIFY_OTHER`); the keys go
+  back on the way out, before the alternate screen does (each screen has its own kitty stack). With either on,
+  Shift-Tab is `BackTab`. A modifyOtherKeys report (`CSI 27;m;c ~`) arrives from `term` as `Unknown` and the loop
+  turns it into the `Key` it means (`TUI_keys.modify_other_key`).
+* **Focus reports** were in 0.9.0 (`should_report_focus`, `has_focus`); added `focus_changes`, the pure decoder
+  `TUI_app.focus_report`, and `should_repaint_on_focus` (on, as before) for the full repaint a focus-in asks for.
+* **Emoji widths** were checked against Unicode's emoji-test.txt 15.1 (3773 sequences, `tests/emoji_sequences.txt`)
+  and a terminal emulator that draws text the two ways terminals do. Fixed: a skin tone after a text-presentation
+  base (45 sequences) is two columns, a bare variation selector zero; clusters of uncertain width now include a
+  lone regional indicator, a letter with U+FE0F and a joined sequence one column wide; the renderer rewrites as
+  many columns after one as a terminal that adds up code points may have overdrawn (a family: 8, not 2).
+* `Loop.input_fd` (`TUI_app.INPUT_AUTO`) reads keys from the tty that standard output is when standard input is
+  a pipe, and the loop's own answers (mode 2026, keyboard) redraw the view so it can show what they came to.
+* `examples/features.m31` uses all of it. `tests/terminal.m31` and `tests/TST_emulator.m31` test it: the bytes the
+  library writes are applied to a small terminal emulator and the screen is what is checked.
+
+### Terminal features in a program
+
+```c
+TUI_app.Loop loop = TUI_app.Loop(
+    should_sync: true,                    // frames inside DEC 2026 once the terminal says it has it
+    should_disambiguate_keys: true,       // kitty keyboard protocol, after asking
+    should_try_modify_other_keys: true,   // ... and xterm's, when kitty's was not answered
+    should_report_focus: true);
+
+// in a handler:
+int sent = loop.copy(selected_text);      // OSC 52; 0 if loop.is_copy_allowed is false
+if (loop.key_protocol != TUI_keys.KEYS_CLASSIC) { /* Ctrl-i and Tab are different keys now */ }
+
+// in a view:
+buffer.set_link_str(x, y, "docs", style, "https://example.com/docs");
+```
+
+### Adopting `Loop.run_with` from a loop of your own (tui-markdown)
+
+`tui-markdown`'s `MDV_loop.run` is `TUI_app.Loop.run` with three additions, and each now has a place in `Loop`:
+
+| `MDV_loop` | `Loop.run_with` |
+|---|---|
+| `Host.handle(event)` | `Handler.handle(event)`: the same signature, and `Action` is already `TUI_app.Action` |
+| `Host.needs_redraw()`, called once per timed-out read (`tick_ms` 250) | a `Ticker`: `animate_ms: 250`, `tick(elapsed_ms)` answers `Redraw` when the file changed |
+| `Host.take_output()`, the OSC 52 bytes | `loop.copy(text)` (set `copy_limit: 60000` to keep `MAX_COPY`), or `loop.queue_output(bytes)` for any other bytes; written before the next frame |
+| `input_fd()`: stdin if it is a terminal, else stdout | `Loop(input_fd: TUI_app.INPUT_AUTO)` |
+| `ESCAPE_WAIT_MS` 50: the read wait that resolves a lone Escape | `tick_ms: 50`, or `should_disambiguate_keys` and Escape needs no wait on a terminal that has the protocol |
+| `loop.enter`, `loop.leave`, `loop.depth` | the same fields |
+
+What it gets for deleting about a hundred lines: synchronized frames, the drain of already-arrived keys
+(one frame per burst), `is_input_queued`, scroll regions (`should_scroll`), the real cursor, focus and a repaint on
+focus-in, mouse routing, frame statistics, and `Span(text, link:)` for markdown links (the "is this href a link"
+rule of `MDV_cat` stays the caller's; the escaping is `TUI_osc.hyperlink_uri`). `tui-markdown` was not touched, so
+its own tests are the check; the one thing to watch is that the first frame is drawn before standard input is
+read, as `MDV_loop` does too.
+
 ## 0.9.0: the renderer for smooth output
 
 * `TUI_diff.diff_scrolled` / `diff_scrolled_in_place`: a view that moved by a few lines is scrolled with a terminal
@@ -65,7 +150,7 @@ force instead is written up in `docs/FRICTION.md` §1.
 
 ## The modules
 
-Twenty-eight, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
+Thirty, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
 `docs/FRICTION.md` §1. `TUI_app` is the one exception worth naming: it is the only
@@ -78,7 +163,7 @@ buffer.
 | `TUI_style` | `core/` | `Colour`, `Style`, `Depth`, the attribute bits, the SGR escapes, and `Theme` |
 | `TUI_geometry` | `core/` | `Rect`, `Constraint`, `Layout`, and the constraint solver |
 | `TUI_text` | `core/` | `Align`, `wrap`, `truncate`, `pad`, `fit` — all in terminal columns |
-| `TUI_buffer` | `core/` | `Cell` and `Buffer` |
+| `TUI_buffer` | `core/` | `Cell` and `Buffer`, with a hyperlink per cell |
 | `TUI_widget` | `core/` | the `Widget` interface, `Block`, `Paragraph`, `Span` and `Line` |
 | `TUI_scroll` | `core/` | `Viewport` (a scroll offset and its clamping/reveal math) and `Scrollbar` |
 | `TUI_eighths` | `core/` | eighth-block bar maths: `of_ratio`, `scaled`, `vertical`, `horizontal`, `bounds_of` |
@@ -86,6 +171,8 @@ buffer.
 | `TUI_clip` | `core/` | `put_str` and `paint` into a clip rectangle, so a widget cannot draw outside its area |
 | `TUI_word` | `core/` | word-boundary motion over grapheme clusters, shared by the two text widgets |
 | `TUI_syntax` | `core/` | `language_of`, `classify`, `class_style`, `spans`, `draw`, `Highlighter` — a lexical highlighter and the styles to draw it in |
+| `TUI_osc` | `core/` | `clipboard_sequence`, `clipboard_fit`, `hyperlink_uri`, `hyperlink_open` — the OSC 52 and OSC 8 encoders |
+| `TUI_keys` | `core/` | `reply_kind`, `modify_other_key`, `normalized`, and the kitty / modifyOtherKeys sequences |
 | `TUI_mouse` | `core/` | `Gesture`, `Pointer`, `Region`, `Router` — mouse reports to clicks, drags and hovers, routed to widgets |
 | `TUI_list_table` | `widgets/` | `ListView` and `Table` |
 | `TUI_outline` | `widgets/` | `Node`, `Outline` — the collapsible primary-view document |
@@ -355,11 +442,15 @@ machine.
 
 ## Testing without a terminal
 
-There are two test programs, `tests/tests.m31` (the stage 1 to 3 library:
-175 `ok` lines plus rendered frames) and `tests/widgets.m31` (stage 4: 419
-assertions plus rendered frames, golden renders of every new widget).
+There are four test programs: `tests/tests.m31` (the stage 1 to 3 library:
+175 `ok` lines plus rendered frames), `tests/widgets.m31` (stage 4: 419
+assertions plus rendered frames, golden renders of every new widget),
+`tests/syntax.m31` and `tests/terminal.m31` (0.10.0: synchronized output, the clipboard,
+hyperlinks, the keyboard protocols, focus and emoji widths, checked against
+`tests/TST_emulator.m31`, a terminal emulator that applies the bytes the library writes
+and that can be told what kind of terminal it is).
 `tests/test.sh` runs each, compares it against its `.out` file (`tests/tests.out`,
-`tests/widgets.out`; `--bless` rewrites them), checks for a `FAIL` line, checks
+`tests/widgets.out`, ...; `--bless` rewrites them), checks for a `FAIL` line, checks
 `__rc_live=0`, and checks that gcc and clang at `-O0` and `-O2` all agree.
 Every widget and primitive added for stage 2 and stage 3 is in the first,
 against synthetic buffers and synthetic `term.Event`s with no terminal
@@ -423,9 +514,11 @@ Stage 4 built the whole of stage 2's original wishlist (`Gauge`, `Sparkline`,
     methods (IME composition); those belong to an editor built on it, not to
     a widget. Its model (lines of grapheme clusters, a `Position`) is
     documented in `TUI_textarea.m31`'s header for that purpose.
-  - **A test of the real terminal path.** The loop's pure pieces are tested
-    and every example was smoke-tested in a pty by hand, but there is no pty
-    harness in `tests/test.sh`, so mouse mode on a real terminal is not a CI
+  - **A test of the real terminal path.** The loop's pure pieces are tested,
+    and since 0.10.0 the bytes it writes are applied to a terminal emulator
+    (`tests/TST_emulator.m31`), but no program is run in a pty by `tests/test.sh`
+    (0.10.0's `examples/features.m31` was run in one by hand, against a pyte-based
+    harness that answered as a kitty, an xterm and a bare terminal), so mouse mode on a real terminal is not a CI
     assertion, and CI runs only what the macOS and Linux bash and C
     compilers can run with no terminal.
   - **Chart extras.** No log axes, no secondary axis, no area fill, no
@@ -495,8 +588,10 @@ python, sh or node for a file with no known extension.
     core/                the buffer, geometry, text, style, clip, scale, mouse and widget primitives
     widgets/             the fourteen ready-made widgets built on core
     app/                 the diffing renderer (TUI_diff) and the application loop (TUI_app)
-    examples/            demo, browse, widgets, bench: programs, built by scripts/build.sh
-    tests/               test.sh (the one entry point), tests.m31, widgets.m31, syntax.m31 and their .out files
+    examples/            demo, browse, widgets, features, bench: programs, built by scripts/build.sh
+    tests/               test.sh (the one entry point), tests.m31, widgets.m31, syntax.m31, terminal.m31 and their .out files;
+                         TST_emulator.m31 (a terminal emulator for the tests), emoji_sequences.txt (Unicode's table)
+    CHANGELOG.md         what each version added, changed and fixed
     scripts/             build.sh
     docs/                FRICTION.md, the notes from building this on m31
 
@@ -515,5 +610,5 @@ then runs the benchmark. CI runs it on Linux x86-64, Linux aarch64 and macOS
 arm64 against the m31 release named by `M31_REF` in `.github/workflows/test.yml`.
 
 Release: pushing a `v*` tag runs the same tests as a precondition and publishes
-`tui-source.tar.gz` (the three folders, `deps`, README, `RENAMES.md`, scripts
-and docs).
+`tui-source.tar.gz` (the three folders, `deps`, README, `CHANGELOG.md`, `RENAMES.md`,
+scripts and docs).
