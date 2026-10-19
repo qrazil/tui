@@ -41,6 +41,19 @@ pub type Screen {
     /// The last modifyOtherKeys level set (`CSI > 4 ; n m`); 0 when reset.
     pub int modify_other_keys = 0;
     pub bool is_focus_reporting = false;
+    /// What kind of terminal it is, for the questions it is asked: whether it has
+    /// the kitty keyboard protocol and modifyOtherKeys (else it ignores what asks for
+    /// them, and the sequence is listed in `ignored`), and what it answers about mode
+    /// 2026 (-1: nothing at all, 0 not recognised, 2 supported). Every terminal
+    /// answers the device attributes question.
+    pub bool has_kitty = false;
+    pub bool has_modify_other = false;
+    pub int sync_status = -1;
+    /// The bytes the terminal has said back, not yet read by the program.
+    pub bytes replies = [];
+    /// Sequences it was sent and did not act on, because it lacks the feature.
+    pub List<str> ignored = [];
+    pub int queries = 0;
     /// Sequences it did not recognise, as they were written.
     pub List<str> unknown = [];
     /// Bytes that did not make UTF-8 (ignored).
@@ -279,11 +292,42 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
     if (final == 'q' && intermediates == " ") {
         return;
     }
+    if (final == 'u' && marker == '?' && parameters.size() == 1 && parameters[0] < 0) {
+        queries = queries + 1;
+        if (has_kitty) {
+            int flags = 0;
+            if (kitty_stack.size() > 0) {
+                flags = kitty_stack[kitty_stack.size() - 1];
+            }
+            say("\x1b[?" + str(flags) + "u");
+        }
+        return;
+    }
+    if (final == 'c' && marker == 0 && intermediates == "") {
+        queries = queries + 1;
+        say("\x1b[?62;22c");
+        return;
+    }
+    if (final == 'p' && marker == '?' && intermediates == "$" && parameter_at(parameters, 0, 0) == 2026) {
+        queries = queries + 1;
+        if (sync_status >= 0) {
+            say("\x1b[?2026;" + str(sync_status) + "$y");
+        }
+        return;
+    }
     if (final == 'u' && marker == '>') {
+        if (!has_kitty) {
+            ignored.push(name);
+            return;
+        }
         kitty_stack.push(parameter_at(parameters, 0, 0));
         return;
     }
     if (final == 'u' && marker == '<') {
+        if (!has_kitty) {
+            ignored.push(name);
+            return;
+        }
         int pops = parameter_at(parameters, 0, 1);
         for (int each in 0 .. pops) {
             if (kitty_stack.size() > 0) {
@@ -293,6 +337,10 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
         return;
     }
     if (final == 'm' && marker == '>' && parameter_at(parameters, 0, 0) == 4) {
+        if (!has_modify_other) {
+            ignored.push(name);
+            return;
+        }
         modify_other_keys = parameter_at(parameters, 1, 0);
         return;
     }
@@ -354,6 +402,58 @@ void Screen.apply_osc(str body) {
         return;
     }
     unknown.push("OSC " + body);
+}
+
+void Screen.say(str text) {
+    replies.extend(text.to_bytes());
+}
+
+/// The bytes the program reads after the terminal said something: what has been
+/// said since the last call, which is forgotten.
+pub bytes Screen.take_replies() {
+    bytes taken = replies;
+    replies = [];
+    return taken;
+}
+
+/// The bytes this terminal sends when a key is pressed, under the keyboard mode
+/// it is in. `code` is a code point (9 Tab, 13 Enter, 27 Escape, 127 Backspace, or
+/// a character as it is typed) and `mods` the bits Shift 1, Alt 2, Ctrl 4. Written
+/// from the protocols' own descriptions, not from the library's decoder.
+pub bytes Screen.press(int code, int mods) {
+    bool is_special = code == 9 || code == 13 || code == 27 || code == 127;
+    bool has_chord = (mods & 6) != 0;
+    int kitty_flags = 0;
+    if (kitty_stack.size() > 0) {
+        kitty_flags = kitty_stack[kitty_stack.size() - 1];
+    }
+    if ((kitty_flags & 1) != 0) {
+        if (code == 27 || (is_special && mods != 0) || (!is_special && has_chord)) {
+            str tail = "u";
+            if (mods != 0) {
+                tail = ";" + str(mods + 1) + "u";
+            }
+            return ("\x1b[" + str(code) + tail).to_bytes();
+        }
+    } else if (modify_other_keys == 2) {
+        if ((is_special && mods != 0) || (!is_special && has_chord)) {
+            return ("\x1b[27;" + str(mods + 1) + ";" + str(code) + "~").to_bytes();
+        }
+    }
+    // the classic encoding
+    bytes out = [];
+    if (code == 9 && (mods & 1) != 0) {
+        return "\x1b[Z".to_bytes();
+    }
+    if ((mods & 2) != 0) {
+        out.push(27);
+    }
+    if ((mods & 4) != 0 && ((code >= 'a' && code <= 'z') || (code >= 'A' && code <= 'Z'))) {
+        out.push(code & 31);
+        return out;
+    }
+    out.extend(str.from_chars([code]).to_bytes());
+    return out;
 }
 
 int parameter_at(List<int> parameters, int position, int fallback) {

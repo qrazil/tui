@@ -113,4 +113,95 @@ ok   scroll_rows(): in place, the other way
 ok   copy() keeps links
 ok   400 random frames with links, replayed on the emulator: every one right 
 
--- 108 passed, 0 failed
+== keyboard protocols ==========================================
+ok   premise: byte 9 is Tab, so Ctrl-i cannot be told from it
+ok   premise: kitty Ctrl-i is a key of its own
+ok   premise: kitty Escape
+ok   premise: kitty Alt-a
+ok   premise: the modifyOtherKeys report is not decoded by term
+ok   reply: kitty, no flags
+ok   reply: kitty, flags 31
+ok   reply: device attributes
+ok   reply: device attributes of a VT100
+ok   reply: the mode 2026 answer is neither
+ok   reply: a key is neither
+ok   reply: the query itself is neither
+ok   reply: focus is neither
+ok   reply: junk with a final u is neither
+ok   reply: text is neither
+ok   modifyOtherKeys: Ctrl-i
+ok   modifyOtherKeys: Shift-Tab
+ok   modifyOtherKeys: Ctrl-Tab
+ok   modifyOtherKeys: Alt-Escape
+ok   modifyOtherKeys: Ctrl-Enter
+ok   modifyOtherKeys: Ctrl-Backspace
+ok   modifyOtherKeys: Ctrl-Shift-A
+ok   modifyOtherKeys: Ctrl-Alt-e-acute
+ok   modifyOtherKeys: Ctrl-space
+ok   modifyOtherKeys: a code that is no character
+ok   modifyOtherKeys: a code past the last plane
+ok   modifyOtherKeys: modifier 0
+ok   modifyOtherKeys: two numbers
+ok   modifyOtherKeys: another key
+ok   modifyOtherKeys: not a CSI
+ok   modifyOtherKeys: trailing junk
+ok   normalized: Shift-Tab is BackTab
+ok   normalized: Ctrl-Shift-Tab is Ctrl BackTab
+ok   normalized: Tab stays
+ok   normalized: Shift-a stays
+ok   enter: asked, the kitty question and then the attributes question
+ok   classic terminal: it was asked both questions
+ok   classic terminal: the protocol is the classic one
+ok   classic terminal: nothing was sent that it would have to ignore
+ok   classic terminal: the answers were the loop's, not the program's
+ok   classic terminal: Ctrl-i is Tab
+ok   classic terminal: Tab is Tab
+ok   classic terminal: Escape
+ok   classic terminal: Alt-a
+ok   classic terminal: Ctrl-Shift-a is Ctrl-a
+ok   classic terminal: Shift-Tab
+ok   classic terminal: leaving writes nothing for the keys
+ok   kitty terminal: the protocol is on
+ok   kitty terminal: flag 1 is pushed, once
+ok   kitty terminal: the sync answer came in the same exchange
+ok   kitty terminal: the program saw none of the answers
+ok   kitty terminal: Ctrl-i is not Tab
+ok   kitty terminal: Tab is Tab
+ok   kitty terminal: Ctrl-m is not Enter
+ok   kitty terminal: Enter is Enter
+ok   kitty terminal: Escape is a key, not a prefix
+ok   kitty terminal: Alt-Escape
+ok   kitty terminal: Alt-a
+ok   kitty terminal: Ctrl-Shift-a keeps both
+ok   kitty terminal: Shift-Tab is BackTab
+ok   kitty terminal: Ctrl-Enter
+ok   kitty terminal: a letter is a letter
+ok   kitty terminal: a capital is a capital
+ok   kitty terminal: the pop comes first, so before the alternate screen goes
+ok   kitty terminal: leaving puts the flags back
+ok   kitty terminal: and nothing it did not know
+ok   xterm: the protocol is modifyOtherKeys
+ok   xterm: level 2
+ok   xterm: Ctrl-i is not Tab
+ok   xterm: Tab is Tab
+ok   xterm: Escape
+ok   xterm: Alt-Escape
+ok   xterm: Shift-Tab is BackTab
+ok   xterm: Ctrl-Shift-a
+ok   xterm: leaving turns it off
+ok   no fallback asked: the classic protocol
+ok   no fallback asked: modifyOtherKeys is not touched
+ok   no fallback asked: Ctrl-i is Tab again
+ok   modifyOtherKeys alone: on in the enter sequence
+ok   modifyOtherKeys alone: no question in it
+ok   modifyOtherKeys alone: the terminal has it on
+ok   modifyOtherKeys alone: Ctrl-i
+ok   modifyOtherKeys alone: nothing was asked
+ok   unasked: the program's own answers reach it
+ok   unasked: nothing queued
+ok   unasked: the classic protocol
+ok   unasked: Ctrl-i is Tab, Shift-Tab is BackTab, as always
+ok   late kitty answer after the attributes: still classic
+ok   late kitty answer: nothing queued
+
+-- 197 passed, 0 failed

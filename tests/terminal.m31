@@ -17,9 +17,11 @@ import term;
 import app.TUI_app;
 import core.TUI_buffer;
 import core.TUI_geometry;
+import core.TUI_keys;
 import app.TUI_diff;
 import core.TUI_osc;
 import core.TUI_style;
+import core.TUI_mouse;
 import core.TUI_widget;
 import tests.TST_emulator;
 
@@ -417,10 +419,196 @@ TUI_buffer.Buffer frame_without_link() {
     return buffer;
 }
 
+// --- 4. the keyboard protocols (kitty, modifyOtherKeys) ------------------------------
+
+/// A `Handler` that writes down what it was given.
+type Recorder {
+    List<str> seen = [];
+}
+
+TUI_app.Action Recorder.handle(term.Event event) {
+    seen.push(event.to_str());
+    return TUI_app.Action.Continue;
+}
+
+/// What `loop` makes of every event the terminal said since it was last read.
+void pump(TST_emulator.Screen terminal, TUI_app.Loop loop, Recorder recorder) {
+    for (term.Event event in term.decode(terminal.take_replies())) {
+        loop.dispatch(event, recorder, TUI_app.NoMouse());
+    }
+    terminal.feed(loop.take_output());
+}
+
+/// What the program reads when the terminal is asked to press (`code`, `mods`).
+str pressed(TST_emulator.Screen terminal, TUI_app.Loop loop, int code, int mods) {
+    Recorder recorder = Recorder();
+    for (term.Event event in term.decode(terminal.press(code, mods))) {
+        loop.dispatch(event, recorder, TUI_app.NoMouse());
+    }
+    return recorder.seen.join(" ");
+}
+
+/// A loop starting up against `terminal`: the enter sequence written, the answers read.
+Recorder start(TST_emulator.Screen terminal, TUI_app.Loop loop) {
+    Recorder recorder = Recorder();
+    terminal.feed(loop.enter_sequence().to_bytes());
+    loop.start_keys();
+    pump(terminal, loop, recorder);
+    return recorder;
+}
+
+void key_tests(Tally tally) {
+    head("keyboard protocols");
+    // what the decoder in term does with the bytes (the premises)
+    check(tally, "premise: byte 9 is Tab, so Ctrl-i cannot be told from it", term.decode("\x09".to_bytes())[0].to_str(), "tab");
+    check(tally, "premise: kitty Ctrl-i is a key of its own", term.decode("\x1b[105;5u".to_bytes())[0].to_str(), "ctrl+i");
+    check(tally, "premise: kitty Escape", term.decode("\x1b[27u".to_bytes())[0].to_str(), "escape");
+    check(tally, "premise: kitty Alt-a", term.decode("\x1b[97;3u".to_bytes())[0].to_str(), "alt+a");
+    check(tally, "premise: the modifyOtherKeys report is not decoded by term", term.decode("\x1b[27;5;105~".to_bytes())[0].to_str(), "unknown[1b5b32373b353b3130357e]");
+    // the encoders and decoders
+    check_int(tally, "reply: kitty, no flags", TUI_keys.reply_kind("\x1b[?0u".to_bytes()), TUI_keys.REPLY_KITTY);
+    check_int(tally, "reply: kitty, flags 31", TUI_keys.reply_kind("\x1b[?31u".to_bytes()), TUI_keys.REPLY_KITTY);
+    check_int(tally, "reply: device attributes", TUI_keys.reply_kind("\x1b[?62;22c".to_bytes()), TUI_keys.REPLY_ATTRIBUTES);
+    check_int(tally, "reply: device attributes of a VT100", TUI_keys.reply_kind("\x1b[?1;2c".to_bytes()), TUI_keys.REPLY_ATTRIBUTES);
+    check_int(tally, "reply: the mode 2026 answer is neither", TUI_keys.reply_kind("\x1b[?2026;2$y".to_bytes()), TUI_keys.REPLY_NONE);
+    check_int(tally, "reply: a key is neither", TUI_keys.reply_kind("\x1b[105;5u".to_bytes()), TUI_keys.REPLY_NONE);
+    check_int(tally, "reply: the query itself is neither", TUI_keys.reply_kind("\x1b[?u".to_bytes()), TUI_keys.REPLY_NONE);
+    check_int(tally, "reply: focus is neither", TUI_keys.reply_kind("\x1b[I".to_bytes()), TUI_keys.REPLY_NONE);
+    check_int(tally, "reply: junk with a final u is neither", TUI_keys.reply_kind("\x1b[?1;;u".to_bytes()), TUI_keys.REPLY_NONE);
+    check_int(tally, "reply: text is neither", TUI_keys.reply_kind("abc".to_bytes()), TUI_keys.REPLY_NONE);
+    check(tally, "modifyOtherKeys: Ctrl-i", mok("\x1b[27;5;105~"), "ctrl+i");
+    check(tally, "modifyOtherKeys: Shift-Tab", mok("\x1b[27;2;9~"), "shift+tab");
+    check(tally, "modifyOtherKeys: Ctrl-Tab", mok("\x1b[27;5;9~"), "ctrl+tab");
+    check(tally, "modifyOtherKeys: Alt-Escape", mok("\x1b[27;3;27~"), "alt+escape");
+    check(tally, "modifyOtherKeys: Ctrl-Enter", mok("\x1b[27;5;13~"), "ctrl+enter");
+    check(tally, "modifyOtherKeys: Ctrl-Backspace", mok("\x1b[27;5;127~"), "ctrl+backspace");
+    check(tally, "modifyOtherKeys: Ctrl-Shift-A", mok("\x1b[27;6;65~"), "ctrl+shift+A");
+    check(tally, "modifyOtherKeys: Ctrl-Alt-e-acute", mok("\x1b[27;7;233~"), "ctrl+alt+\u{E9}");
+    check(tally, "modifyOtherKeys: Ctrl-space", mok("\x1b[27;5;32~"), "ctrl+space");
+    check(tally, "modifyOtherKeys: a code that is no character", mok("\x1b[27;5;55296~"), "none");
+    check(tally, "modifyOtherKeys: a code past the last plane", mok("\x1b[27;5;99999999~"), "none");
+    check(tally, "modifyOtherKeys: modifier 0", mok("\x1b[27;0;105~"), "none");
+    check(tally, "modifyOtherKeys: two numbers", mok("\x1b[27;5~"), "none");
+    check(tally, "modifyOtherKeys: another key", mok("\x1b[5;5~"), "none");
+    check(tally, "modifyOtherKeys: not a CSI", mok("27;5;105~"), "none");
+    check(tally, "modifyOtherKeys: trailing junk", mok("\x1b[27;5;105x~"), "none");
+    check(tally, "normalized: Shift-Tab is BackTab", TUI_keys.normalized(term.Key(term.Code.Tab, term.SHIFT)).to_str(), "back-tab");
+    check(tally, "normalized: Ctrl-Shift-Tab is Ctrl BackTab", TUI_keys.normalized(term.Key(term.Code.Tab, term.SHIFT + term.CTRL)).to_str(), "ctrl+back-tab");
+    check(tally, "normalized: Tab stays", TUI_keys.normalized(term.Key(term.Code.Tab, 0)).to_str(), "tab");
+    check(tally, "normalized: Shift-a stays", TUI_keys.normalized(term.Key(term.Code.Char(97), term.SHIFT)).to_str(), "shift+a");
+    // a terminal with neither protocol: asked, it answers the attributes only
+    TST_emulator.Screen classic = TST_emulator.Screen.sized(10, 2);
+    TUI_app.Loop asking = TUI_app.Loop(should_disambiguate_keys: true);
+    ok(tally, "enter: asked, the kitty question and then the attributes question", asking.enter_sequence().ends_with("\x1b[?u\x1b[c"));
+    Recorder quiet = start(classic, asking);
+    check_int(tally, "classic terminal: it was asked both questions", classic.queries, 2);
+    check_int(tally, "classic terminal: the protocol is the classic one", asking.key_protocol, TUI_keys.KEYS_CLASSIC);
+    check_int(tally, "classic terminal: nothing was sent that it would have to ignore", classic.ignored.size() + classic.kitty_stack.size(), 0);
+    check(tally, "classic terminal: the answers were the loop's, not the program's", quiet.seen.join(","), "");
+    check(tally, "classic terminal: Ctrl-i is Tab", pressed(classic, asking, 'i', term.CTRL), "tab");
+    check(tally, "classic terminal: Tab is Tab", pressed(classic, asking, 9, 0), "tab");
+    check(tally, "classic terminal: Escape", pressed(classic, asking, 27, 0), "escape");
+    check(tally, "classic terminal: Alt-a", pressed(classic, asking, 'a', term.ALT), "alt+a");
+    check(tally, "classic terminal: Ctrl-Shift-a is Ctrl-a", pressed(classic, asking, 'a', term.CTRL + term.SHIFT), "ctrl+a");
+    check(tally, "classic terminal: Shift-Tab", pressed(classic, asking, 9, term.SHIFT), "back-tab");
+    check(tally, "classic terminal: leaving writes nothing for the keys", asking.keys_off_sequence(), "");
+    // a kitty terminal
+    TST_emulator.Screen kitty = TST_emulator.Screen.sized(10, 2);
+    kitty.has_kitty = true;
+    kitty.sync_status = 2;
+    TUI_app.Loop kitty_loop = TUI_app.Loop(should_disambiguate_keys: true, should_sync: true);
+    Recorder kitty_seen = start(kitty, kitty_loop);
+    check_int(tally, "kitty terminal: the protocol is on", kitty_loop.key_protocol, TUI_keys.KEYS_KITTY);
+    check(tally, "kitty terminal: flag 1 is pushed, once", str(kitty.kitty_stack.size()) + ":" + str(kitty.kitty_stack[0]), "1:1");
+    ok(tally, "kitty terminal: the sync answer came in the same exchange", kitty_loop.is_sync);
+    check(tally, "kitty terminal: the program saw none of the answers", kitty_seen.seen.join(","), "");
+    check(tally, "kitty terminal: Ctrl-i is not Tab", pressed(kitty, kitty_loop, 'i', term.CTRL), "ctrl+i");
+    check(tally, "kitty terminal: Tab is Tab", pressed(kitty, kitty_loop, 9, 0), "tab");
+    check(tally, "kitty terminal: Ctrl-m is not Enter", pressed(kitty, kitty_loop, 'm', term.CTRL), "ctrl+m");
+    check(tally, "kitty terminal: Enter is Enter", pressed(kitty, kitty_loop, 13, 0), "enter");
+    check(tally, "kitty terminal: Escape is a key, not a prefix", pressed(kitty, kitty_loop, 27, 0), "escape");
+    check(tally, "kitty terminal: Alt-Escape", pressed(kitty, kitty_loop, 27, term.ALT), "alt+escape");
+    check(tally, "kitty terminal: Alt-a", pressed(kitty, kitty_loop, 'a', term.ALT), "alt+a");
+    check(tally, "kitty terminal: Ctrl-Shift-a keeps both", pressed(kitty, kitty_loop, 'a', term.CTRL + term.SHIFT), "ctrl+shift+a");
+    check(tally, "kitty terminal: Shift-Tab is BackTab", pressed(kitty, kitty_loop, 9, term.SHIFT), "back-tab");
+    check(tally, "kitty terminal: Ctrl-Enter", pressed(kitty, kitty_loop, 13, term.CTRL), "ctrl+enter");
+    check(tally, "kitty terminal: a letter is a letter", pressed(kitty, kitty_loop, 'x', 0), "x");
+    check(tally, "kitty terminal: a capital is a capital", pressed(kitty, kitty_loop, 'X', term.SHIFT), "X");
+    ok(tally, "kitty terminal: the pop comes first, so before the alternate screen goes", kitty_loop.leave_sequence().starts_with("\x1b[<u") && kitty_loop.leave_sequence().ends_with("\x1b[?1049l"));
+    kitty.feed(kitty_loop.leave_sequence().to_bytes());
+    check_int(tally, "kitty terminal: leaving puts the flags back", kitty.kitty_stack.size(), 0);
+    ok(tally, "kitty terminal: and nothing it did not know", kitty.unknown.size() == 0 && kitty.ignored.size() == 0);
+    // xterm: no kitty answer, modifyOtherKeys as the fallback
+    TST_emulator.Screen xterm = TST_emulator.Screen.sized(10, 2);
+    xterm.has_modify_other = true;
+    TUI_app.Loop xterm_loop = TUI_app.Loop(should_disambiguate_keys: true, should_try_modify_other_keys: true);
+    start(xterm, xterm_loop);
+    check_int(tally, "xterm: the protocol is modifyOtherKeys", xterm_loop.key_protocol, TUI_keys.KEYS_MODIFY_OTHER);
+    check_int(tally, "xterm: level 2", xterm.modify_other_keys, 2);
+    check(tally, "xterm: Ctrl-i is not Tab", pressed(xterm, xterm_loop, 'i', term.CTRL), "ctrl+i");
+    check(tally, "xterm: Tab is Tab", pressed(xterm, xterm_loop, 9, 0), "tab");
+    check(tally, "xterm: Escape", pressed(xterm, xterm_loop, 27, 0), "escape");
+    check(tally, "xterm: Alt-Escape", pressed(xterm, xterm_loop, 27, term.ALT), "alt+escape");
+    check(tally, "xterm: Shift-Tab is BackTab", pressed(xterm, xterm_loop, 9, term.SHIFT), "back-tab");
+    check(tally, "xterm: Ctrl-Shift-a", pressed(xterm, xterm_loop, 'a', term.CTRL + term.SHIFT), "ctrl+shift+a");
+    xterm.feed(xterm_loop.leave_sequence().to_bytes());
+    check_int(tally, "xterm: leaving turns it off", xterm.modify_other_keys, 0);
+    // the same terminal, fallback not asked for: nothing is sent
+    TST_emulator.Screen xterm_plain = TST_emulator.Screen.sized(10, 2);
+    xterm_plain.has_modify_other = true;
+    TUI_app.Loop plain_loop = TUI_app.Loop(should_disambiguate_keys: true);
+    start(xterm_plain, plain_loop);
+    check_int(tally, "no fallback asked: the classic protocol", plain_loop.key_protocol, TUI_keys.KEYS_CLASSIC);
+    check_int(tally, "no fallback asked: modifyOtherKeys is not touched", xterm_plain.modify_other_keys, 0);
+    check(tally, "no fallback asked: Ctrl-i is Tab again", pressed(xterm_plain, plain_loop, 'i', term.CTRL), "tab");
+    // modifyOtherKeys by itself: written on entry, nothing asked
+    TST_emulator.Screen alone = TST_emulator.Screen.sized(10, 2);
+    alone.has_modify_other = true;
+    TUI_app.Loop alone_loop = TUI_app.Loop(should_try_modify_other_keys: true);
+    ok(tally, "modifyOtherKeys alone: on in the enter sequence", alone_loop.enter_sequence().ends_with("\x1b[>4;2m"));
+    ok(tally, "modifyOtherKeys alone: no question in it", !alone_loop.enter_sequence().contains("\x1b[c"));
+    start(alone, alone_loop);
+    check_int(tally, "modifyOtherKeys alone: the terminal has it on", alone.modify_other_keys, 2);
+    check(tally, "modifyOtherKeys alone: Ctrl-i", pressed(alone, alone_loop, 'i', term.CTRL), "ctrl+i");
+    check_int(tally, "modifyOtherKeys alone: nothing was asked", alone.queries, 0);
+    // a program that asked for nothing is not touched
+    TST_emulator.Screen bystander = TST_emulator.Screen.sized(10, 2);
+    TUI_app.Loop unasked = TUI_app.Loop();
+    Recorder own = Recorder();
+    for (term.Event event in term.decode("\x1b[?62;22c\x1b[?0u".to_bytes())) {
+        unasked.dispatch(event, own, TUI_app.NoMouse());
+    }
+    check(tally, "unasked: the program's own answers reach it", own.seen.join(" "), "unknown[1b5b3f36323b323263] unknown[1b5b3f3075]");
+    check_int(tally, "unasked: nothing queued", unasked.take_output().size(), 0);
+    check_int(tally, "unasked: the classic protocol", unasked.key_protocol, TUI_keys.KEYS_CLASSIC);
+    check(tally, "unasked: Ctrl-i is Tab, Shift-Tab is BackTab, as always", pressed(bystander, unasked, 'i', term.CTRL) + " " + pressed(bystander, unasked, 9, term.SHIFT), "tab back-tab");
+    // a late kitty answer to a loop that gave up waiting does not turn anything on
+    TUI_app.Loop late = TUI_app.Loop(should_disambiguate_keys: true);
+    late.start_keys();
+    Recorder late_seen = Recorder();
+    late.dispatch(term.decode("\x1b[?62;22c".to_bytes())[0], late_seen, TUI_app.NoMouse());
+    late.dispatch(term.decode("\x1b[?0u".to_bytes())[0], late_seen, TUI_app.NoMouse());
+    check_int(tally, "late kitty answer after the attributes: still classic", late.key_protocol, TUI_keys.KEYS_CLASSIC);
+    check_int(tally, "late kitty answer: nothing queued", late.take_output().size(), 0);
+}
+
+/// `modify_other_key` of `text`, as the key's name or "none".
+str mok(str text) {
+    match (TUI_keys.modify_other_key(text.to_bytes())) {
+        case Some(term.Key key): {
+            return key.to_str();
+        }
+        case None: {
+            return "none";
+        }
+    }
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
 hyperlink_tests(score);
+key_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

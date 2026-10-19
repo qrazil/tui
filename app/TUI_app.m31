@@ -95,6 +95,7 @@ import term;
 import timer;
 import core.TUI_buffer;
 import app.TUI_diff;
+import core.TUI_keys;
 import core.TUI_mouse;
 import core.TUI_osc;
 import core.TUI_style;
@@ -225,6 +226,20 @@ pub type Loop {
     pub int copy_limit = TUI_osc.CLIPBOARD_LIMIT;
     /// Bytes to write as they are, in order, before the next frame (see `queue_output`).
     bytes outbox = [];
+    /// Ask the terminal for the kitty keyboard protocol (flag 1: Escape, Ctrl-i,
+    /// Alt-x and the like get reports of their own, see `TUI_keys`): `CSI ? u` and
+    /// `CSI c` are written on entry, and the protocol is turned on only when the
+    /// terminal answers the first. One that does not gets the keys it always got.
+    pub bool should_disambiguate_keys = false;
+    /// Ask for xterm's modifyOtherKeys level 2: as the fallback of
+    /// `should_disambiguate_keys` when the terminal did not answer it, or by itself
+    /// (then written on entry with nothing asked first, since nothing can be).
+    pub bool should_try_modify_other_keys = false;
+    /// Read-only: which encoding the keys come in, `TUI_keys.KEYS_CLASSIC`,
+    /// `KEYS_KITTY` or `KEYS_MODIFY_OTHER`. Not known until the terminal has answered.
+    pub int key_protocol = 0;
+    /// The kitty question is out and neither answer has come.
+    bool is_key_reply_pending = false;
 }
 
 /// Put `text` on the system clipboard (OSC 52, see `TUI_osc`): written before the
@@ -280,13 +295,18 @@ pub str Loop.enter_sequence() {
     if (should_sync) {
         modes = modes + TUI_diff.SYNC_QUERY;
     }
+    if (should_disambiguate_keys) {
+        modes = modes + TUI_keys.KITTY_QUERY + TUI_keys.DEVICE_ATTRIBUTES_QUERY;
+    } else if (should_try_modify_other_keys) {
+        modes = modes + TUI_keys.MODIFY_OTHER_ON;
+    }
     return enter + modes;
 }
 
 /// The bytes written on the way out: the modes off (the reverse of entry), then
 /// `leave`.
 pub str Loop.leave_sequence() {
-    str modes = "";
+    str modes = keys_off_sequence();
     if (should_sync) {
         // a terminal that was killed in the middle of a frame is not left holding its screen
         modes = modes + TUI_diff.SYNC_END;
@@ -308,6 +328,94 @@ pub str Loop.leave_sequence() {
         modes = modes + "\x1b[0 q";
     }
     return modes + leave;
+}
+
+/// What the loop has to say about the keys now: `run_with` calls it once the
+/// enter sequence is written, so the replies to its questions are recognised. With
+/// `should_try_modify_other_keys` alone the protocol is on from here, asked for.
+pub void Loop.start_keys() {
+    key_protocol = TUI_keys.KEYS_CLASSIC;
+    is_key_reply_pending = false;
+    if (should_disambiguate_keys) {
+        is_key_reply_pending = true;
+    } else if (should_try_modify_other_keys) {
+        key_protocol = TUI_keys.KEYS_MODIFY_OTHER;
+    }
+}
+
+/// The bytes that put the keyboard back, which is none for a terminal that was
+/// not asked or did not agree: nothing is written to a terminal that was found
+/// not to have the protocol. The kitty flags go while the alternate screen is
+/// still on (each screen has its own stack), so `leave_sequence` has this first.
+pub str Loop.keys_off_sequence() {
+    if (key_protocol == TUI_keys.KEYS_KITTY) {
+        return TUI_keys.KITTY_POP;
+    }
+    if (key_protocol == TUI_keys.KEYS_MODIFY_OTHER) {
+        return TUI_keys.MODIFY_OTHER_OFF;
+    }
+    return "";
+}
+
+/// Take the terminal's answer to the keyboard questions, if `raw` (an
+/// `Event.Unknown`'s bytes) is one, and say so: the kitty answer turns the
+/// protocol on (queued, written before the next frame), the device attributes
+/// answer, which comes after it from a terminal that has the protocol and instead
+/// of it from one that has not, ends the wait and falls back to modifyOtherKeys
+/// when that was asked. Answers that were not asked for are not taken.
+pub bool Loop.did_take_key_reply(bytes raw) {
+    if (!should_disambiguate_keys) {
+        return false;
+    }
+    int kind = TUI_keys.reply_kind(raw);
+    if (kind == TUI_keys.REPLY_NONE) {
+        return false;
+    }
+    if (kind == TUI_keys.REPLY_KITTY && is_key_reply_pending) {
+        is_key_reply_pending = false;
+        key_protocol = TUI_keys.KEYS_KITTY;
+        queue_output(TUI_keys.KITTY_PUSH.to_bytes);
+    } else if (kind == TUI_keys.REPLY_ATTRIBUTES && is_key_reply_pending) {
+        is_key_reply_pending = false;
+        if (should_try_modify_other_keys) {
+            key_protocol = TUI_keys.KEYS_MODIFY_OTHER;
+            queue_output(TUI_keys.MODIFY_OTHER_ON.to_bytes);
+        }
+    }
+    return true;
+}
+
+/// `event` as the program should see it under the keyboard protocol in use:
+/// with the classic encoding, as it is. With kitty or modifyOtherKeys, Shift-Tab is
+/// `BackTab` (see `TUI_keys.normalized`), and a modifyOtherKeys report the decoder
+/// does not know (it arrives as `Unknown`) is the `Key` it means.
+pub term.Event Loop.translate(term.Event event) {
+    if (key_protocol == TUI_keys.KEYS_CLASSIC) {
+        return event;
+    }
+    match (event) {
+        case Key(term.Key key): {
+            return term.Event.Key(TUI_keys.normalized(key));
+        }
+        case Unknown(bytes raw): {
+            if (key_protocol == TUI_keys.KEYS_MODIFY_OTHER) {
+                match (TUI_keys.modify_other_key(raw)) {
+                    case Some(term.Key key): {
+                        return term.Event.Key(TUI_keys.normalized(key));
+                    }
+                    case None: {
+                    }
+                }
+            }
+            return event;
+        }
+        case Mouse(term.Mouse report): {
+            return event;
+        }
+        case Paste(str text): {
+            return event;
+        }
+    }
 }
 
 /// Raw mode, then read-dispatch-render until `on_event` answers `Quit`, the
@@ -345,6 +453,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             session.on_exit(leave_sequence());
             term.Writer writer = term.writer(io.stdout());
             writer.put(enter_sequence());
+            start_keys();
             term.Reader reader = term.reader();
             term.Size window_size = screen_size();
             // Two buffers for the whole run, swapped each frame: the one
@@ -468,6 +577,13 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     }
                 }
             }
+            // the keyboard goes back while the alternate screen is still on (the
+            // session's own leave sequence, which follows, turns it off)
+            str keys_off = keys_off_sequence();
+            if (keys_off.size() > 0) {
+                writer.put(keys_off);
+                flush(writer);
+            }
         }
     }
     return Result<int, term.Error>.Ok(0);
@@ -544,7 +660,8 @@ pub bytes Loop.compose_frame(bytes body, Shown shown) {
 
 // One decoded event to the right callback: a mouse report to the router (when
 // mouse reporting is on), everything else to `on_event`.
-Action Loop.dispatch(term.Event event, Handler on_event, MouseHandler on_mouse) {
+pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_mouse) {
+    term.Event event = translate(incoming);
     match (event) {
         case Mouse(term.Mouse report): {
             if (should_report_mouse) {
@@ -563,6 +680,10 @@ Action Loop.dispatch(term.Event event, Handler on_event, MouseHandler on_mouse) 
             return on_event.handle(event);
         }
         case Unknown(bytes raw): {
+            if (did_take_key_reply(raw)) {
+                // the answer to the keyboard questions: the loop's own business
+                return Action.Continue;
+            }
             int reply = TUI_diff.sync_reply(raw);
             if (reply >= 0) {
                 // the answer to the mode 2026 question: the loop's own business

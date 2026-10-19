@@ -1,0 +1,171 @@
+// Keyboard protocols that tell Ctrl-i from Tab and Escape from the start of Alt-x.
+//
+// API
+// ---
+//   TUI_keys.KITTY_QUERY, DEVICE_ATTRIBUTES_QUERY      what the loop asks, in this order
+//   TUI_keys.KITTY_PUSH / KITTY_POP                    the kitty keyboard protocol on / off
+//   TUI_keys.MODIFY_OTHER_ON / MODIFY_OTHER_OFF        xterm's modifyOtherKeys 2 on / off
+//   TUI_keys.reply_kind(bytes)                         is it the kitty answer, or the DA1 one?
+//   TUI_keys.modify_other_key(bytes)                   a modifyOtherKeys report, as a `term.Key`
+//   TUI_keys.normalized(key)                           Shift-Tab is BackTab on every protocol
+//
+// A terminal sends a key as bytes, and the classic encoding loses things: Ctrl-i
+// is byte 9, the same as Tab; Ctrl-m is Enter; Escape is byte 27, the first byte
+// of every Alt-key, which is why a lone Escape is only known after a pause; and
+// Ctrl-Shift-letter is Ctrl-letter. Two protocols give those keys their own
+// reports:
+//
+//   - **kitty's keyboard protocol** (kitty, foot, WezTerm, Ghostty, Alacritty,
+//     recent iTerm2 and others). Flag 1, "disambiguate escape codes", is what is
+//     asked: Escape is `CSI 27 u`, Ctrl-i is `CSI 105 ; 5 u`, Alt-a `CSI 97 ; 3 u`,
+//     while the Tab, Enter and Backspace keys and every key with no modifier keep
+//     sending what they always sent. Nothing a program already understands changes.
+//     The terminal can be ASKED: `CSI ? u` is answered `CSI ? <flags> u` by a
+//     terminal that has the protocol and not at all by one that has not, so the
+//     question is followed by `CSI c` (primary device attributes), which EVERY
+//     terminal answers, and which says "no answer is coming" when it arrives first.
+//   - **modifyOtherKeys, level 2** (xterm, and what tmux, foot, Alacritty and
+//     others can speak): a modified key is `CSI 27 ; <modifiers> ; <code> ~`. There
+//     is no question to ask, so it is for a program that wants it for sure, or the
+//     fallback of a terminal that did not answer the kitty one.
+//
+// `term`'s decoder already reads `CSI u`, so a kitty key arrives as a `Key`. A
+// modifyOtherKeys report it does not know arrives as `Event.Unknown`, and
+// `modify_other_key` turns those bytes into the `Key` they mean.
+//
+// This module is bytes in, bytes out. `TUI_app.Loop` does the asking
+// (`should_disambiguate_keys`, `should_try_modify_other_keys`) and writes nothing
+// unless the program set one.
+
+import term;
+
+/// `CSI ? u`: which kitty keyboard flags are on? Answered `CSI ? <flags> u`.
+pub const str KITTY_QUERY = "\x1b[?u";
+/// `CSI c`: primary device attributes. Every terminal answers; asked right after
+/// `KITTY_QUERY` so that its answer closes the question.
+pub const str DEVICE_ATTRIBUTES_QUERY = "\x1b[c";
+/// `CSI > 1 u`: push the flags "disambiguate escape codes".
+pub const str KITTY_PUSH = "\x1b[>1u";
+/// `CSI < u`: pop them -- the flags are what they were before. Written while
+/// the alternate screen is still on, because the two screens keep a stack each.
+pub const str KITTY_POP = "\x1b[<u";
+/// `CSI > 4 ; 2 m`: modifyOtherKeys, level 2.
+pub const str MODIFY_OTHER_ON = "\x1b[>4;2m";
+/// `CSI > 4 ; 0 m`: modifyOtherKeys off.
+pub const str MODIFY_OTHER_OFF = "\x1b[>4;0m";
+/// `Loop.key_protocol`: the classic encoding, the kitty protocol (flag 1), or
+/// modifyOtherKeys level 2.
+pub const int KEYS_CLASSIC = 0;
+pub const int KEYS_KITTY = 1;
+pub const int KEYS_MODIFY_OTHER = 2;
+/// What `reply_kind` answers for bytes that are neither reply.
+pub const int REPLY_NONE = 0;
+/// The answer to `KITTY_QUERY`: the terminal has the protocol.
+pub const int REPLY_KITTY = 1;
+/// The answer to `DEVICE_ATTRIBUTES_QUERY`.
+pub const int REPLY_ATTRIBUTES = 2;
+
+/// The numbers of the sequence `raw` between its `CSI` (and optional `?`) at
+/// `from` and its final byte, which must be `final`; empty when `raw` is anything
+/// else. A number is digits; the separator is `;`.
+List<int> numbers(bytes raw, int from, int final) {
+    List<int> out = [];
+    int size = raw.size();
+    if (size < from + 2 || raw[size - 1] != final) {
+        return out;
+    }
+    int current = -1;
+    for (int index in from .. size - 1) {
+        int octet = raw[index];
+        if (octet >= '0' && octet <= '9') {
+            if (current < 0) {
+                current = 0;
+            }
+            if (current > 100000000) {
+                return [];
+            }
+            current = current * 10 + octet - '0';
+        } else if (octet == ';') {
+            if (current < 0) {
+                return [];
+            }
+            out.push(current);
+            current = -1;
+        } else {
+            return [];
+        }
+    }
+    if (current < 0) {
+        return [];
+    }
+    out.push(current);
+    return out;
+}
+
+bool is_csi_with(bytes raw, int marker) {
+    if (raw.size() < 3 || raw[0] != 27 || raw[1] != '[') {
+        return false;
+    }
+    if (marker == 0) {
+        return true;
+    }
+    return raw[2] == marker;
+}
+
+/// Is `raw` (one `Event.Unknown`'s bytes) the answer to `KITTY_QUERY`
+/// (`REPLY_KITTY`: `CSI ? <flags> u`), the answer to `DEVICE_ATTRIBUTES_QUERY`
+/// (`REPLY_ATTRIBUTES`: `CSI ? <numbers> c`), or neither (`REPLY_NONE`)?
+pub int reply_kind(bytes raw) {
+    if (!is_csi_with(raw, '?')) {
+        return REPLY_NONE;
+    }
+    if (numbers(raw, 3, 'u').size() == 1) {
+        return REPLY_KITTY;
+    }
+    if (numbers(raw, 3, 'c').size() >= 1) {
+        return REPLY_ATTRIBUTES;
+    }
+    return REPLY_NONE;
+}
+
+/// The key a modifyOtherKeys report names: `CSI 27 ; <modifiers> ; <code> ~`, the
+/// modifiers as xterm numbers them (1 plus the bits Shift 1, Alt 2, Ctrl 4, Meta 8).
+/// `None` for anything else, a code that is no character, or a modifier number
+/// that is no number. Tab, Enter, Escape and Backspace are those keys.
+pub Option<term.Key> modify_other_key(bytes raw) {
+    if (!is_csi_with(raw, 0)) {
+        return Option<term.Key>.None;
+    }
+    List<int> parts = numbers(raw, 2, '~');
+    if (parts.size() != 3 || parts[0] != 27 || parts[1] < 1) {
+        return Option<term.Key>.None;
+    }
+    int mods = (parts[1] - 1) & 15;
+    int code = parts[2];
+    if (code == 9) {
+        return Option<term.Key>.Some(term.Key(term.Code.Tab, mods));
+    }
+    if (code == 13) {
+        return Option<term.Key>.Some(term.Key(term.Code.Enter, mods));
+    }
+    if (code == 27) {
+        return Option<term.Key>.Some(term.Key(term.Code.Escape, mods));
+    }
+    if (code == 8 || code == 127) {
+        return Option<term.Key>.Some(term.Key(term.Code.Backspace, mods));
+    }
+    if (code < 32 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) {
+        return Option<term.Key>.None;
+    }
+    return Option<term.Key>.Some(term.Key(term.Code.Char(code), mods));
+}
+
+/// `key` as a program that reads `BackTab` expects it: Shift-Tab, which both
+/// protocols report as Tab with Shift, is `BackTab` with no modifiers, which is
+/// what the classic encoding (`CSI Z`) gives. Every other key as it is.
+pub term.Key normalized(term.Key key) {
+    if (key.code.to_str() == "tab" && (key.mods & term.SHIFT) != 0) {
+        return term.Key(term.Code.BackTab, key.mods - term.SHIFT);
+    }
+    return key;
+}
