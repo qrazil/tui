@@ -38,6 +38,14 @@
 // when a cell wants something else, and then only by what changed:
 // `\x1b[24m` to stop underlining, not a reset and a repaint.
 //
+// **Hyperlinks (OSC 8) are written like the pen.** A cell with a link is written
+// inside `ESC ] 8 ; id ; uri ST ... ESC ] 8 ; ; ST`; the link a frame has open
+// changes only when a cell wants another one, is closed before an erase-to-end-of-
+// line and at the end of the frame, so a frame never leaves one open. Crossing a
+// gap by walking is taken only over cells whose link is the one already open. A
+// frame in which neither buffer has a link writes exactly the bytes it did before
+// links existed.
+//
 // **A run of blanks to the end of a row becomes `\x1b[K`.** Erase-to-end-of
 // line fills with the terminal's own background, so it is used only when the
 // pen can be put back to plain first, which is exactly when the remaining
@@ -45,6 +53,7 @@
 
 import core.TUI_buffer;
 import core.TUI_geometry;
+import core.TUI_osc;
 import core.TUI_style;
 
 /// How many plain trailing blanks make `\x1b[K` worth its bytes: the escape
@@ -61,6 +70,8 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     TUI_style.push_reset(out);
     TUI_geometry.Rect area = next.area();
     int pen = TUI_style.RESET_STYLE;
+    bool has_links = next.has_links();
+    str link = "";
     for (int y in area.y .. area.bottom()) {
         move_to(out, area.x, y);
         int tail = tail_start(next, y);
@@ -73,11 +84,15 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             }
             if (x >= tail && area.right() - x >= ERASE_WORTH) {
                 pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
+                link = write_link(out, link, "");
                 erase_line(out);
                 x = area.right();
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
+            if (has_links) {
+                link = write_link(out, link, next.link_at(x, y));
+            }
             next.append_symbol(out, x, y);
             x = x + cell_width;
             if (is_uncertain(next, x - cell_width, y)) {
@@ -85,6 +100,7 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             }
         }
     }
+    link = write_link(out, link, "");
     if (pen != TUI_style.RESET_STYLE) {
         TUI_style.push_reset(out);
     }
@@ -122,6 +138,8 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
     }
     bytes out = [];
     int pen = TUI_style.RESET_STYLE;
+    bool has_links = previous.has_links() || next.has_links();
+    str link = "";
     int current_x = -1;
     int current_y = -1;
     for (int y in area.y .. area.bottom()) {
@@ -148,17 +166,21 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             if (current_y != y || current_x < 0 || current_x > x) {
                 move_to(out, x, y);
             } else if (current_x < x) {
-                cross(out, next, current_x, x, y, pen);
+                cross(out, next, current_x, x, y, pen, link, has_links);
             }
             current_y = y;
             if (x >= tail && area.right() - x >= ERASE_WORTH) {
                 pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
+                link = write_link(out, link, "");
                 erase_line(out);
                 current_x = x;
                 x = area.right();
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
+            if (has_links) {
+                link = write_link(out, link, next.link_at(x, y));
+            }
             next.append_symbol(out, x, y);
             current_x = x + cell_width;
             if (is_uncertain(next, x, y) || is_uncertain(previous, x, y)) {
@@ -171,6 +193,7 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             x = x + cell_width;
         }
     }
+    link = write_link(out, link, "");
     if (out.size() > 0 && pen != TUI_style.RESET_STYLE) {
         TUI_style.push_reset(out);
     }
@@ -409,7 +432,7 @@ bool has_changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int 
 
 /// Get from column `from` to column `target` in row `y`: either by walking over
 /// the unchanged cells between them, or by jumping.
-void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int pen) {
+void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int pen, str link, bool has_links) {
     int gap = target - from;
     int jump = 3;
     if (gap > 1) {
@@ -424,7 +447,7 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
             x = x + 1;
             continue;
         }
-        if (next.style_at(x, y) != pen || is_uncertain(next, x, y)) {
+        if (next.style_at(x, y) != pen || is_uncertain(next, x, y) || (has_links && next.link_at(x, y) != link)) {
             // a style change costs more than a jump, and a cluster of uncertain width
             // is never drawn again just to get across: the cursor would end up elsewhere
             is_same_style = false;
@@ -467,6 +490,21 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
 /// which is cheaper than this module reading the row back a cell at a time.
 int tail_start(TUI_buffer.Buffer buffer, int y) {
     return buffer.tail_start(y);
+}
+
+// Open the link `want` (closing the one that is open), or close it when `want` is
+// "": the bytes only when it differs from `current`. Answers the link now open.
+str write_link(bytes out, str current, str want) {
+    if (current == want) {
+        return current;
+    }
+    if (current != "") {
+        out.extend(TUI_osc.HYPERLINK_CLOSE.to_bytes);
+    }
+    if (want != "") {
+        out.extend(TUI_osc.hyperlink_open(want).to_bytes());
+    }
+    return want;
 }
 
 int write_style(bytes out, int pen, int want, TUI_style.Depth depth) {

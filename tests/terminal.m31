@@ -12,12 +12,15 @@
 
 import encoding.base64;
 import os;
+import random;
 import term;
 import app.TUI_app;
 import core.TUI_buffer;
+import core.TUI_geometry;
 import app.TUI_diff;
 import core.TUI_osc;
 import core.TUI_style;
+import core.TUI_widget;
 import tests.TST_emulator;
 
 type Tally {
@@ -209,9 +212,215 @@ void clipboard_tests(Tally tally) {
     ok(tally, "default enter and leave have no clipboard in them", !(TUI_app.Loop().enter_sequence() + TUI_app.Loop().leave_sequence()).contains("]52"));
 }
 
+// --- 3. hyperlinks (OSC 8) in the cell model ---------------------------------------
+
+/// Apply `diff(before, after)` to a screen that shows `before`; what differs from
+/// `after` afterwards ("" when nothing does, links included).
+str replayed(TUI_buffer.Buffer before, TUI_buffer.Buffer after) {
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(before.area().width, before.area().height);
+    screen.show(before);
+    screen.feed(TUI_diff.diff(before, after, TUI_style.Depth.TrueColour));
+    if (screen.unknown.size() > 0) {
+        return "unknown sequence " + screen.unknown[0];
+    }
+    if (screen.link != "") {
+        return "a link was left open: " + screen.link;
+    }
+    return screen.differs_from(after);
+}
+
+/// `full(buffer)` on a blank screen; what differs from `buffer` afterwards.
+str painted(TUI_buffer.Buffer buffer) {
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(buffer.area().width, buffer.area().height);
+    screen.feed(TUI_diff.full(buffer, TUI_style.Depth.TrueColour));
+    if (screen.unknown.size() > 0) {
+        return "unknown sequence " + screen.unknown[0];
+    }
+    if (screen.link != "") {
+        return "a link was left open: " + screen.link;
+    }
+    return screen.differs_from(buffer);
+}
+
+void hyperlink_tests(Tally tally) {
+    head("hyperlinks (OSC 8)");
+    TUI_style.Style plain = TUI_style.Style();
+    // the encoders
+    check(tally, "uri: plain stays", TUI_osc.hyperlink_uri("https://example.com/a?b=c;d#e"), "https://example.com/a?b=c;d#e");
+    check(tally, "uri: a space, ESC, BEL and a newline are percent-encoded", TUI_osc.hyperlink_uri("file:///a b\x1b\x07\n"), "file:///a%20b%1B%07%0A");
+    check(tally, "uri: non-ASCII is percent-encoded byte by byte", TUI_osc.hyperlink_uri("http://x/\u{E9}"), "http://x/%C3%A9");
+    check(tally, "uri: empty is no link", TUI_osc.hyperlink_uri(""), "");
+    check(tally, "uri: over-long is no link", TUI_osc.hyperlink_uri("http://x/" + "a".repeat(2100)), "");
+    check(tally, "uri: just short enough stays", str(TUI_osc.hyperlink_uri("a".repeat(2083)).size()), "2083");
+    check(tally, "open: id from the uri, ST at the end", TUI_diff.show(TUI_osc.hyperlink_open("http://a").to_bytes()), "\\e]8;id=" + str(TUI_osc.hyperlink_id("http://a")) + ";http://a\\e\\");
+    check(tally, "open: the same uri gives the same id", str(TUI_osc.hyperlink_id("http://a")), str(TUI_osc.hyperlink_id("http://a")));
+    ok(tally, "open: another uri another id", TUI_osc.hyperlink_id("http://a") != TUI_osc.hyperlink_id("http://b"));
+    check(tally, "open: no link, no bytes", TUI_osc.hyperlink_open(""), "");
+    check(tally, "close", TUI_diff.show(TUI_osc.HYPERLINK_CLOSE.to_bytes), "\\e]8;;\\e\\");
+    // the cell model
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(20, 3);
+    ok(tally, "a new buffer has no links", !buffer.has_links());
+    buffer.set_str(0, 0, "see the docs now", plain);
+    buffer.link(TUI_geometry.Rect(8, 0, 4, 1), "https://m31.dev/docs");
+    ok(tally, "link() makes it so", buffer.has_links());
+    check(tally, "the cells inside have the link", buffer.link_at(9, 0), "https://m31.dev/docs");
+    check(tally, "the cells outside do not", buffer.link_at(7, 0) + buffer.link_at(12, 0), "");
+    check(tally, "get() carries it", buffer.get(8, 0).link, "https://m31.dev/docs");
+    check(tally, "the text is untouched", buffer.row_text(0), "see the docs now    ");
+    buffer.set_str(9, 0, "O", plain);
+    check(tally, "writing over a linked cell takes its link off", buffer.link_at(9, 0), "");
+    check(tally, "and only that cell's", buffer.link_at(8, 0) + "|" + buffer.link_at(10, 0), "https://m31.dev/docs|https://m31.dev/docs");
+    buffer.link(TUI_geometry.Rect(0, 0, 20, 1), "");
+    ok(tally, "link(rect, \"\") removes links", buffer.link_at(8, 0) == "" && buffer.link_at(10, 0) == "");
+    buffer.link(TUI_geometry.Rect(0, 1, 5, 1), "javascript:alert(1)\x1b");
+    check(tally, "an unsafe uri is made safe, not refused", buffer.link_at(0, 1), "javascript:alert(1)%1B");
+    buffer.link(TUI_geometry.Rect(-5, -5, 100, 100), "http://all");
+    check(tally, "a rect past the edge is clipped", buffer.link_at(19, 2), "http://all");
+    buffer.clear();
+    ok(tally, "clear() drops every link", !buffer.has_links());
+    ok(tally, "and the cells are plain", buffer.link_at(3, 1) == "");
+    // set_link_str, Span, Cell
+    TUI_buffer.Buffer spans = TUI_buffer.Buffer.sized(20, 1);
+    check_int(tally, "set_link_str answers the columns", spans.set_link_str(2, 0, "docs", plain, "http://d"), 4);
+    check(tally, "set_link_str: linked", spans.link_at(2, 0) + spans.link_at(5, 0), "http://dhttp://d");
+    check(tally, "set_link_str: not beyond", spans.link_at(1, 0) + spans.link_at(6, 0), "");
+    TUI_buffer.Buffer line = TUI_buffer.Buffer.sized(20, 1);
+    TUI_widget.Line([TUI_widget.Span("see "), TUI_widget.Span("docs", link: "http://d"), TUI_widget.Span(".")]).render(line, line.area());
+    check(tally, "a Span with a link: its columns", line.link_at(4, 0) + line.link_at(7, 0), "http://dhttp://d");
+    check(tally, "a Span with a link: not the spans around it", line.link_at(3, 0) + line.link_at(8, 0), "");
+    TUI_buffer.Buffer cells = TUI_buffer.Buffer.sized(4, 1);
+    cells.set(1, 0, TUI_buffer.Cell("x", link: "http://c"));
+    check(tally, "set(Cell with a link)", cells.link_at(1, 0), "http://c");
+    cells.set(1, 0, TUI_buffer.Cell("y"));
+    check(tally, "set(Cell without) drops it", cells.link_at(1, 0), "");
+    ok(tally, "a cell differs by its link", !TUI_buffer.Cell("x", link: "a").eq(TUI_buffer.Cell("x")));
+    // frames
+    TUI_buffer.Buffer frame = TUI_buffer.Buffer.sized(20, 2);
+    frame.set_str(0, 0, "see docs here", plain);
+    frame.link(TUI_geometry.Rect(4, 0, 4, 1), "http://d");
+    bytes bytes_full = TUI_diff.full(frame, TUI_style.Depth.Ansi16);
+    check(tally, "full: the link is open around its cells only, and closed", TUI_diff.show(bytes_full), "\\e[0m\\e[1;1Hsee \\e]8;id=" + str(TUI_osc.hyperlink_id("http://d")) + ";http://d\\e\\docs\\e]8;;\\e\\ here       \\e[2;1H\\e[K");
+    check(tally, "full: the terminal agrees", painted(frame), "");
+    TUI_buffer.Buffer none = TUI_buffer.Buffer.sized(20, 2);
+    none.set_str(0, 0, "see docs here", plain);
+    ok(tally, "a frame with no links has no OSC in it", !TUI_diff.show(TUI_diff.full(none, TUI_style.Depth.Ansi16)).contains("]8;"));
+    ok(tally, "nor does its diff", !TUI_diff.show(TUI_diff.diff(none, frame_without_link(), TUI_style.Depth.Ansi16)).contains("]8;"));
+    ok(tally, "link on, nothing else changed: the frame still has something to write", TUI_diff.diff(none, frame, TUI_style.Depth.Ansi16).size() > 0);
+    check(tally, "diff: a link appears", replayed(none, frame), "");
+    check(tally, "diff: a link goes away", replayed(frame, none), "");
+    TUI_buffer.Buffer other = TUI_buffer.Buffer.sized(20, 2);
+    other.set_str(0, 0, "see docs here", plain);
+    other.link(TUI_geometry.Rect(4, 0, 4, 1), "http://other");
+    check(tally, "diff: the same text with another link is redrawn", replayed(frame, other), "");
+    ok(tally, "diff: and the bytes say so", TUI_diff.show(TUI_diff.diff(frame, other, TUI_style.Depth.Ansi16)).contains("http://other"));
+    check_int(tally, "diff: identical frames, links and all, write nothing", TUI_diff.diff(frame, frame, TUI_style.Depth.Ansi16).size(), 0);
+    TUI_buffer.Buffer longer = TUI_buffer.Buffer.sized(20, 2);
+    longer.set_str(0, 0, "see docs here", plain);
+    longer.link(TUI_geometry.Rect(4, 0, 9, 1), "http://d");
+    check(tally, "diff: a link that grows", replayed(frame, longer), "");
+    TUI_buffer.Buffer erased = TUI_buffer.Buffer.sized(30, 1);
+    erased.set_link_str(0, 0, "docs", plain, "http://d");
+    check(tally, "full: a link is closed before the erase to the end of the row", TUI_diff.show(TUI_diff.full(erased, TUI_style.Depth.Ansi16)), "\\e[0m\\e[1;1H\\e]8;id=" + str(TUI_osc.hyperlink_id("http://d")) + ";http://d\\e\\docs\\e]8;;\\e\\\\e[K");
+    // a link on blanks to the end of the row is not erased away
+    TUI_buffer.Buffer tail = TUI_buffer.Buffer.sized(20, 1);
+    tail.link(TUI_geometry.Rect(2, 0, 18, 1), "http://tail");
+    check(tally, "full: linked blanks are written, not erased", painted(tail), "");
+    check(tally, "diff: linked blanks are written, not erased", replayed(TUI_buffer.Buffer.sized(20, 1), tail), "");
+    // wide characters inside a link, and a link wrapped over two rows
+    TUI_buffer.Buffer wide = TUI_buffer.Buffer.sized(12, 2);
+    wide.set_str(0, 0, "a\u{1F600}b\u{4E2D}c", plain);
+    wide.link(TUI_geometry.Rect(1, 0, 5, 1), "http://wide");
+    wide.set_str(0, 1, "wrapped", plain);
+    wide.link(TUI_geometry.Rect(0, 1, 7, 1), "http://wide");
+    check(tally, "wide cells in a link and a link over two rows: full", painted(wide), "");
+    check(tally, "wide cells in a link and a link over two rows: diff", replayed(TUI_buffer.Buffer.sized(12, 2), wide), "");
+    int first = TUI_diff.show(TUI_diff.full(wide, TUI_style.Depth.Ansi16)).split("id=").size();
+    check_int(tally, "the two runs of one uri share one id (two opens, one id)", first, 3);
+    // the cursor walks across unchanged cells only when they are the open link
+    TUI_buffer.Buffer gap_before = TUI_buffer.Buffer.sized(30, 1);
+    gap_before.set_str(0, 0, "ab cd ef", plain);
+    TUI_buffer.Buffer gap_after = TUI_buffer.Buffer.sized(30, 1);
+    gap_after.set_str(0, 0, "AB cd EF", plain);
+    gap_before.link(TUI_geometry.Rect(2, 0, 3, 1), "http://gap");
+    gap_after.link(TUI_geometry.Rect(2, 0, 3, 1), "http://gap");
+    check(tally, "diff: a linked gap between two changes", replayed(gap_before, gap_after), "");
+    gap_before.link(TUI_geometry.Rect(2, 0, 3, 1), "");
+    gap_after.link(TUI_geometry.Rect(2, 0, 1, 1), "http://gap");
+    check(tally, "diff: a gap that is partly linked", replayed(gap_before, gap_after), "");
+    // scrolling keeps links
+    TUI_buffer.Buffer rows = TUI_buffer.Buffer.sized(8, 6);
+    for (int row in 0 .. 6) {
+        rows.set_str(0, row, "row " + str(row), plain);
+    }
+    rows.link(TUI_geometry.Rect(0, 3, 5, 1), "http://row3");
+    check(tally, "scrolled(): the link moves with its row", rows.scrolled(0, 5, 2).link_at(0, 1), "http://row3");
+    check(tally, "scrolled(): the row that opened up has none", rows.scrolled(0, 5, 2).link_at(0, 5), "");
+    TUI_buffer.Buffer moving = rows.copy();
+    moving.scroll_rows(0, 5, -1);
+    check(tally, "scroll_rows(): in place, the other way", moving.link_at(0, 4), "http://row3");
+    check(tally, "copy() keeps links", rows.copy().link_at(0, 3), "http://row3");
+    // a thousand random frames, replayed on the emulator
+    random.Seeded dice = random.seeded(31);
+    List<str> uris = ["", "", "http://a", "http://b/c?d;e", "file:///x%20y"];
+    int bad = 0;
+    str first_bad = "";
+    TUI_buffer.Buffer before = TUI_buffer.Buffer.sized(24, 4);
+    for (int round in 0 .. 400) {
+        TUI_buffer.Buffer after = TUI_buffer.Buffer.sized(24, 4);
+        for (int row in 0 .. 4) {
+            int column = 0;
+            while (column < 22) {
+                int length = dice.integer(1, 7);
+                int kind = dice.integer(0, 5);
+                str text = "ab cd ef gh";
+                if (kind == 0) {
+                    text = "\u{1F600}x\u{4E2D}";
+                } else if (kind == 1) {
+                    text = "       ";
+                }
+                int bold = dice.integer(0, 3);
+                TUI_style.Style style = TUI_style.Style();
+                if (bold == 0) {
+                    style = TUI_style.Style(attrs: TUI_style.BOLD);
+                }
+                int used = after.set_str(column, row, text, style, max: length);
+                str uri = uris[dice.integer(0, uris.size() - 1)];
+                after.link(TUI_geometry.Rect(column, row, used, 1), uri);
+                column = column + length + dice.integer(0, 3);
+            }
+        }
+        // half the rounds keep most of the old frame, so the gaps between changes are unchanged cells
+        if (dice.integer(0, 2) == 0) {
+            for (int row in 0 .. 4) {
+                if (dice.integer(0, 3) != 0) {
+                    for (int column in 0 .. 24) {
+                        after.set(column, row, before.get(column, row));
+                    }
+                }
+            }
+        }
+        str problem = replayed(before, after);
+        if (problem != "") {
+            bad = bad + 1;
+            if (first_bad == "") {
+                first_bad = "round " + str(round) + ": " + problem;
+            }
+        }
+        before = after;
+    }
+    check(tally, "400 random frames with links, replayed on the emulator: every one right " + first_bad, str(bad), "0");
+}
+
+TUI_buffer.Buffer frame_without_link() {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(20, 2);
+    buffer.set_str(0, 0, "see docs HERE", TUI_style.Style());
+    return buffer;
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
+hyperlink_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

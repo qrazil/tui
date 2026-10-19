@@ -10,7 +10,10 @@
 //   b.set_str(x, y, text, style, max:)      write text, width-aware, clipped
 //   b.fill(rect, symbol, style)             every cell of a rectangle
 //   b.restyle(rect, style)                  the style, leaving the glyphs
-//   b.clear()                               blanks, in the plain style
+//   b.link(rect, uri)                       the cells of a rectangle are a hyperlink (OSC 8)
+//   b.set_link_str(x, y, text, style, uri)  write text that is a hyperlink
+//   b.link_at(x, y)                         the link of a cell, "" for none
+//   b.clear()                               blanks, in the plain style, no links
 //   b.to_str()                              the rows as plain text -- `print(b)`
 //   b.frame()                               the same inside a ruled box, for tests
 //
@@ -34,6 +37,19 @@
 // orphan already had. That is where terminal libraries go wrong, and it is
 // checked in the test corpus from both directions.
 //
+// --- a cell may be a hyperlink ----------------------------------------------
+//
+// A cell has a link, "" for none: an OSC 8 URI, written around the cells that
+// carry it by `TUI_diff` and compared like the symbol and the style, so a link
+// that appears, changes or goes away is redrawn. `link(rect, uri)` is the one door:
+// like `restyle` it marks cells that are already drawn. Writing over a cell takes
+// its link off (new text is not what the link was on).
+//
+// A buffer that never had a link pays nothing: the list of links is created by the
+// first `link` and every comparison and copy asks `has_links` before looking at it.
+// The URI is made safe on the way in (`TUI_osc.hyperlink_uri`): an empty, over-long
+// or unusable one is no link. `clear` drops every link.
+//
 // --- what a cell costs ------------------------------------------------------
 //
 // A `Cell` is a struct, and a 200x50 buffer has ten thousand of them; a
@@ -46,6 +62,7 @@
 
 import text.unicode;
 import core.TUI_geometry;
+import core.TUI_osc;
 import core.TUI_style;
 
 /// One cell of the grid.
@@ -57,6 +74,8 @@ pub type Cell {
     pub str symbol;
     pub TUI_style.Style style = TUI_style.Style();
     pub int width = 1;
+    /// The OSC 8 hyperlink the cell belongs to, "" for none.
+    pub str link = "";
 }
 
 /// A cell holding `symbol`, measured with `unicode.width`.
@@ -75,7 +94,7 @@ pub static Cell Cell.blank() {
 }
 
 pub bool Cell.eq(Cell other) {
-    return width == other.width && symbol == other.symbol && style.eq(other.style);
+    return width == other.width && symbol == other.symbol && style.eq(other.style) && link == other.link;
 }
 
 pub str Cell.to_str() {
@@ -92,6 +111,8 @@ pub type Buffer {
     List<str> symbols;
     List<int> styles;
     List<int> widths;
+    /// One link per cell, or EMPTY when no cell of this buffer has had one.
+    List<str> links;
 }
 
 /// A blank `width` by `height` buffer with its corner at the origin.
@@ -120,7 +141,7 @@ pub static Buffer Buffer.empty(TUI_geometry.Rect area) {
         styles.push(0);
         widths.push(1);
     }
-    return Buffer(box, symbols, styles, widths);
+    return Buffer(box, symbols, styles, widths, []);
 }
 
 /// The rectangle this buffer covers, in absolute coordinates.
@@ -143,7 +164,7 @@ pub Cell Buffer.get(int x, int y) {
         trap("TUI_buffer.Buffer.get: " + str(x) + "," + str(y) + " is outside " + box.to_str());
     }
     int index = at(x, y);
-    return Cell(symbols[index], style: TUI_style.Style.unpack(styles[index]), width: widths[index]);
+    return Cell(symbols[index], style: TUI_style.Style.unpack(styles[index]), width: widths[index], link: link_of(index));
 }
 
 /// The packed style at `x`, `y` -- what the renderer compares. **Traps**
@@ -177,7 +198,13 @@ pub bool Buffer.is_same_cell(Buffer other, int x, int y) {
         trap("TUI_buffer.Buffer.is_same_cell: the buffers cover different rectangles");
     }
     int index = at(x, y);
-    return widths[index] == other.widths[index] && styles[index] == other.styles[index] && symbols[index] == other.symbols[index];
+    if (widths[index] != other.widths[index] || styles[index] != other.styles[index] || symbols[index] != other.symbols[index]) {
+        return false;
+    }
+    if (links.size() > 0 || other.links.size() > 0) {
+        return link_of(index) == other.link_of(index);
+    }
+    return true;
 }
 
 /// Is row `y` the same in both buffers, cell for cell? The renderer asks
@@ -201,6 +228,14 @@ pub bool Buffer.is_same_row(Buffer other, int y) {
         }
         index = index + 1;
     }
+    if (links.size() > 0 || other.links.size() > 0) {
+        int from = (y - box.y) * box.width;
+        for (int cell in 0 .. box.width) {
+            if (link_of(from + cell) != other.link_of(from + cell)) {
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -218,7 +253,7 @@ pub int Buffer.tail_start(int y) {
     int column = box.width;
     while (column > 0) {
         int index = base + column - 1;
-        if (styles[index] != TUI_style.RESET_STYLE || symbols[index] != " ") {
+        if (styles[index] != TUI_style.RESET_STYLE || symbols[index] != " " || (links.size() > 0 && links[index] != "")) {
             return box.x + column;
         }
         column = column - 1;
@@ -274,6 +309,7 @@ pub void Buffer.set(int x, int y, Cell cell) {
         }
         put(x, y, cell.symbol, packed_style, 2);
         put(x + 1, y, "", packed_style, 0);
+        link(TUI_geometry.Rect(x, y, 2, 1), cell.link);
         return;
     }
     if (cell.width <= 0) {
@@ -283,6 +319,7 @@ pub void Buffer.set(int x, int y, Cell cell) {
         return;
     }
     put(x, y, cell.symbol, packed_style, 1);
+    link(TUI_geometry.Rect(x, y, 1, 1), cell.link);
 }
 
 /// Restyle one cell, leaving its symbol alone. Outside the buffer it does
@@ -314,6 +351,9 @@ void Buffer.put(int x, int y, str text, int packed_style, int width) {
     symbols[index] = text;
     styles[index] = packed_style;
     widths[index] = width;
+    if (links.size() > 0) {
+        links[index] = "";
+    }
 }
 
 /// Write `text` at `x`, `y`, one grapheme cluster per cell, and answer how
@@ -464,6 +504,7 @@ pub void Buffer.clear() {
         styles[i] = 0;
         widths[i] = 1;
     }
+    links = [];
 }
 
 /// Is row `y` of this buffer cell for cell the same as row `other_y` of
@@ -485,6 +526,9 @@ pub bool Buffer.is_row_like(Buffer other, int y, int other_y) {
         if (styles[index] != other.styles[other_index] || widths[index] != other.widths[other_index] || symbols[index] != other.symbols[other_index]) {
             return false;
         }
+        if ((links.size() > 0 || other.links.size() > 0) && link_of(index) != other.link_of(other_index)) {
+            return false;
+        }
         index = index + 1;
         other_index = other_index + 1;
     }
@@ -504,6 +548,9 @@ pub bool Buffer.is_blank_row(int y) {
 /// scrolled, which the renderer then diffs against.
 pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
     Buffer out = Buffer.empty(box);
+    if (links.size() > 0) {
+        out.make_links();
+    }
     int width = box.width;
     int first = top - box.y;
     int last = bottom - box.y;
@@ -525,6 +572,9 @@ pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
             out.symbols[to + column] = symbols[from + column];
             out.styles[to + column] = styles[from + column];
             out.widths[to + column] = widths[from + column];
+            if (links.size() > 0) {
+                out.links[to + column] = links[from + column];
+            }
         }
     }
     return out;
@@ -574,6 +624,9 @@ void Buffer.copy_row(int from_row, int to_row) {
         symbols[to + column] = symbols[from + column];
         styles[to + column] = styles[from + column];
         widths[to + column] = widths[from + column];
+        if (links.size() > 0) {
+            links[to + column] = links[from + column];
+        }
     }
 }
 
@@ -583,7 +636,70 @@ void Buffer.blank_row(int row) {
         symbols[to + column] = " ";
         styles[to + column] = 0;
         widths[to + column] = 1;
+        if (links.size() > 0) {
+            links[to + column] = "";
+        }
     }
+}
+
+str Buffer.link_of(int index) {
+    if (links.size() == 0) {
+        return "";
+    }
+    return links[index];
+}
+
+void Buffer.make_links() {
+    if (links.size() == 0) {
+        for (int index in 0 .. symbols.size()) {
+            links.push("");
+        }
+    }
+}
+
+/// Does any cell of this buffer carry a hyperlink? What the renderer asks before
+/// it looks at links at all.
+pub bool Buffer.has_links() {
+    return links.size() > 0;
+}
+
+/// The hyperlink of the cell at `x`, `y` ("" for none). **Traps** outside the buffer.
+pub str Buffer.link_at(int x, int y) {
+    if (!box.has_point(x, y)) {
+        trap("TUI_buffer.Buffer.link_at: outside the buffer");
+    }
+    return link_of(at(x, y));
+}
+
+/// Make every cell of `rect` (the part inside the buffer) the hyperlink `uri`, or
+/// no link when `uri` is "". Like `restyle` it marks what is already drawn, so draw
+/// the text first. `uri` is made safe (`TUI_osc.hyperlink_uri`): one that is empty
+/// or too long means no link.
+pub void Buffer.link(TUI_geometry.Rect rect, str uri) {
+    TUI_geometry.Rect clipped = rect.intersect(box);
+    if (clipped.is_empty()) {
+        return;
+    }
+    str safe = TUI_osc.hyperlink_uri(uri);
+    if (safe.size() == 0 && links.size() == 0) {
+        return;
+    }
+    make_links();
+    for (int y in clipped.y .. clipped.bottom()) {
+        for (int column in clipped.x .. clipped.right()) {
+            links[at(column, y)] = safe;
+        }
+    }
+}
+
+/// `set_str`, and the cells it wrote are the hyperlink `uri`. Answers the columns
+/// taken, as `set_str` does.
+pub int Buffer.set_link_str(int x, int y, str text, TUI_style.Style style, str uri, int max = -1) {
+    int used = set_str(x, y, text, style, max: max);
+    if (used > 0) {
+        link(TUI_geometry.Rect(x, y, used, 1), uri);
+    }
+    return used;
 }
 
 /// Row `y` as text. A continuation contributes nothing, so the text's

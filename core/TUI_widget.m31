@@ -300,6 +300,8 @@ pub void Paragraph.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
 pub type Span {
     pub str text;
     pub TUI_style.Style style = TUI_style.Style();
+    /// An OSC 8 hyperlink (a URI) the span's cells belong to, "" for none.
+    pub str link = "";
 }
 
 /// A plain, unstyled span. `Span.of("x")` and `Span("x")` mean the same
@@ -383,6 +385,9 @@ pub void Line.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
             return;
         }
         int used = buffer.set_str(x, area.y, span.text, span.style, max: budget);
+        if (span.link != "") {
+            buffer.link(TUI_geometry.Rect(x, area.y, used, 1), span.link);
+        }
         x = x + used;
         budget = budget - used;
     }

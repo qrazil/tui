@@ -55,4 +55,62 @@ ok   loop: a limit of 0 sends nothing
 ok   loop: queue_output is written as it is
 ok   default enter and leave have no clipboard in them
 
--- 52 passed, 0 failed
+== hyperlinks (OSC 8) ==========================================
+ok   uri: plain stays
+ok   uri: a space, ESC, BEL and a newline are percent-encoded
+ok   uri: non-ASCII is percent-encoded byte by byte
+ok   uri: empty is no link
+ok   uri: over-long is no link
+ok   uri: just short enough stays
+ok   open: id from the uri, ST at the end
+ok   open: the same uri gives the same id
+ok   open: another uri another id
+ok   open: no link, no bytes
+ok   close
+ok   a new buffer has no links
+ok   link() makes it so
+ok   the cells inside have the link
+ok   the cells outside do not
+ok   get() carries it
+ok   the text is untouched
+ok   writing over a linked cell takes its link off
+ok   and only that cell's
+ok   link(rect, "") removes links
+ok   an unsafe uri is made safe, not refused
+ok   a rect past the edge is clipped
+ok   clear() drops every link
+ok   and the cells are plain
+ok   set_link_str answers the columns
+ok   set_link_str: linked
+ok   set_link_str: not beyond
+ok   a Span with a link: its columns
+ok   a Span with a link: not the spans around it
+ok   set(Cell with a link)
+ok   set(Cell without) drops it
+ok   a cell differs by its link
+ok   full: the link is open around its cells only, and closed
+ok   full: the terminal agrees
+ok   a frame with no links has no OSC in it
+ok   nor does its diff
+ok   link on, nothing else changed: the frame still has something to write
+ok   diff: a link appears
+ok   diff: a link goes away
+ok   diff: the same text with another link is redrawn
+ok   diff: and the bytes say so
+ok   diff: identical frames, links and all, write nothing
+ok   diff: a link that grows
+ok   full: a link is closed before the erase to the end of the row
+ok   full: linked blanks are written, not erased
+ok   diff: linked blanks are written, not erased
+ok   wide cells in a link and a link over two rows: full
+ok   wide cells in a link and a link over two rows: diff
+ok   the two runs of one uri share one id (two opens, one id)
+ok   diff: a linked gap between two changes
+ok   diff: a gap that is partly linked
+ok   scrolled(): the link moves with its row
+ok   scrolled(): the row that opened up has none
+ok   scroll_rows(): in place, the other way
+ok   copy() keeps links
+ok   400 random frames with links, replayed on the emulator: every one right 
+
+-- 108 passed, 0 failed

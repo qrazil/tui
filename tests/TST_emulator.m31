@@ -95,6 +95,11 @@ pub str Screen.differs_from(TUI_buffer.Buffer buffer) {
         if (row_text(y) != buffer.row_text(y + area.y)) {
             return "row " + str(y) + ": screen [" + row_text(y) + "] buffer [" + buffer.row_text(y + area.y) + "]";
         }
+        for (int x in 0 .. columns) {
+            if (buffer.width_at(x + area.x, y + area.y) != 0 && link_at(x, y) != buffer.link_at(x + area.x, y + area.y)) {
+                return "link at " + str(x) + "," + str(y) + ": screen [" + link_at(x, y) + "] buffer [" + buffer.link_at(x + area.x, y + area.y) + "]";
+            }
+        }
     }
     return "";
 }
@@ -105,6 +110,7 @@ pub void Screen.show(TUI_buffer.Buffer buffer) {
     for (int y in 0 .. rows) {
         for (int x in 0 .. columns) {
             symbols[y * columns + x] = buffer.symbol_at(x + area.x, y + area.y);
+            links[y * columns + x] = buffer.link_at(x + area.x, y + area.y);
         }
     }
 }

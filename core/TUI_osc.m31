@@ -1,14 +1,17 @@
 // The operating system commands (OSC) a program sends the terminal, as bytes:
-// the clipboard (OSC 52).
+// the clipboard (OSC 52) and hyperlinks (OSC 8).
 //
 // API
 // ---
 //   TUI_osc.clipboard_sequence(text, target, limit)   OSC 52: put `text` on the clipboard
 //   TUI_osc.clipboard_fit(text, limit)                how many bytes of `text` fit a limit
 //   TUI_osc.CLIPBOARD_LIMIT                           the default limit, 74994 bytes
+//   TUI_osc.hyperlink_uri(uri)                        a URI made safe to carry in an OSC 8
+//   TUI_osc.hyperlink_open(uri) / HYPERLINK_CLOSE     OSC 8 begin and end
 //
 // Pure encoders: nothing here touches a terminal, and nothing is ever written
-// unless a program calls it. `TUI_app.Loop.copy` is its door in the loop.
+// unless a program calls it. `TUI_app.Loop.copy` is the clipboard's door in the
+// loop, `TUI_buffer.Buffer.link` the hyperlink's in the cell model.
 //
 // --- OSC 52, the clipboard ----------------------------------------------------
 //
@@ -26,12 +29,30 @@
 // (tmux needs `set -g set-clipboard on`; GNU screen needs its own passthrough),
 // which is why a program asks for a copy and the library does not probe.
 //
+// --- OSC 8, hyperlinks -----------------------------------------------------------
+//
+// `ESC ] 8 ; id=<n> ; <uri> ST` starts a link, `ESC ] 8 ; ; ST` ends it; cells
+// written between the two are the link. A terminal that does not know OSC 8 drops
+// the sequence and shows the text, so a link degrades to plain text. The URI is the
+// one thing here that comes from outside (a file's contents, a markdown link), so
+// it is made safe: a byte outside printable ASCII is percent-encoded, which keeps
+// ESC and BEL (the two bytes that end an OSC) out of it, and a URI longer than
+// `MAX_URI` (what the specification recommends terminals to accept) is no link.
+//
+// The `id` is a number worked out from the URI, so that a link wrapped over two
+// rows -- two runs of cells with the same URI -- is one link to the terminal: it
+// is underlined as one when the pointer is over it.
+
 import encoding.base64;
 import text.unicode;
 
 /// The default size limit of a clipboard write, in bytes of text: what base64
 /// turns into at most 100000 bytes, xterm's own limit.
 pub const int CLIPBOARD_LIMIT = 74994;
+/// The longest URI of a hyperlink, in bytes. Terminals are only asked to take 2083.
+pub const int MAX_URI = 2083;
+/// What ends a hyperlink.
+pub const str HYPERLINK_CLOSE = "\x1b]8;;\x1b\\";
 /// The clipboards a write may name: `c` clipboard, `p` primary, `q` secondary,
 /// `s` the terminal's choice, `0` to `7` its cut buffers.
 const str TARGETS = "cpqs01234567";
@@ -74,4 +95,51 @@ pub bytes clipboard_sequence(str text, str target = "c", int limit = CLIPBOARD_L
     }
     out.extend(("\x1b]52;" + target + ";" + base64.encode(data) + "\x07").to_bytes());
     return out;
+}
+
+/// `uri` as an OSC 8 may carry it: every byte that is not printable ASCII (a
+/// space, a control character, ESC, BEL, a multi-byte character) is written as
+/// `%XX`, and what is already `%XX` is left alone. "" -- no link -- for an empty
+/// or over-long URI.
+pub str hyperlink_uri(str uri) {
+    if (uri.size() == 0) {
+        return "";
+    }
+    List<str> parts = [];
+    for (int index in 0 .. uri.size()) {
+        int code = uri.byte_at(index);
+        if (code > 32 && code < 127) {
+            parts.push(uri.substr(index, index + 1));
+        } else {
+            parts.push("%" + hex_digit(code / 16) + hex_digit(code % 16));
+        }
+    }
+    str safe = parts.join("");
+    if (safe.size() > MAX_URI) {
+        return "";
+    }
+    return safe;
+}
+
+str hex_digit(int digit) {
+    return "0123456789ABCDEF".substr(digit, digit + 1);
+}
+
+/// A number worked out from `uri`, the same every time: the link's `id`.
+pub int hyperlink_id(str uri) {
+    int hash = 7;
+    for (int index in 0 .. uri.size()) {
+        hash = (hash * 31 + uri.byte_at(index)) % 1000000007;
+    }
+    return hash;
+}
+
+/// The bytes that start a link to `uri` (made safe first, see `hyperlink_uri`);
+/// "" when it is no link. `HYPERLINK_CLOSE` ends it.
+pub str hyperlink_open(str uri) {
+    str safe = hyperlink_uri(uri);
+    if (safe.size() == 0) {
+        return "";
+    }
+    return "\x1b]8;id=" + str(hyperlink_id(safe)) + ";" + safe + "\x1b\\";
 }
