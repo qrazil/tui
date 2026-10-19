@@ -866,3 +866,26 @@ name (`clipboard_sequence(text, target: "c")`, a clear error); a local may not s
 module (`cluster_width`), which is clear too and cost a rename; `match` over another module's enum still cannot have a
 `default` (§26), and the four-case match for `Event` is written out wherever an `Event` is passed on. The
 full gate (seven programs, four compiler settings each) takes about four minutes.
+
+## 29. 0.11.0: the after-frame hook, raw mouse, and what a cell costs (m31 v0.6.0)
+
+Nothing here stopped the work.
+
+- **An interface in an `Option` field works** (`pub Option<AfterFrame> after_frame = Option<AfterFrame>.None;`,
+  set with `Option<AfterFrame>.Some(painter)` for a type that has the method and declares nothing), and a `match` on
+  it needs no `default`. A function result may be ignored as a statement (`next.append_symbol(...)` now answers an
+  `int`), so widening a `void` to a value is source compatible.
+- **`str` has no substring search** (`contains` answers whether, not where), so a test that wants "the hook's bytes
+  come before the cursor move" writes a `position` loop over `byte_at`. An `index_of` for `str` beside the one on
+  `List` would do.
+- **`m31c fmt`, `-r`, `--emit-c` and `-o` are deprecated in v0.6.0** (`-fmt`, `--recursive`, `-emit-c`, `--out`);
+  `tests/test.sh` still uses the old ones, which print a warning, because CI also builds against v0.5.0.
+- **A local may not be named like a function of the module** (§28) hit again: a test helper's loop variable `start`
+  collided with `start(...)`. The message is clear.
+- **What the 0.10.0 slowdown was.** `is_uncertain` was called for every cell the renderer wrote and began with two
+  bounds-checked buffer reads (width, then size). Asking the size first, and not asking at all for a cell whose symbol
+  `append_symbol` just reported as 3 bytes or fewer, removes both for nearly every cell. `full` on the 200x50
+  benchmark went from 1.6-1.8 ms to 1.0-1.1 ms (0.9.1: 1.36 ms). Per-call overhead of a small public function is
+  the cost to watch in m31: there is no inlining across modules that the author can rely on.
+- **`os.exit(1)` from a failing test leaves `__rc_live=1`** (the live objects at exit), which reads like a leak next
+  to the real failure; `test.sh` greps for it anyway.

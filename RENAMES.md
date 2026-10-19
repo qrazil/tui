@@ -1,3 +1,13 @@
+# tui 0.11.0: nothing renamed or removed; what behaves differently
+
+Version 0.11.0, from 0.10.0 (73c226e). Additive: `AfterFrame`, `Loop.after_frame`, `Loop.frame_bytes`,
+`Loop.compose_frame_with`, `Loop.should_report_raw_mouse` (see `CHANGELOG.md`). A program that changes nothing
+writes the bytes it wrote. Two things differ for code that calls the pieces itself:
+
+- `Buffer.append_symbol` answers the number of bytes it appended (it answered nothing); a call that ignores it
+  is unchanged.
+- `TUI_diff.is_uncertain` and `uncertain_reach_at` answer what they did.
+
 # tui 0.10.0: nothing renamed or removed; what behaves differently
 
 Version 0.10.0, from 0.9.1 (0b132ce). Every new thing is additive and off by default (see

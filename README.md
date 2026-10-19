@@ -32,7 +32,7 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.10.0) is built and tested against m31 v0.6.0 (CI pins the release named by
+version (0.11.0) is built and tested against m31 v0.6.0 (CI pins the release named by
 `M31_REF`); `RENAMES.md` lists what a program moving from an earlier version has to change and
 `CHANGELOG.md` what each version added.
 
@@ -125,6 +125,8 @@ buffer.set_link_str(x, y, "docs", style, "https://example.com/docs");
 | `Host.handle(event)` | `Handler.handle(event)`: the same signature, and `Action` is already `TUI_app.Action` |
 | `Host.needs_redraw()`, called once per timed-out read (`tick_ms` 250) | a `Ticker`: `animate_ms: 250`, `tick(elapsed_ms)` answers `Redraw` when the file changed |
 | `Host.take_output()`, the OSC 52 bytes | `loop.copy(text)` (set `copy_limit: 60000` to keep `MAX_COPY`), or `loop.queue_output(bytes)` for any other bytes; written before the next frame |
+| `Host.after_frame(...)`, the scaled headings (OSC 66) written after the cells | `loop.after_frame = Option<TUI_app.AfterFrame>.Some(hook)` (0.11.0): `hook.after_frame(buffer, is_full)` answers the bytes, which are written in the same write as the frame, after its cells (`queue_output` is one read late) |
+| `loop.enter` / `loop.leave` carrying `term.MOUSE_ON` and `TUI_mouse.HOVER_ON`, because `should_report_mouse` routes | `Loop(should_report_raw_mouse: true, should_report_hover: true)` (0.11.0): the loop writes and takes off the modes, and each report is an `Event.Mouse` for `on_event`, with no routing |
 | `input_fd()`: stdin if it is a terminal, else stdout | `Loop(input_fd: TUI_app.INPUT_AUTO)` |
 | `ESCAPE_WAIT_MS` 50: the read wait that resolves a lone Escape | `tick_ms: 50`, or `should_disambiguate_keys` and Escape needs no wait on a terminal that has the protocol |
 | `loop.enter`, `loop.leave`, `loop.depth` | the same fields |
@@ -405,6 +407,16 @@ loop.run_with(view, on_event, on_tick, on_mouse);
     finds the region of the last frame under the pointer. A drag is captured
     by the region it began in until its Release. With mouse reporting on,
     mouse events reach `on_mouse`, not `on_event`.
+  - **Raw mouse (0.11.0).** `should_report_raw_mouse` asks for the same reports (and `should_report_hover` the
+    motion) but does not route them: each is an `Event.Mouse` for `on_event` and `on_mouse` is never called, for a
+    program that does its own hit testing. If `should_report_mouse` is on as well, routing wins.
+  - **After a frame (0.11.0).** `loop.after_frame = Option<TUI_app.AfterFrame>.Some(hook)`: for every frame about to be
+    written, `hook.after_frame(buffer, is_full)` answers extra bytes (OSC 66 scaled text, kitty graphics, anything that
+    is not a cell). They go into the frame's own write, after its cells and before the cursor is put back, inside
+    the synchronized-output markers once the terminal confirmed them. `is_full` says every cell was rewritten (the
+    first frame, a resize, a repaint), so what the program put on the screen besides cells has to be sent again.
+    A frame in which no cell changed is still written if the hook answers bytes. No hook, and the bytes are those of
+    0.10.0. `loop.frame_bytes(previous, next, is_full, shown)` is the frame as written, for a test.
   - **Paste.** `should_report_paste` makes a paste one `Event.Paste`, which
     `TextInput` and `TextArea` insert as a unit (one undo step).
 

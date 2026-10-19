@@ -4,6 +4,45 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## 0.11.0
+
+Driven by what tui-markdown 0.6.0 found moving onto `Loop.run_with` (its `docs/DESIGN.md`, "Gaps hit in m31
+and tui"). Additive: a `Loop()` with nothing new set writes exactly the bytes of 0.10.0 (checked against the
+0.10.0 renderer by `tests/terminal.m31`: a diff, a full frame, with sync and with a cursor). Built and tested
+against m31 v0.6.0.
+
+### Added
+
+- **An after-frame hook.** `interface TUI_app.AfterFrame { bytes after_frame(TUI_buffer.Buffer frame, bool
+  is_full); }` and `Loop.after_frame` (an `Option<AfterFrame>`, `None` by default). It is asked once for every frame
+  about to be written, after the diff is composed, and the bytes it answers are written in the same write, after
+  the cells and before the cursor is put back, inside the synchronized update. For what is not a cell: OSC 66 scaled
+  text, kitty graphics. `is_full` says every cell was rewritten, so such things have to be sent again. A frame
+  with no changed cell is still written when the hook answers bytes. `Loop.frame_bytes(previous, next, is_full,
+  shown)` is the frame `run_with` writes (public, so it can be tested without a terminal) and
+  `Loop.compose_frame_with(body, extra, shown)` the composition; `compose_frame` is it with no extra bytes.
+- **Raw mouse.** `Loop.should_report_raw_mouse`: the mouse (and with `should_report_hover`, motion) modes are
+  written on entry and taken off on the way out, and each report reaches `on_event` as an `Event.Mouse`, with no
+  gesture routing and no `on_mouse`. `should_report_mouse` still routes, and wins when both are set.
+- `Buffer.append_symbol` answers how many bytes it appended.
+
+### Changed
+
+- `TUI_diff.is_uncertain` asks for the symbol's size before anything else, and `full` and `diff` ask it only of
+  cells whose symbol is longer than 3 bytes (`MAX_CERTAIN_BYTES`): a letter, a Latin or Hangul or CJK character or
+  a box is never uncertain. Same answers (the 3773-sequence emoji test and the emulator oracle are unchanged); the
+  0.10.0 emoji-width fix had made `full` slower by calling it for every cell written.
+- The README's tui-markdown mapping table has rows for the after-frame hook and for the raw mouse.
+
+### Decided against
+
+- **OSC 66 in the cell model.** tui-markdown draws a scaled heading as a rectangle of cells that are blank plus
+  an overlay (`MDV_render.Region`: x, y, width, scale, text, style) that a later write may clear and that has to be
+  sent again after a scroll or a repaint. A cell model for it would need a cell that owns a w x h block (a
+  continuation in two dimensions), a rule for what overwriting any one cell of the block does, and a diff that
+  compares and re-sends blocks: more than the whole of this release, for one protocol. The hook is the same size
+  as the problem and also serves kitty graphics. If a second program needs scaled text, revisit.
+
 ## 0.10.0 (unreleased)
 
 Terminal features, each opt-in, each tested against a terminal emulator (`tests/TST_emulator.m31`). Defaults
