@@ -15,6 +15,7 @@
 import text.unicode;
 import core.TUI_buffer;
 import core.TUI_geometry;
+import core.TUI_text;
 
 pub type Screen {
     pub int columns = 0;
@@ -54,6 +55,14 @@ pub type Screen {
     /// Sequences it was sent and did not act on, because it lacks the feature.
     pub List<str> ignored = [];
     pub int queries = 0;
+    /// How it measures text it draws. 0: it adds up code points (what xterm and Terminal.app
+    /// do: a family of three is 2 + 2 + 2 = 6 columns, a skin tone takes its own 2).
+    /// 1: it segments grapheme clusters and draws each in `TUI_text.cluster_columns`.
+    pub int width_model = 0;
+    /// What a regional indicator on its own takes: 1 (its East Asian Width is neutral)
+    /// or 2 (it has emoji presentation, and kitty and WezTerm draw it so).
+    pub int regional_width = 1;
+    List<int> pending = [];
     /// Sequences it did not recognise, as they were written.
     pub List<str> unknown = [];
     /// Bytes that did not make UTF-8 (ignored).
@@ -90,6 +99,14 @@ pub str Screen.to_str() {
         out.push(row_text(y));
     }
     return out.join("\n");
+}
+
+/// The text of one cell as it is shown ("" for the second half of a wide character).
+pub str Screen.symbol_at(int x, int y) {
+    if (is_sync) {
+        return frozen_symbols[y * columns + x];
+    }
+    return symbols[y * columns + x];
 }
 
 pub str Screen.link_at(int x, int y) {
@@ -144,6 +161,9 @@ void Screen.run(List<int> chars) {
     int index = 0;
     while (index < count) {
         int code = chars[index];
+        if (code == 27 || code < 32 || code == 127) {
+            flush_text();
+        }
         if (code == 27 && index + 1 < count) {
             int kind = chars[index + 1];
             if (kind == '[') {
@@ -173,14 +193,52 @@ void Screen.run(List<int> chars) {
             index = index + 1;
             continue;
         }
-        print_char(code);
+        pending.push(code);
         index = index + 1;
+    }
+    flush_text();
+}
+
+// Draw the text collected since the last escape sequence, the way this terminal measures it.
+void Screen.flush_text() {
+    if (pending.size() == 0) {
+        return;
+    }
+    List<int> run = pending;
+    pending = [];
+    if (width_model == 0) {
+        for (int code in run) {
+            print_char(code);
+        }
+        return;
+    }
+    for (str cluster in unicode.graphemes(str.from_chars(run))) {
+        int width = TUI_text.cluster_columns(cluster);
+        if (cluster.size() == 4 && cluster.byte_at(1) == 0x9F && cluster.byte_at(2) == 0x87) {
+            width = regional_width;
+        }
+        place(cluster, width);
     }
 }
 
+// What a code point takes when it is added up: nothing for a joiner, a variation selector, an
+// enclosing keycap or a tag, what `unicode.width` says for the rest.
+int Screen.code_width(int code) {
+    if (code == 0x200D || code == 0x20E3 || (code >= 0xFE00 && code <= 0xFE0F) || (code >= 0xE0020 && code <= 0xE007F)) {
+        return 0;
+    }
+    if (code >= 0x1F1E6 && code <= 0x1F1FF) {
+        return regional_width;
+    }
+    return unicode.width(str.from_chars([code]));
+}
+
 void Screen.print_char(int code) {
-    str symbol = str.from_chars([code]);
-    int width = unicode.width(symbol);
+    place(str.from_chars([code]), code_width(code));
+}
+
+// Put `symbol` at the cursor, `width` columns wide (0: it joins the cell before).
+void Screen.place(str symbol, int width) {
     if (width == 0) {
         // a combining mark or a joiner: it belongs to the cell before the cursor
         int before = cursor_y * columns + cursor_x - 1;
@@ -197,6 +255,16 @@ void Screen.print_char(int code) {
         return;
     }
     int index = cursor_y * columns + cursor_x;
+    // a wide character half overwritten loses its other half, as on a real terminal
+    for (int column in cursor_x .. cursor_x + width) {
+        int cell = cursor_y * columns + column;
+        if (symbols[cell] == "" && column > 0) {
+            symbols[cell - 1] = " ";
+        }
+        if (column + 1 < columns && column + 1 >= cursor_x + width && symbols[cell + 1] == "") {
+            symbols[cell + 1] = " ";
+        }
+    }
     symbols[index] = symbol;
     links[index] = link;
     if (width == 2) {

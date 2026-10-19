@@ -11,9 +11,11 @@
 // what is printed is compared against tests/terminal.out.
 
 import encoding.base64;
+import io;
 import os;
 import random;
 import term;
+import text.unicode;
 import app.TUI_app;
 import core.TUI_buffer;
 import core.TUI_geometry;
@@ -22,6 +24,7 @@ import app.TUI_diff;
 import core.TUI_osc;
 import core.TUI_style;
 import core.TUI_mouse;
+import core.TUI_text;
 import core.TUI_widget;
 import tests.TST_emulator;
 
@@ -659,12 +662,207 @@ void focus_tests(Tally tally) {
     ok(tally, "defaults: no focus mode in the enter or leave bytes", !(TUI_app.Loop().enter_sequence() + TUI_app.Loop().leave_sequence()).contains("1004"));
 }
 
+// --- 6. emoji sequences: widths against an independent table ------------------------------
+
+int hex_value(str digits) {
+    int value = 0;
+    for (int index in 0 .. digits.size()) {
+        int code = digits.byte_at(index);
+        int digit = code - '0';
+        if (code >= 'A' && code <= 'F') {
+            digit = code - 'A' + 10;
+        }
+        value = value * 16 + digit;
+    }
+    return value;
+}
+
+/// Code points written in hex and separated by spaces, as text.
+str from_hex(str codes) {
+    List<int> chars = [];
+    for (str piece in codes.split(" ")) {
+        chars.push(hex_value(piece));
+    }
+    return str.from_chars(chars);
+}
+
+/// How many columns `text` takes when it is written to a buffer (one cell run).
+int drawn(str text) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(12, 1);
+    return buffer.set_str(0, 0, text, TUI_style.Style());
+}
+
+void width_table_tests(Tally tally) {
+    head("emoji sequences: widths against Unicode's table");
+    match (io.read("tests/emoji_sequences.txt")) {
+        case Ok(str body): {
+            int total = 0;
+            int bad = 0;
+            int stdlib_gaps = 0;
+            int disagreements = 0;
+            int modifier_disagreements = 0;
+            str first_bad = "";
+            for (str line in body.split("\n")) {
+                if (line.size() == 0 || line.starts_with("#")) {
+                    continue;
+                }
+                List<str> halves = line.split(";");
+                str text = from_hex(halves[0]);
+                total = total + 1;
+                if (unicode.width(text) != 2) {
+                    stdlib_gaps = stdlib_gaps + 1;
+                }
+                if (halves[1] != "2") {
+                    disagreements = disagreements + 1;
+                    if (halves[0].contains("1F3F")) {
+                        modifier_disagreements = modifier_disagreements + 1;
+                    }
+                }
+                TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(8, 1);
+                int used = buffer.set_str(0, 0, text, TUI_style.Style());
+                if (unicode.graphemes(text).size() != 1 || TUI_text.width(text) != 2 || used != 2 || buffer.width_at(0, 0) != 2 || buffer.width_at(1, 0) != 0 || buffer.symbol_at(0, 0) != text) {
+                    bad = bad + 1;
+                    if (first_bad == "") {
+                        first_bad = line;
+                    }
+                }
+            }
+            check_int(tally, "the table has every fully-qualified sequence of Unicode 15.1", total, 3773);
+            check(tally, "each is one cell of two columns, one cluster, written whole " + first_bad, str(bad), "0");
+            check_int(tally, "the standard library alone measures 45 of them as one column", stdlib_gaps, 45);
+            check_int(tally, "python-wcwidth, the second opinion, agrees with it on those 45", disagreements, 45);
+            check_int(tally, "all 45 are an emoji modifier after a base that is text-presentation by default", modifier_disagreements, 45);
+        }
+        case Err(io.Error error): {
+            check(tally, "tests/emoji_sequences.txt can be read", "no", "yes");
+        }
+    }
+    // what is not in that table, with what is expected and why
+    check_int(tally, "a skin tone after a raised hand: two columns", drawn(from_hex("261D 1F3FD")), 2);
+    check_int(tally, "text width agrees", TUI_text.width("ab" + from_hex("261D 1F3FD") + "cd"), 6);
+    check_int(tally, "a skin tone after a base with emoji presentation: two", drawn(from_hex("1F44D 1F3FD")), 2);
+    check_int(tally, "a lone variation selector draws nothing", drawn(from_hex("FE0F")), 0);
+    check_int(tally, "nor does a lone text selector", drawn(from_hex("FE0E")), 0);
+    check_int(tally, "text width agrees on both", TUI_text.width(from_hex("FE0F")) + TUI_text.width(from_hex("FE0E")), 0);
+    check_int(tally, "a keycap without the selector (not fully qualified) is one column", drawn(from_hex("31 20E3")), 1);
+    check_int(tally, "a flag is two", drawn(from_hex("1F1E9 1F1EA")), 2);
+    check_int(tally, "a regional indicator alone is one (East Asian Width: neutral; terminals differ)", drawn(from_hex("1F1E9")), 1);
+    check_int(tally, "a combining accent is no column of its own", drawn("e" + from_hex("301")), 1);
+    check_int(tally, "a ZWJ family is two", drawn(from_hex("1F468 200D 1F469 200D 1F467")), 2);
+    check_int(tally, "wrapping does not split a skin tone off its hand", TUI_text.wrap("ab " + from_hex("261D 1F3FD") + from_hex("261D 1F3FD"), 5).size(), 2);
+}
+
+/// Is the cluster one terminals disagree on?
+bool is_uncertain(str codes) {
+    str text = from_hex(codes);
+    return TUI_text.is_uncertain_cluster(text, TUI_text.cluster_columns(text));
+}
+
+/// One uncertain cluster (as hex) with a name.
+type Kind {
+    str name;
+    str codes;
+}
+
+List<Kind> kinds() {
+    return [Kind("family", "1F468 200D 1F469 200D 1F467"), Kind("flag", "1F1E9 1F1EA"), Kind("keycap", "31 FE0F 20E3"), Kind("skin tone on a text base", "261D 1F3FD"), Kind("skin tone", "1F44D 1F3FD"), Kind("lone regional indicator", "1F1E9"), Kind("letter with a variation selector", "61 FE0F"), Kind("ZWJ sequence that is not an emoji", "2764 200D 1F525"), Kind("England", "1F3F4 E0067 E0062 E0065 E006E E0067 E007F"), Kind("text selector on a wide emoji", "231A FE0E"), Kind("couple with heart", "1F469 200D 2764 FE0F 200D 1F468"), Kind("hands of two skin tones", "1F9D1 1F3FB 200D 1F91D 200D 1F9D1 1F3FF")];
+}
+
+/// How the cells after `kind` look on a terminal of `model` (see `TST_emulator.Screen.width_model`)
+/// after the frame is drawn, before and after it changed: "" when every cell past the cluster is right.
+str repaired(Kind kind, int model, int regional, bool is_to_cluster, bool is_diff) {
+    str suffix = "CDEFGHIJKLMNOP";
+    TUI_buffer.Buffer with_cluster = TUI_buffer.Buffer.sized(20, 1);
+    with_cluster.set_str(0, 0, "AB" + from_hex(kind.codes) + suffix, TUI_style.Style());
+    int width = TUI_text.cluster_columns(from_hex(kind.codes));
+    TUI_buffer.Buffer plain = TUI_buffer.Buffer.sized(20, 1);
+    plain.set_str(0, 0, "AB" + "xy".substr(0, width) + suffix, TUI_style.Style());
+    TUI_buffer.Buffer from = plain;
+    TUI_buffer.Buffer target = with_cluster;
+    if (!is_to_cluster) {
+        from = with_cluster;
+        target = plain;
+    }
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(20, 1);
+    screen.width_model = model;
+    screen.regional_width = regional;
+    TUI_style.Depth depth = TUI_style.Depth.Ansi16;
+    if (is_diff) {
+        screen.feed(TUI_diff.full(from, depth));
+        screen.feed(TUI_diff.diff(from, target, depth));
+    } else {
+        screen.feed(TUI_diff.full(target, depth));
+    }
+    for (int x in 2 + width .. 20) {
+        if (screen.symbol_at(x, 0) != target.symbol_at(x, 0)) {
+            return "column " + str(x) + " shows [" + screen.symbol_at(x, 0) + "] and should show [" + target.symbol_at(x, 0) + "]";
+        }
+    }
+    return "";
+}
+
+void uncertainty_tests(Tally tally) {
+    head("clusters of uncertain width");
+    ok(tally, "uncertain: a family", is_uncertain("1F468 200D 1F469 200D 1F467"));
+    ok(tally, "uncertain: a flag", is_uncertain("1F1E9 1F1EA"));
+    ok(tally, "uncertain: a keycap", is_uncertain("31 FE0F 20E3"));
+    ok(tally, "uncertain: a skin tone on a text-presentation base (was not)", is_uncertain("261D 1F3FD"));
+    ok(tally, "uncertain: a skin tone", is_uncertain("1F44D 1F3FD"));
+    ok(tally, "uncertain: a regional indicator alone (was not)", is_uncertain("1F1E9"));
+    ok(tally, "uncertain: a letter and a variation selector (was not)", is_uncertain("61 FE0F"));
+    ok(tally, "uncertain: a joined sequence that is one column wide (was not)", is_uncertain("2764 200D 1F525"));
+    ok(tally, "uncertain: a tag sequence", is_uncertain("1F3F4 E0067 E0062 E0065 E006E E0067 E007F"));
+    ok(tally, "uncertain: a text selector on a wide emoji", is_uncertain("231A FE0E"));
+    ok(tally, "certain: a plain emoji", !is_uncertain("1F600"));
+    ok(tally, "certain: a plain wide emoji with a high code point", !is_uncertain("1FAE0"));
+    ok(tally, "certain: a CJK character", !is_uncertain("4E2D"));
+    ok(tally, "certain: a letter with an accent", !is_uncertain("65 301"));
+    ok(tally, "uncertain, by the old rule: three Hangul jamo are two columns and several code points", is_uncertain("1100 1161 11A8"));
+    ok(tally, "certain: ASCII", !is_uncertain("41"));
+    ok(tally, "certain: a box-drawing character", !is_uncertain("2500"));
+    ok(tally, "certain: a Devanagari conjunct (one column, no joiner marker)", !is_uncertain("915 94D 937"));
+    check_int(tally, "reach: a family of five code points", TUI_text.uncertain_reach(from_hex("1F468 200D 1F469 200D 1F467"), 2), 8);
+    check_int(tally, "reach: a flag", TUI_text.uncertain_reach(from_hex("1F1E9 1F1EA"), 2), 2);
+    check_int(tally, "reach: a regional indicator alone is at least 2", TUI_text.uncertain_reach(from_hex("1F1E9"), 1), 2);
+    check_int(tally, "reach: England, seven code points", TUI_text.uncertain_reach(from_hex("1F3F4 E0067 E0062 E0065 E006E E0067 E007F"), 2), 12);
+    check_int(tally, "reach: never more than 16 columns", TUI_text.uncertain_reach(from_hex("1F468 200D 1F469 200D 1F467 200D 1F466 200D 1F468 200D 1F469 200D 1F467 200D 1F466"), 2), 14);
+    // the terminal as oracle: a terminal that adds up code points and ones that segment them
+    List<str> names = ["adds up code points", "segments, regional indicator 1", "segments, regional indicator 2", "adds up, regional indicator 2"];
+    List<int> models = [0, 1, 1, 0];
+    List<int> regionals = [1, 1, 2, 2];
+    for (int which in 0 .. names.size()) {
+        int failures = 0;
+        str first = "";
+        for (Kind kind in kinds()) {
+            for (int variant in 0 .. 3) {
+                str problem = "";
+                if (variant == 0) {
+                    problem = repaired(kind, models[which], regionals[which], true, true);
+                } else if (variant == 1) {
+                    problem = repaired(kind, models[which], regionals[which], false, true);
+                } else {
+                    problem = repaired(kind, models[which], regionals[which], true, false);
+                }
+                if (problem != "") {
+                    failures = failures + 1;
+                    if (first == "") {
+                        first = kind.name + " (variant " + str(variant) + "): " + problem;
+                    }
+                }
+            }
+        }
+        check(tally, "oracle, a terminal that " + names[which] + ": every cell past 12 clusters is right, drawn in, drawn out, drawn in full " + first, str(failures), "0");
+    }
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
 hyperlink_tests(score);
 key_tests(score);
 focus_tests(score);
+width_table_tests(score);
+uncertainty_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

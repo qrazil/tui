@@ -55,6 +55,7 @@ import core.TUI_buffer;
 import core.TUI_geometry;
 import core.TUI_osc;
 import core.TUI_style;
+import core.TUI_text;
 
 /// How many plain trailing blanks make `\x1b[K` worth its bytes: the escape
 /// is three bytes and putting the pen back may cost four more.
@@ -107,21 +108,34 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     return out;
 }
 
-/// How many columns after a cluster of uncertain width are written again.
+/// How many columns after a cluster of uncertain width are written again at least
+/// (`TUI_text.uncertain_reach` says how many a given cluster needs).
 const int UNCERTAIN_REACH = 2;
 
-/// Is the cell at `x`, `y` a two-column cluster made of several code points (an emoji
-/// ZWJ sequence, a flag, a skin-tone or variation-selector emoji)? Terminals disagree on
-/// its width: those that segment grapheme clusters draw it in two columns, the others
-/// add up the code points (a family is 6, a flag 2 to 4). Every cell after it in the row
-/// is then in a different column on one of them. So the cursor is put back with an absolute
-/// move after it, and the two columns after it are always written again, which repairs
-/// the cells it overdrew -- on a terminal that agrees this costs a few bytes.
+/// Is the cell at `x`, `y` a cluster whose width terminals disagree on (see
+/// `TUI_text.is_uncertain_cluster`): an emoji ZWJ sequence, a flag, a keycap, a skin
+/// tone, a variation selector, a regional indicator alone, or a two-column cluster of
+/// several code points? Those that segment grapheme clusters draw it in `width`
+/// columns, the others add up the code points (a family is 6, a flag 2 to 4). Every
+/// cell after it in the row is then in a different column on one of them. So the
+/// cursor is put back with an absolute move after it, and the columns after it
+/// (`TUI_text.uncertain_reach` of them) are always written again, which repairs the
+/// cells it overdrew -- on a terminal that agrees this costs a few bytes.
 pub bool is_uncertain(TUI_buffer.Buffer buffer, int x, int y) {
-    if (buffer.width_at(x, y) != 2) {
+    int cell_width = buffer.width_at(x, y);
+    if (cell_width == 0 || buffer.symbol_size_at(x, y) <= 3) {
         return false;
     }
-    return buffer.symbol_at(x, y).size() > 4;
+    return TUI_text.is_uncertain_cluster(buffer.symbol_at(x, y), cell_width);
+}
+
+/// How far past the cell at `x`, `y` a terminal may have drawn it: 0 for a cell
+/// that is not uncertain, else `TUI_text.uncertain_reach`.
+pub int uncertain_reach_at(TUI_buffer.Buffer buffer, int x, int y) {
+    if (!is_uncertain(buffer, x, y)) {
+        return 0;
+    }
+    return TUI_text.uncertain_reach(buffer.symbol_at(x, y), buffer.width_at(x, y));
 }
 
 /// What has to be written to turn a terminal showing `previous` into one showing
@@ -183,12 +197,17 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             }
             next.append_symbol(out, x, y);
             current_x = x + cell_width;
-            if (is_uncertain(next, x, y) || is_uncertain(previous, x, y)) {
+            int reach = uncertain_reach_at(next, x, y);
+            int old_reach = uncertain_reach_at(previous, x, y);
+            if (old_reach > reach) {
+                reach = old_reach;
+            }
+            if (reach > 0) {
                 // terminals disagree on how wide this cluster is (see `is_uncertain`):
                 // the cursor is not where it is believed to be, and the cells after it
                 // may have been overdrawn (or still hold the leftovers of the old one)
                 current_x = -1;
-                forced_until = x + cell_width + UNCERTAIN_REACH;
+                forced_until = x + cell_width + reach;
             }
             x = x + cell_width;
         }

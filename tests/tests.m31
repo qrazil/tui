@@ -416,7 +416,7 @@ void safety_tests(Tally tally) {
     ok(tally, "a plain wide character is not", !TUI_diff.is_uncertain(wide_cell(), 0, 0));
     ok(tally, "text is not", !TUI_diff.is_uncertain(family, 0, 0));
     check(tally, "full: the cursor is placed again after it", TUI_diff.show(TUI_diff.full(family, depth)), "\\e[0m\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|   ");
-    check(tally, "diff: placed again, and the two columns after it are written", TUI_diff.show(TUI_diff.diff(blank, family, depth)), "\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|");
+    check(tally, "diff: placed again, and the columns after it are written (a family is 6 columns on a terminal that adds up code points, so 8 after it, not 2)", TUI_diff.show(TUI_diff.diff(blank, family, depth)), "\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|   ");
     TUI_buffer.Buffer same = TUI_buffer.Buffer.sized(10, 1);
     same.set_str(0, 0, "ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}cd|", TUI_style.Style());
     same.set_str(9, 0, "!", TUI_style.Style());
@@ -426,7 +426,7 @@ void safety_tests(Tally tally) {
     check(tally, "an unchanged cluster before a change is not written", TUI_diff.show(TUI_diff.diff(same, moved, depth)), "\\e[1;10H?");
     TUI_buffer.Buffer gone = TUI_buffer.Buffer.sized(10, 1);
     gone.set_str(0, 0, "abxxcd|", TUI_style.Style());
-    check(tally, "a cluster that goes away repaints the columns it overdrew", TUI_diff.show(TUI_diff.diff(family, gone, depth)), "\\e[1;3Hx\\e[1;4Hxc");
+    check(tally, "a cluster that goes away repaints the columns it overdrew", TUI_diff.show(TUI_diff.diff(family, gone, depth)), "\\e[1;3Hx\\e[1;4Hxcd|   ");
     // a walk across unchanged cells never redraws such a cluster
     TUI_buffer.Buffer flags = TUI_buffer.Buffer.sized(12, 1);
     flags.set_str(1, 0, "\u{1F1E9}\u{1F1EA}", TUI_style.Style());

@@ -232,4 +232,52 @@ ok   not asked: has_focus stays true
 ok   not asked: not counted
 ok   defaults: no focus mode in the enter or leave bytes
 
--- 223 passed, 0 failed
+== emoji sequences: widths against Unicode's table =============
+ok   the table has every fully-qualified sequence of Unicode 15.1
+ok   each is one cell of two columns, one cluster, written whole 
+ok   the standard library alone measures 45 of them as one column
+ok   python-wcwidth, the second opinion, agrees with it on those 45
+ok   all 45 are an emoji modifier after a base that is text-presentation by default
+ok   a skin tone after a raised hand: two columns
+ok   text width agrees
+ok   a skin tone after a base with emoji presentation: two
+ok   a lone variation selector draws nothing
+ok   nor does a lone text selector
+ok   text width agrees on both
+ok   a keycap without the selector (not fully qualified) is one column
+ok   a flag is two
+ok   a regional indicator alone is one (East Asian Width: neutral; terminals differ)
+ok   a combining accent is no column of its own
+ok   a ZWJ family is two
+ok   wrapping does not split a skin tone off its hand
+
+== clusters of uncertain width =================================
+ok   uncertain: a family
+ok   uncertain: a flag
+ok   uncertain: a keycap
+ok   uncertain: a skin tone on a text-presentation base (was not)
+ok   uncertain: a skin tone
+ok   uncertain: a regional indicator alone (was not)
+ok   uncertain: a letter and a variation selector (was not)
+ok   uncertain: a joined sequence that is one column wide (was not)
+ok   uncertain: a tag sequence
+ok   uncertain: a text selector on a wide emoji
+ok   certain: a plain emoji
+ok   certain: a plain wide emoji with a high code point
+ok   certain: a CJK character
+ok   certain: a letter with an accent
+ok   uncertain, by the old rule: three Hangul jamo are two columns and several code points
+ok   certain: ASCII
+ok   certain: a box-drawing character
+ok   certain: a Devanagari conjunct (one column, no joiner marker)
+ok   reach: a family of five code points
+ok   reach: a flag
+ok   reach: a regional indicator alone is at least 2
+ok   reach: England, seven code points
+ok   reach: never more than 16 columns
+ok   oracle, a terminal that adds up code points: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
+ok   oracle, a terminal that segments, regional indicator 1: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
+ok   oracle, a terminal that segments, regional indicator 2: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
+ok   oracle, a terminal that adds up, regional indicator 2: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
+
+-- 267 passed, 0 failed

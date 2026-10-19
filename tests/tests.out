@@ -122,7 +122,7 @@ ok   a ZWJ family is uncertain
 ok   a plain wide character is not
 ok   text is not
 ok   full: the cursor is placed again after it
-ok   diff: placed again, and the two columns after it are written
+ok   diff: placed again, and the columns after it are written (a family is 6 columns on a terminal that adds up code points, so 8 after it, not 2)
 ok   an unchanged cluster before a change is not written
 ok   a cluster that goes away repaints the columns it overdrew
 ok   the cluster is jumped, not walked

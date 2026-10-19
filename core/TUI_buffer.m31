@@ -64,6 +64,7 @@ import text.unicode;
 import core.TUI_geometry;
 import core.TUI_osc;
 import core.TUI_style;
+import core.TUI_text;
 
 /// One cell of the grid.
 ///
@@ -80,7 +81,7 @@ pub type Cell {
 
 /// A cell holding `symbol`, measured with `unicode.width`.
 pub static Cell Cell.of(str symbol, TUI_style.Style style) {
-    return Cell(symbol, style: style, width: unicode.width(symbol));
+    return Cell(symbol, style: style, width: TUI_text.cluster_columns(symbol));
 }
 
 /// The second half of a two-column character.
@@ -277,6 +278,15 @@ pub void Buffer.append_symbol(bytes out, int x, int y) {
     }
 }
 
+/// The size in bytes of the symbol at `x`, `y`, without handing the symbol out (a
+/// returned string is a retain and a release). **Traps** outside the buffer.
+pub int Buffer.symbol_size_at(int x, int y) {
+    if (!box.has_point(x, y)) {
+        trap("TUI_buffer.Buffer.symbol_size_at: outside the buffer");
+    }
+    return symbols[at(x, y)].size();
+}
+
 /// The width of the cell at `x`, `y`: 2 for the left half of a wide
 /// character, 0 for its right half, 1 otherwise. **Traps** outside the
 /// buffer.
@@ -392,7 +402,7 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
         if (is_control_cluster(cluster)) {
             grapheme = control_picture(cluster);
         }
-        int grapheme_width = unicode.width(grapheme);
+        int grapheme_width = TUI_text.cluster_columns(grapheme);
         if (grapheme_width == 0) {
             if (last >= 0) {
                 symbols[last] = symbols[last] + grapheme;
@@ -453,7 +463,7 @@ pub void Buffer.fill(TUI_geometry.Rect rect, str symbol_in, TUI_style.Style styl
     if (has_control(symbol_in)) {
         symbol = control_picture(symbol_in);
     }
-    int symbol_width = unicode.width(symbol);
+    int symbol_width = TUI_text.cluster_columns(symbol);
     if (symbol_width <= 0) {
         trap("TUI_buffer.Buffer.fill: the fill symbol has no width");
     }

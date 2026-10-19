@@ -76,12 +76,141 @@ bool is_plain(str text) {
     return true;
 }
 
-/// How many columns `text` takes: `unicode.width`, with the ASCII fast path.
+/// How many columns `text` takes: `unicode.width`, with the ASCII fast path, and
+/// `cluster_columns`'s two corrections for the clusters they apply to.
 pub int width(str text) {
     if (is_plain(text)) {
         return text.size();
     }
-    return unicode.width(text);
+    if (!has_adjusted(text)) {
+        return unicode.width(text);
+    }
+    int total = 0;
+    for (str cluster in unicode.graphemes(text)) {
+        total = total + cluster_columns(cluster);
+    }
+    return total;
+}
+
+// --- two clusters `unicode.width` measures differently from UTS #51 ------------------
+//
+// Checked against every fully-qualified emoji sequence of Unicode's
+// emoji-test.txt (tests/emoji_sequences.txt, with python-wcwidth as a second
+// opinion): `unicode.width` says two columns for 3728 of 3773, and one for
+// the 45 that are an emoji modifier (a skin tone, U+1F3FB..1F3FF) after a base that is
+// text-presentation by default (a raised hand, a victory hand...). UTS #51 says
+// an emoji modifier sequence is drawn with emoji presentation, which is two columns
+// in every terminal that segments grapheme clusters, so that is what is used here.
+// (The terminals that add up code points draw 1 + 2; the renderer treats the cluster
+// as one of uncertain width either way, see `TUI_diff.is_uncertain`.)
+//
+// And a variation selector with nothing before it (U+FE0E, U+FE0F, which
+// `unicode.width` counts as two columns for FE0F) draws nothing at all: it is
+// zero columns, and `Buffer.set_str` drops it like any zero-width cluster.
+
+/// Does `text` hold a variation selector (U+FE0E, U+FE0F) or an emoji modifier
+/// (U+1F3FB..1F3FF)? Only then is `cluster_columns` anything but `unicode.width`.
+bool has_adjusted(str text) {
+    int length = text.size();
+    for (int index in 0 .. length - 2) {
+        int lead = text.byte_at(index);
+        if (lead == 0xEF && text.byte_at(index + 1) == 0xB8 && (text.byte_at(index + 2) == 0x8E || text.byte_at(index + 2) == 0x8F)) {
+            return true;
+        }
+        if (lead == 0xF0 && index + 3 < length && text.byte_at(index + 1) == 0x9F && text.byte_at(index + 2) == 0x8F && text.byte_at(index + 3) >= 0xBB && text.byte_at(index + 3) <= 0xBF) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The columns one grapheme cluster takes: `unicode.width`, except that a cluster
+/// that is only a variation selector is 0 and an emoji modifier sequence is 2.
+pub int cluster_columns(str cluster) {
+    int measured = unicode.width(cluster);
+    if (!has_adjusted(cluster)) {
+        return measured;
+    }
+    if (cluster.size() == 3 && cluster.byte_at(0) == 0xEF && cluster.byte_at(1) == 0xB8) {
+        return 0;
+    }
+    if (measured == 1 && cluster.size() > 4 && has_modifier(cluster)) {
+        return 2;
+    }
+    return measured;
+}
+
+bool has_modifier(str text) {
+    int length = text.size();
+    for (int index in 0 .. length - 3) {
+        if (text.byte_at(index) == 0xF0 && text.byte_at(index + 1) == 0x9F && text.byte_at(index + 2) == 0x8F && text.byte_at(index + 3) >= 0xBB && text.byte_at(index + 3) <= 0xBF) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Is the cluster one whose width terminals disagree on: made of several code points
+/// that are joined (a zero-width joiner, a variation selector, an emoji modifier, a
+/// keycap, a tag sequence, a pair of regional indicators), a regional indicator
+/// alone, or two columns wide with more than one code point to it? Some terminals
+/// segment grapheme clusters and draw it as `width` columns; the others add up the
+/// code points and draw more (a family is 6). `width` is what the cell says.
+pub bool is_uncertain_cluster(str cluster, int width) {
+    int length = cluster.size();
+    if (length <= 3) {
+        return false;
+    }
+    if (width == 2 && length > 4) {
+        return true;
+    }
+    for (int index in 0 .. length - 2) {
+        int lead = cluster.byte_at(index);
+        int second = cluster.byte_at(index + 1);
+        int third = cluster.byte_at(index + 2);
+        if (lead == 0xE2 && ((second == 0x80 && third == 0x8D) || (second == 0x83 && third == 0xA3))) {
+            // a zero-width joiner, a combining enclosing keycap
+            return true;
+        }
+        if (lead == 0xEF && second == 0xB8 && (third == 0x8E || third == 0x8F)) {
+            return true;
+        }
+        if (lead == 0xF3 && second == 0xA0) {
+            // a tag character, or a variation selector of the supplement
+            return true;
+        }
+        if (lead == 0xF0 && second == 0x9F && index + 3 < length) {
+            int fourth = cluster.byte_at(index + 3);
+            if (third == 0x8F && fourth >= 0xBB && fourth <= 0xBF) {
+                return true;
+            }
+            if (third == 0x87 && fourth >= 0xA6 && fourth <= 0xBF) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// How many columns after a cluster of uncertain width may have been drawn over by a
+/// terminal that adds up its code points: twice the number of code points (two
+/// columns is the most one takes), minus the columns the cell has, and at least 2.
+/// A family of five code points is 8; a flag 2.
+pub int uncertain_reach(str cluster, int width) {
+    int code_points = 0;
+    for (int index in 0 .. cluster.size()) {
+        if ((cluster.byte_at(index) & 0xC0) != 0x80) {
+            code_points = code_points + 1;
+        }
+    }
+    int most = code_points * 2;
+    if (most > 16) {
+        most = 16;
+    }
+    if (most - width < 2) {
+        return 2;
+    }
+    return most - width;
 }
 
 /// The grapheme clusters of `text`: `unicode.graphemes`, with the same fast
