@@ -8,7 +8,7 @@
 # FAILED, never for ok.
 #
 #   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
-#   2. tests/{tests,widgets,syntax,terminal}.m31 and examples/{bench,demo,browse,widgets}.m31 all
+#   2. tests/{tests,widgets,syntax,terminal}.m31 and examples/{bench,demo,browse,widgets,features}.m31 all
 #      compile under gcc and clang, at -O0 and -O2, with no warning from the emitted C
 #   3. each test's output matches its tests/<name>.out, and contains no `FAIL` line
 #   4. the refcount invariant holds: `__rc_live=0` at exit
@@ -71,7 +71,7 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
     # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
     case "$src" in */examples/widgets.*) base=example_widgets;; esac

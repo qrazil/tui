@@ -1,0 +1,100 @@
+// The 0.10.0 terminal features, all opt-in, in one small program: run it in a terminal
+// and press keys.
+//
+//   M31_ROOT=... LANGC=... bash scripts/build.sh examples/features.m31 -o /tmp/tuifeatures && /tmp/tuifeatures
+//
+// What it shows, and what to try:
+//
+//   - synchronized output (DEC 2026): every frame is written between the markers when
+//     the terminal answered the question; the status line says whether it did.
+//   - the keyboard protocol: press Ctrl-i, then Tab; Escape, then Alt-Escape; Ctrl-m,
+//     then Enter. On a terminal with the kitty protocol (or xterm's modifyOtherKeys)
+//     they are different keys; elsewhere Ctrl-i and Tab are one.
+//   - a hyperlink (OSC 8): the underlined text is a link in terminals that have them
+//     (Ctrl- or Cmd-click).
+//   - the clipboard (OSC 52): y copies a line of text; c turns copying off and on.
+//   - focus reports: click away and back; the count changes, and coming back repaints.
+//   - q quits.
+//
+// Like examples/browse.m31 this needs a person and a terminal; tests/test.sh checks that
+// it compiles, and tests/terminal.m31 checks the bytes it writes.
+
+import io;
+import term;
+import app.TUI_app;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_keys;
+import core.TUI_style;
+import core.TUI_widget;
+
+type State {
+    str last_key = "(none yet)";
+    str copied = "nothing copied";
+    int events = 0;
+}
+
+str protocol_name(int protocol) {
+    if (protocol == TUI_keys.KEYS_KITTY) {
+        return "kitty keyboard protocol";
+    }
+    if (protocol == TUI_keys.KEYS_MODIFY_OTHER) {
+        return "modifyOtherKeys";
+    }
+    return "classic keys";
+}
+
+State state = State();
+TUI_app.Loop loop = TUI_app.Loop(should_sync: true, should_disambiguate_keys: true, should_try_modify_other_keys: true, should_report_focus: true, animate_ms: 0);
+
+void paint(State state, TUI_app.Loop loop, TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    TUI_style.Style dim = TUI_style.Style(attrs: TUI_style.DIM);
+    TUI_style.Style link = TUI_style.Style(attrs: TUI_style.UNDERLINE);
+    buffer.set_str(2, 1, "tui 0.10.0 terminal features", TUI_style.Style(attrs: TUI_style.BOLD));
+    buffer.set_str(2, 3, "last key:", dim);
+    buffer.set_str(12, 3, state.last_key, TUI_style.Style());
+    buffer.set_str(2, 4, "keys:", dim);
+    buffer.set_str(12, 4, protocol_name(loop.key_protocol), TUI_style.Style());
+    buffer.set_str(2, 5, "sync:", dim);
+    buffer.set_str(12, 5, "synchronized output " + loop.is_sync.to_str(), TUI_style.Style());
+    buffer.set_str(2, 6, "focus:", dim);
+    buffer.set_str(12, 6, loop.has_focus.to_str() + " (" + str(loop.focus_changes) + " changes)", TUI_style.Style());
+    buffer.set_str(2, 7, "clipboard:", dim);
+    buffer.set_str(12, 7, state.copied, TUI_style.Style());
+    buffer.set_str(2, 9, "link:", dim);
+    buffer.set_link_str(12, 9, "the m31 repository", link, "https://github.com/qrazil/m31");
+    buffer.set_str(2, 11, "y copy   c copy on/off   q quit", dim);
+}
+
+TUI_app.Action on_event(State state, TUI_app.Loop loop, term.Event event) {
+    state.events = state.events + 1;
+    state.last_key = event.to_str();
+    // `to_str` names a key with its modifiers, so "q" is the letter alone and "ctrl+q" is not
+    if (state.last_key == "q") {
+        return TUI_app.Action.Quit;
+    }
+    if (state.last_key == "y") {
+        int sent = loop.copy("hello from tui 0.10.0");
+        state.copied = str(sent) + " bytes sent";
+        if (sent == 0) {
+            state.copied = "copy is off";
+        }
+    }
+    if (state.last_key == "c") {
+        loop.is_copy_allowed = !loop.is_copy_allowed;
+    }
+    return TUI_app.Action.Redraw;
+}
+
+if (!term.is_terminal(0)) {
+    io.eprint("features: standard input is not a terminal");
+    return;
+}
+match (loop.run((TUI_buffer.Buffer buffer, TUI_geometry.Rect area) => paint(state, loop, buffer, area), (term.Event event) => on_event(state, loop, event))) {
+    case Ok(int frame_count): {
+    }
+    case Err(term.Error error): {
+        io.eprint("features: " + error.to_str());
+    }
+}
+print("bye");

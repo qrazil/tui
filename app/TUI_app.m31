@@ -247,6 +247,12 @@ pub type Loop {
     pub int key_protocol = 0;
     /// The kitty question is out and neither answer has come.
     bool is_key_reply_pending = false;
+    /// Where keys are read from: 0, standard input, which must be a terminal (as it
+    /// always was); `INPUT_AUTO` (-1), standard input if it is a terminal and else
+    /// standard output if that is -- a viewer fed from a pipe (`cat x.md | viewer`) has
+    /// no terminal on standard input, and the tty that standard output is is one file
+    /// for reading and writing; or any other descriptor.
+    pub int input_fd = 0;
 }
 
 /// Put `text` on the system clipboard (OSC 52, see `TUI_osc`): written before the
@@ -449,10 +455,11 @@ pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
 /// pass, so a callback may change them (an animation asks for 16 ms while it
 /// runs and gives it back).
 pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_event, Ticker on_tick, MouseHandler on_mouse) {
-    if (!term.is_terminal(0)) {
+    int in_fd = pick_input_fd(input_fd, term.is_terminal(0), term.is_terminal(1));
+    if (in_fd < 0 || !term.is_terminal(in_fd)) {
         return Result<int, term.Error>.Err(term.Error.NotATerminal);
     }
-    match (term.raw()) {
+    match (term.raw(in_fd: in_fd, out_fd: 1)) {
         case Err(term.Error error): {
             return Result<int, term.Error>.Err(error);
         }
@@ -461,7 +468,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             term.Writer writer = term.writer(io.stdout());
             writer.put(enter_sequence());
             start_keys();
-            term.Reader reader = term.reader();
+            term.Reader reader = term.reader(descriptor: in_fd);
             term.Size window_size = screen_size();
             // Two buffers for the whole run, swapped each frame: the one
             // just shown and the one being drawn. A fresh buffer per frame
@@ -688,14 +695,16 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
         }
         case Unknown(bytes raw): {
             if (did_take_key_reply(raw)) {
-                // the answer to the keyboard questions: the loop's own business
-                return Action.Continue;
+                // the answer to the keyboard questions: the loop's own business, and the
+                // view may show what it came to (`key_protocol`), so it is drawn again
+                return Action.Redraw;
             }
             int reply = TUI_diff.sync_reply(raw);
             if (reply >= 0) {
-                // the answer to the mode 2026 question: the loop's own business
+                // the answer to the mode 2026 question: the loop's own business, and the
+                // view may show what it came to (`is_sync`), so it is drawn again
                 is_sync = reply == 1 && should_sync;
-                return Action.Continue;
+                return Action.Redraw;
             }
             int focus = focus_report(raw);
             if (should_report_focus && focus >= 0) {
@@ -710,6 +719,25 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
             return on_event.handle(event);
         }
     }
+}
+
+/// `Loop.input_fd` for "standard input if it is a terminal, else standard output".
+pub const int INPUT_AUTO = -1;
+
+/// The descriptor keys are read from, given `Loop.input_fd` and whether standard
+/// input and standard output are terminals: -1 when there is none to read from.
+/// Pulled out so it can be checked without a terminal.
+pub int pick_input_fd(int configured, bool is_input_terminal, bool is_output_terminal) {
+    if (configured != INPUT_AUTO) {
+        return configured;
+    }
+    if (is_input_terminal) {
+        return 0;
+    }
+    if (is_output_terminal) {
+        return 1;
+    }
+    return -1;
 }
 
 /// What a focus report says: 1 the terminal gained focus (`CSI I`), 0 it lost it

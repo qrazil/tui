@@ -855,6 +855,47 @@ void uncertainty_tests(Tally tally) {
     }
 }
 
+str action_name(TUI_app.Action action) {
+    match (action) {
+        case Continue: {
+            return "continue";
+        }
+        case Redraw: {
+            return "redraw";
+        }
+        case Quit: {
+            return "quit";
+        }
+    }
+}
+
+void reply_tests(Tally tally) {
+    head("the loop's own answers redraw the view");
+    TUI_app.Loop loop = TUI_app.Loop(should_sync: true, should_disambiguate_keys: true);
+    loop.start_keys();
+    Recorder recorder = Recorder();
+    check(tally, "the mode 2026 answer: redraw, so a view that shows is_sync is right", action_name(loop.dispatch(term.decode("\x1b[?2026;2$y".to_bytes())[0], recorder, TUI_app.NoMouse())), "redraw");
+    ok(tally, "and it was taken", loop.is_sync);
+    check(tally, "the kitty answer: redraw", action_name(loop.dispatch(term.decode("\x1b[?0u".to_bytes())[0], recorder, TUI_app.NoMouse())), "redraw");
+    check(tally, "the attributes answer: redraw", action_name(loop.dispatch(term.decode("\x1b[?62;22c".to_bytes())[0], recorder, TUI_app.NoMouse())), "redraw");
+    check(tally, "none of them reached the program", recorder.seen.join(","), "");
+    check(tally, "a key is the program's, and its answer is its own", action_name(loop.dispatch(term.decode("x".to_bytes())[0], recorder, TUI_app.NoMouse())), "continue");
+}
+
+// --- 7. the input descriptor (what a viewer fed from a pipe needs) -----------------------
+
+void input_tests(Tally tally) {
+    head("input descriptor");
+    check_int(tally, "default: standard input", TUI_app.Loop().input_fd, 0);
+    check_int(tally, "default, input a terminal: 0", TUI_app.pick_input_fd(0, true, true), 0);
+    check_int(tally, "default, input not a terminal: still 0 (the loop then says NotATerminal, as it did)", TUI_app.pick_input_fd(0, false, true), 0);
+    check_int(tally, "auto, both terminals: standard input", TUI_app.pick_input_fd(TUI_app.INPUT_AUTO, true, true), 0);
+    check_int(tally, "auto, input piped: the terminal that standard output is", TUI_app.pick_input_fd(TUI_app.INPUT_AUTO, false, true), 1);
+    check_int(tally, "auto, neither: none", TUI_app.pick_input_fd(TUI_app.INPUT_AUTO, false, false), -1);
+    check_int(tally, "auto, only input a terminal: standard input", TUI_app.pick_input_fd(TUI_app.INPUT_AUTO, true, false), 0);
+    check_int(tally, "another descriptor is that one", TUI_app.pick_input_fd(7, false, false), 7);
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
@@ -863,6 +904,8 @@ key_tests(score);
 focus_tests(score);
 width_table_tests(score);
 uncertainty_tests(score);
+reply_tests(score);
+input_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

@@ -280,4 +280,22 @@ ok   oracle, a terminal that segments, regional indicator 1: every cell past 12 
 ok   oracle, a terminal that segments, regional indicator 2: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
 ok   oracle, a terminal that adds up, regional indicator 2: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
 
--- 267 passed, 0 failed
+== the loop's own answers redraw the view ======================
+ok   the mode 2026 answer: redraw, so a view that shows is_sync is right
+ok   and it was taken
+ok   the kitty answer: redraw
+ok   the attributes answer: redraw
+ok   none of them reached the program
+ok   a key is the program's, and its answer is its own
+
+== input descriptor ============================================
+ok   default: standard input
+ok   default, input a terminal: 0
+ok   default, input not a terminal: still 0 (the loop then says NotATerminal, as it did)
+ok   auto, both terminals: standard input
+ok   auto, input piped: the terminal that standard output is
+ok   auto, neither: none
+ok   auto, only input a terminal: standard input
+ok   another descriptor is that one
+
+-- 281 passed, 0 failed
