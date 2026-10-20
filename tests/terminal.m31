@@ -1046,6 +1046,16 @@ void raw_mouse_tests(Tally tally) {
     check_int(tally, "both asked: routing wins, on_event sees nothing", both.seen.size(), 0);
 }
 
+// --- 9. the escape wait (0.12.0); the pty test of what it does is tests/escape.m31 ----------
+
+void escape_wait_tests(Tally tally) {
+    head("escape wait");
+    check_int(tally, "default: no escape wait of its own (the loop reads as it did)", TUI_app.Loop().escape_wait_ms, 0);
+    check_int(tally, "set: it is what was asked", TUI_app.Loop(escape_wait_ms: 40).escape_wait_ms, 40);
+    check_int(tally, "the read timeout is the ticker's alone: a timer still shortens it", TUI_app.read_timeout_ms(250, 5, 0), 5);
+    check_int(tally, "and still never under one", TUI_app.read_timeout_ms(250, 5, 90), 1);
+}
+
 Tally score = Tally();
 sync_tests(score);
 clipboard_tests(score);
@@ -1058,6 +1068,7 @@ reply_tests(score);
 input_tests(score);
 after_frame_tests(score);
 raw_mouse_tests(score);
+escape_wait_tests(score);
 print("");
 print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
 if (score.fail > 0) {

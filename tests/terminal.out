@@ -335,4 +335,10 @@ ok   routed: the gesture goes to on_mouse (unchanged)
 ok   neither asked: a report is on_event's, as before
 ok   both asked: routing wins, on_event sees nothing
 
--- 314 passed, 0 failed
+== escape wait =================================================
+ok   default: no escape wait of its own (the loop reads as it did)
+ok   set: it is what was asked
+ok   the read timeout is the ticker's alone: a timer still shortens it
+ok   and still never under one
+
+-- 318 passed, 0 failed

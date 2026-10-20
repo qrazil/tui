@@ -1,0 +1,308 @@
+// The escape wait (0.12.0), on a pseudo-terminal.
+//
+//   TUI_ESCAPE_CHILD=/path/to/escape_child  escape      (tests/test.sh builds both)
+//
+// `escape_child` is a real `Loop.run_with` with a ticker; this program starts it
+// on a pty, types at it, and reads what it logged (an event, and when, on the
+// monotonic clock both processes share). What is printed is only `ok` or `FAIL`
+// lines, so the output can be compared with tests/escape.out; the times are not.
+//
+// Timing is asserted so a slow machine cannot fail it: a LOWER bound is strict (an
+// Escape may not come out before `escape_wait_ms` of silence, which no delay can
+// make false), an UPPER bound is loose (a second or more of margin: CI runners
+// start late and deliver late). Writes are one byte at a time and never block
+// (a closed pty is ignored), and the pty is drained while waiting.
+
+import io;
+import os;
+import proc;
+import text;
+import timer;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void ok(Tally tally, str name, bool is_condition_true, str detail) {
+    if (is_condition_true) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     " + detail);
+}
+
+/// The escape wait every timed run uses, and the time to let a scenario settle in:
+/// the wait, plus more than the loose upper bound.
+const int WAIT_MS = 250;
+const int SETTLE_MS = 900;
+/// A gap well beyond the wait.
+const int BEYOND_MS = 800;
+/// A gap between bytes that is inside the wait, with room to spare.
+const int INSIDE_MS = 120;
+
+int now_ms() {
+    return timer.monotonic_ns() / 1000000;
+}
+
+/// One child on a pty, its log file, and how many log lines have been looked at.
+type Session {
+    proc.Pty pty;
+    str log;
+    int seen = 0;
+}
+
+/// Wait `milliseconds`, reading (and dropping) what the child draws, so a full pty
+/// can never stop it.
+void Session.pause(int milliseconds) {
+    int until_ms = now_ms() + milliseconds;
+    bool is_open = true;
+    while (now_ms() < until_ms) {
+        if (!is_open) {
+            timer.sleep_ms(10);
+            continue;
+        }
+        pty.master.set_deadline_ns(timer.monotonic_ns() + (until_ms - now_ms()) * 1000000);
+        match (pty.master.read(4096)) {
+            case Ok(bytes chunk): {
+                if (chunk.size() == 0) {
+                    is_open = false;
+                }
+            }
+            case Err(io.Error error): {
+            }
+        }
+    }
+    pty.master.set_deadline_ns(0);
+}
+
+/// Type bytes; a pty that has gone away is not this test's failure to report.
+void Session.keys(bytes data) {
+    pty.master.set_deadline_ns(timer.monotonic_ns() + 2000000000);
+    Result<int, io.Error> wrote = pty.master.write_some(data);
+    pty.master.set_deadline_ns(0);
+}
+
+/// The log's lines past the ones already looked at, as `ms name` pairs split.
+List<str> Session.lines() {
+    match (io.read(log)) {
+        case Ok(str content): {
+            return text.lines(content);
+        }
+        case Err(io.Error error): {
+            List<str> none = [];
+            return none;
+        }
+    }
+}
+
+Seen Session.take() {
+    Seen out = Seen();
+    List<str> all = lines();
+    while (seen < all.size()) {
+        if (out.first_ms < 0) {
+            out.first_ms = stamp_of(all[seen]);
+        }
+        out.names.push(name_of(all[seen]));
+        seen = seen + 1;
+    }
+    return out;
+}
+
+/// Quit the child (a `q`) and reap it.
+void Session.finish() {
+    keys("q".to_bytes());
+    pause(300);
+    Result<bool, proc.Error> killed = pty.kill(9);
+    Result<os.ExitStatus, proc.Error> status = pty.wait();
+}
+
+Outcome Session.scenario(List<bytes> pieces, List<int> gaps) {
+    Outcome outcome = Outcome();
+    int index = 0;
+    while (index < pieces.size()) {
+        keys(pieces[index]);
+        outcome.last_write_ms = now_ms();
+        if (index + 1 < pieces.size()) {
+            pause(gaps[index]);
+        }
+        index = index + 1;
+    }
+    pause(SETTLE_MS);
+    outcome.seen = take();
+    return outcome;
+}
+
+int stamp_of(str line) {
+    List<str> parts = text.split_whitespace(line);
+    if (parts.size() == 0) {
+        return -1;
+    }
+    match (text.parse_int(parts[0])) {
+        case Ok(int milliseconds): {
+            return milliseconds;
+        }
+        case Err(text.ParseError error): {
+            return -1;
+        }
+    }
+}
+
+str name_of(str line) {
+    List<str> parts = text.split_whitespace(line);
+    List<str> rest = [];
+    int index = 1;
+    while (index < parts.size()) {
+        rest.push(parts[index]);
+        index = index + 1;
+    }
+    return rest.join(" ");
+}
+
+/// The events logged since the last call (names only), and the stamp of the first.
+type Seen {
+    List<str> names = [];
+    int first_ms = -1;
+}
+
+/// A child started with the given escape wait and animation period, on a fresh log,
+/// and waited for until it has drawn its first frame. None if it never did.
+Option<Session> start(str child, str log, int escape_wait_ms, int animate_ms) {
+    Result<int, io.Error> cleared = io.write(log, "");
+    match (proc.start_pty([child, log, str(escape_wait_ms), str(animate_ms)])) {
+        case Ok(proc.Pty pty): {
+            Session session = Session(pty, log);
+            int give_up_ms = now_ms() + 20000;
+            while (now_ms() < give_up_ms) {
+                session.pause(50);
+                List<str> all = session.lines();
+                if (all.size() > 0) {
+                    // up, and a moment more: the first keys must meet a loop that is reading
+                    session.pause(500);
+                    Seen ready = session.take();
+                    return Option<Session>.Some(session);
+                }
+            }
+            return Option<Session>.None;
+        }
+        case Err(proc.Error error): {
+            return Option<Session>.None;
+        }
+    }
+}
+
+/// Type `pieces` with `gaps` (milliseconds) after each, then let things settle.
+/// Answers the events and when the last byte was written.
+type Outcome {
+    Seen seen = Seen();
+    int last_write_ms = 0;
+}
+
+bytes esc() {
+    return [27];
+}
+
+List<str> events(Outcome outcome) {
+    return outcome.seen.names;
+}
+
+str joined(Outcome outcome) {
+    return outcome.seen.names.join(",");
+}
+
+/// The Escape came no sooner than `WAIT_MS` after the last byte, and not much later.
+void timed(Tally tally, str label, Outcome outcome, int wait_ms) {
+    int delay_ms = outcome.seen.first_ms - outcome.last_write_ms;
+    ok(tally, label + ": not before the wait (" + str(wait_ms) + " ms of silence)", outcome.seen.first_ms >= 0 && delay_ms >= wait_ms, "delay " + str(delay_ms) + " ms");
+    ok(tally, label + ": and not far after it", delay_ms < wait_ms + 1000, "delay " + str(delay_ms) + " ms");
+}
+
+void waiting_tests(Tally tally, str child, str log, int animate_ms, str label) {
+    Option<Session> started = start(child, log, WAIT_MS, animate_ms);
+    match (started) {
+        case None: {
+            ok(tally, label + ": the child started", false, "no first frame");
+            return;
+        }
+        case Some(Session session): {
+            ok(tally, label + ": the child started", true, "");
+            Outcome lone = session.scenario([esc()], []);
+            check(tally, label + ": a lone ESC is an Escape", joined(lone), "escape");
+            timed(tally, label + ": a lone ESC", lone, WAIT_MS);
+            Outcome quick = session.scenario([esc(), "[".to_bytes(), "A".to_bytes()], [3, 3]);
+            check(tally, label + ": ESC [ A in 3 ms steps is Up", joined(quick), "up");
+            Outcome slow = session.scenario([esc(), "[".to_bytes(), "A".to_bytes()], [30, 30]);
+            check(tally, label + ": ESC [ A in 30 ms steps is Up", joined(slow), "up");
+            Outcome restarted = session.scenario([esc(), "[".to_bytes(), "A".to_bytes()], [INSIDE_MS, INSIDE_MS]);
+            check(tally, label + ": each byte restarts the wait (a total beyond it is still Up)", joined(restarted), "up");
+            Outcome split = session.scenario([esc(), "[A".to_bytes()], [BEYOND_MS]);
+            check(tally, label + ": ESC, a gap beyond the wait, then [A: Escape, [, A", joined(split), "escape,[,A");
+            Outcome prefix = session.scenario([esc(), "[".to_bytes()], [0]);
+            ok(tally, label + ": a held ESC [ resolves as one key", prefix.seen.names.size() == 1, joined(prefix));
+            timed(tally, label + ": a held ESC [", prefix, WAIT_MS);
+            Outcome shift = session.scenario(["\x1b[1;5C".to_bytes()], []);
+            check(tally, label + ": a whole sequence at once is one key", joined(shift), "ctrl+right");
+            session.finish();
+        }
+    }
+}
+
+str child_path = "";
+match (os.env("TUI_ESCAPE_CHILD")) {
+    case Some(str path): {
+        child_path = path;
+    }
+    case None: {
+    }
+}
+str log_directory = ".";
+match (os.env("TUI_ESCAPE_LOGDIR")) {
+    case Some(str path): {
+        log_directory = path;
+    }
+    case None: {
+    }
+}
+Tally score = Tally();
+if (child_path == "") {
+    print("FAIL TUI_ESCAPE_CHILD is not set");
+    os.exit(1);
+}
+print("== a busy 5 ms ticker " + "=".repeat(30));
+waiting_tests(score, child_path, log_directory + "/ticker.log", 5, "ticker");
+print("== no ticker " + "=".repeat(30));
+waiting_tests(score, child_path, log_directory + "/idle.log", 0, "idle");
+print("== escape_wait_ms 0 is the loop as it was " + "=".repeat(30));
+Option<Session> as_before = start(child_path, log_directory + "/before.log", 0, 5);
+match (as_before) {
+    case None: {
+        ok(score, "default: the child started", false, "no first frame");
+    }
+    case Some(Session session): {
+        Outcome lone = session.scenario([esc()], []);
+        check(score, "default, 5 ms ticker: a lone ESC is an Escape", joined(lone), "escape");
+        int delay_ms = lone.seen.first_ms - lone.last_write_ms;
+        ok(score, "default, 5 ms ticker: resolved by the tick, well before the wait", delay_ms >= 0 && delay_ms < WAIT_MS, "delay " + str(delay_ms) + " ms");
+        session.finish();
+    }
+}
+print("");
+print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
+if (score.fail > 0) {
+    os.exit(1);
+}

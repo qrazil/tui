@@ -1,3 +1,8 @@
+# tui 0.12.0: nothing renamed or removed; what behaves differently
+
+Version 0.12.0, from 0.11.0 (e156723). Additive: `Loop.escape_wait_ms` (default 0). A program that does not set it
+reads exactly as before. Building needs m31 v0.9.0 (`term.Reader.read_keys`), and tui's CI moved to it.
+
 # tui 0.11.0: nothing renamed or removed; what behaves differently
 
 Version 0.11.0, from 0.10.0 (73c226e). Additive: `AfterFrame`, `Loop.after_frame`, `Loop.frame_bytes`,

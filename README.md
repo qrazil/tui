@@ -32,7 +32,7 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.11.0) is built and tested against m31 v0.6.0 (CI pins the release named by
+version (0.12.0) is built and tested against m31 v0.9.0 (CI pins the release named by
 `M31_REF`); `RENAMES.md` lists what a program moving from an earlier version has to change and
 `CHANGELOG.md` what each version added.
 
@@ -128,7 +128,7 @@ buffer.set_link_str(x, y, "docs", style, "https://example.com/docs");
 | `Host.after_frame(...)`, the scaled headings (OSC 66) written after the cells | `loop.after_frame = Option<TUI_app.AfterFrame>.Some(hook)` (0.11.0): `hook.after_frame(buffer, is_full)` answers the bytes, which are written in the same write as the frame, after its cells (`queue_output` is one read late) |
 | `loop.enter` / `loop.leave` carrying `term.MOUSE_ON` and `TUI_mouse.HOVER_ON`, because `should_report_mouse` routes | `Loop(should_report_raw_mouse: true, should_report_hover: true)` (0.11.0): the loop writes and takes off the modes, and each report is an `Event.Mouse` for `on_event`, with no routing |
 | `input_fd()`: stdin if it is a terminal, else stdout | `Loop(input_fd: TUI_app.INPUT_AUTO)` |
-| `ESCAPE_WAIT_MS` 50: the read wait that resolves a lone Escape | `tick_ms: 50`, or `should_disambiguate_keys` and Escape needs no wait on a terminal that has the protocol |
+| `ESCAPE_WAIT_MS` 50: the read wait that resolves a lone Escape | `Loop(escape_wait_ms: 50)` (0.12.0, m31 v0.9.0): a lone Escape, or a held `ESC [` / `ESC O` / OSC prefix, is resolved after 50 ms of no further input, whatever `tick_ms` and `animate_ms` are. Without it (0, the default) the read's own timeout is the wait, so under a ticker an Escape comes out 1 to `tick_ms` ms late. Or `should_disambiguate_keys`, and Escape needs no wait on a terminal that has the protocol |
 | `loop.enter`, `loop.leave`, `loop.depth` | the same fields |
 
 What it gets for deleting about a hundred lines: synchronized frames, the drain of already-arrived keys

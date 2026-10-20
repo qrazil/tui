@@ -71,6 +71,10 @@
 // that went backwards counts as zero and the timer resynchronises, instead of
 // a clock change making an animation leap or freeze.
 //
+// **Escape (v0.12.0).** `escape_wait_ms` > 0 gives a lone Escape (and a held `ESC [`,
+// `ESC O` or OSC prefix) a wait of its own, from the last byte that arrived, whatever the
+// ticker does; 0 is the loop as it was. See the field.
+//
 // **Mouse.** `should_report_mouse` writes `term.MOUSE_ON` on entry (and
 // `MOUSE_OFF` on the way out); `should_report_hover` adds motion with no button
 // down; `should_report_paste` adds bracketed paste, so a paste arrives as one
@@ -197,6 +201,16 @@ pub type Loop {
     /// 250ms matches `examples/keys.m31`: quick enough that a resize is
     /// noticed with no key pressed, slow enough to cost nothing while idle.
     pub int tick_ms = 250;
+    /// How long a lone Escape (or a held start of a longer sequence: `ESC [`, `ESC O`,
+    /// an OSC) waits for the rest of itself, in milliseconds, counted from the LAST byte
+    /// that arrived and not shortened by `tick_ms`, `animate_ms` or any redraw. 0, the
+    /// default, is the loop as it was: the read's own timeout (`tick_ms`, or the time to
+    /// the next tick when that is sooner) is also the escape wait, so a lone Escape comes
+    /// out 1 to `tick_ms` ms after the key under a timer, and bytes and timings are those
+    /// of 0.11.0. Above 0 the loop reads with `term.Reader.read_keys(timeout, escape_wait_ms)`
+    /// (m31 v0.9.0): the ticker still runs on time while an Escape is being waited out.
+    /// 25 to 50 is the usual choice; a slow link wants more. Negative counts as 0.
+    pub int escape_wait_ms = 0;
     pub TUI_style.Depth depth = TUI_style.Depth.TrueColour;
     /// Written once, entering raw mode, before the first frame.
     pub str enter = term.ALT_SCREEN_ON + term.HIDE_CURSOR;
@@ -524,7 +538,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             while (is_running) {
                 bool should_redraw = false;
                 is_input_queued = false;
-                match (reader.read(read_timeout_ms(tick_ms, animate_ms, now_ms() - last_tick_ms))) {
+                match (read_next(reader, read_timeout_ms(tick_ms, animate_ms, now_ms() - last_tick_ms))) {
                     case Ok(term.Input inp): {
                         match (inp) {
                             case Got(term.Event event): {
@@ -783,6 +797,16 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
             return on_event.handle(event);
         }
     }
+}
+
+/// One read for the loop: `reader.read(timeout_ms)` as it always was when `escape_wait_ms`
+/// is 0 (or less), `reader.read_keys(timeout_ms, escape_wait_ms)` above 0, so that the
+/// timeout is only how long to wait for a first byte and the escape wait is its own.
+Result<term.Input, term.Error> Loop.read_next(term.Reader reader, int timeout_ms) {
+    if (escape_wait_ms > 0) {
+        return reader.read_keys(timeout_ms, escape_wait_ms);
+    }
+    return reader.read(timeout_ms);
 }
 
 /// `Loop.input_fd` for "standard input if it is a terminal, else standard output".

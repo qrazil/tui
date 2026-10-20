@@ -1,0 +1,89 @@
+// The program tests/escape.m31 runs on a pseudo-terminal: a real `Loop.run_with` that
+// writes down, to a log file, every event it is handed and when (the monotonic
+// clock, in milliseconds, which the test reads too).
+//
+//   escape_child <log> <escape_wait_ms> <animate_ms>
+//
+// One line per event: `<ms> <Event.to_str()>`, after a first `<ms> ready` line written
+// when the loop has drawn its first frame. A `q` key quits.
+
+import io;
+import os;
+import term;
+import text;
+import timer;
+import app.TUI_app;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_widget;
+
+type Blank {
+    str log_path;
+}
+
+str Blank.stamp(str what) {
+    int milliseconds = timer.monotonic_ns() / 1000000;
+    return str(milliseconds) + " " + what + "\n";
+}
+
+void Blank.note(str what) {
+    match (io.append(log_path, stamp(what))) {
+        case Ok(int written): {
+        }
+        case Err(io.Error error): {
+            io.eprint("log: " + error.to_str() + "\n");
+        }
+    }
+}
+
+void Blank.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    note("ready");
+}
+
+TUI_app.Action Blank.handle(term.Event event) {
+    note(event.to_str());
+    match (event) {
+        case Key(term.Key key): {
+            if (key.code.to_str() == "q") {
+                return TUI_app.Action.Quit;
+            }
+        }
+        case Mouse(term.Mouse report): {
+        }
+        case Paste(str pasted): {
+        }
+        case Unknown(bytes raw): {
+        }
+    }
+    return TUI_app.Action.Continue;
+}
+
+TUI_app.Action Blank.tick(int elapsed_ms) {
+    return TUI_app.Action.Continue;
+}
+
+int parse(str text_value) {
+    match (text.parse_int(text_value)) {
+        case Ok(int number): {
+            return number;
+        }
+        case Err(text.ParseError error): {
+            return 0;
+        }
+    }
+}
+
+List<str> arguments = os.arguments();
+if (arguments.size() < 4) {
+    print("usage: escape_child <log> <escape_wait_ms> <animate_ms>");
+    os.exit(2);
+}
+Blank blank = Blank(arguments[1]);
+TUI_app.Loop loop = TUI_app.Loop(escape_wait_ms: parse(arguments[2]), animate_ms: parse(arguments[3]));
+match (loop.run_with(blank, blank, blank, TUI_app.NoMouse())) {
+    case Ok(int code): {
+    }
+    case Err(term.Error error): {
+        os.exit(3);
+    }
+}

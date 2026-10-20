@@ -4,6 +4,38 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## 0.12.0
+
+Found moving mgit onto `Loop.run_with`: the loop's read timeout is `min(tick_ms, time to the next tick)` and
+`term.Reader.read` resolves a lone Escape only when a read times out, so under a ticker a lone Escape came out 1 to
+250 ms after the key instead of after a fixed wait, and an escape sequence whose bytes arrived more than a few ms
+apart (a slow ssh link) was read as Escape plus characters. tui-markdown's loop had a fixed `ESCAPE_WAIT_MS`
+and mgit's 250 ms; `run_with` had neither. Built and tested against m31 v0.9.0.
+
+### Added
+
+- **`Loop.escape_wait_ms`** (default 0). Above 0 the loop reads with `term.Reader.read_keys(timeout, escape_wait_ms)`:
+  a lone ESC byte, or a held start of `ESC [`, `ESC O` or an OSC sequence, is resolved as a key only after
+  `escape_wait_ms` of NO FURTHER INPUT (counted from the last byte, restarted by each arrival). `tick_ms`,
+  `animate_ms` and redraws do not shorten it, and the ticker keeps ticking on time while an Escape is waited out.
+  Whole events are returned at once. Negative counts as 0.
+- `Loop.read_next(reader, timeout_ms)`: the one read the loop makes.
+- `tests/escape.m31` and `tests/escape_child.m31`: a pty test (the child is a real `Loop.run_with`) that writes ESC alone,
+  `ESC [ A` split by 3 ms and 30 ms, `ESC` then `[ A` far beyond the wait, and a lone ESC under a 5 ms ticker.
+
+### Default 0, and why
+
+With `escape_wait_ms` 0 the loop calls `reader.read` exactly as in 0.11.0, so the bytes read and the timings of every
+existing program are unchanged. A non-zero default is not provably safer: it would change when a lone Escape resolves
+for every program (from "1 to `tick_ms` ms" to the default, which is later for an app that runs a 10 ms tick), and
+only the program knows what its users' links need. So it is opt-in: 25 to 50 locally, more for slow links.
+`read_timeout_ms` is unchanged.
+
+### Changed
+
+- **CI builds with m31 v0.9.0** (`M31_REF` in `.github/workflows/test.yml`, was v0.5.0): `Loop.escape_wait_ms` needs
+  `term.Reader.read_keys`, which arrived in m31 v0.9.0. Building tui 0.12.0 needs m31 v0.9.0 or later.
+
 ## 0.11.0
 
 Driven by what tui-markdown 0.6.0 found moving onto `Loop.run_with` (its `docs/DESIGN.md`, "Gaps hit in m31

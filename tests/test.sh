@@ -2,9 +2,9 @@
 # The TUI library's gate.
 #
 #   M31_ROOT=/path/to/m31 bash tests/test.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax,terminal}.out from what the tests print
+#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax,terminal,escape}.out from what the tests print
 #
-# Four things are checked, and the rule is the repository's own: grep for
+# Four things are checked (and, last, the pty test of the escape wait: 3b below), and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
 #   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
@@ -71,7 +71,7 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/tests/escape."$LANG_EXT" "$DIR"/tests/escape_child."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
     # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
     case "$src" in */examples/widgets.*) base=example_widgets;; esac
@@ -145,6 +145,31 @@ for corpus in tests widgets syntax terminal; do
         bad; diff "$DIR/tests/$corpus.out" <(printf '%s\n' "$ref") | head -30 | sed 's/^/    /'
     fi
 done
+
+# 3b. the escape wait, on a pty -----------------------------------------------
+#
+# tests/escape.m31 starts tests/escape_child.m31 (a real `Loop.run_with` with a
+# ticker) on a pseudo-terminal, types at it, and checks what it was handed and
+# when: a lone Escape waits `escape_wait_ms` of silence (lower bound strict,
+# upper bound loose), a split `ESC [ A` is one key. It takes about twenty seconds,
+# so it runs once, in the first build, not in each of four; its output is still
+# compared with tests/escape.out (only ok/FAIL lines, no times).
+entry=${CCS[0]}; cc=${entry%%:*}; opt=${entry##*:}
+elog=$WORK/escape-logs; mkdir -p "$elog"
+note "escape wait on a pty ($cc $opt)"
+got=$(TUI_ESCAPE_CHILD="$WORK/escape_child.$cc$opt" TUI_ESCAPE_LOGDIR="$elog" "$WORK/escape.$cc$opt" 2>&1)
+if grep -q '^FAIL' <<<"$got" || ! grep -q '^__rc_live=0$' <<<"$got"; then
+    bad; grep -A2 '^FAIL' <<<"$got" | head -20 | sed 's/^/    /'; grep '^__rc_live=' <<<"$got" | sed 's/^/    /'
+else good; fi
+got=$(grep -v '^__rc_live=' <<<"$got")
+if [ $bless -eq 1 ]; then
+    printf '%s\n' "$got" > "$DIR/tests/escape.out"
+    echo "blessed $DIR/tests/escape.out"
+fi
+note "output matches tests/escape.out"
+if diff -q <(printf '%s\n' "$got") "$DIR/tests/escape.out" >/dev/null 2>&1; then good; else
+    bad; diff "$DIR/tests/escape.out" <(printf '%s\n' "$got") | head -30 | sed 's/^/    /'
+fi
 
 # the benchmark -------------------------------------------------------------
 #
