@@ -1,27 +1,27 @@
 == a busy 5 ms ticker ==============================
 ok   ticker: the child started
 ok   ticker: a lone ESC is an Escape
-ok   ticker: a lone ESC: not before the wait (250 ms of silence)
+ok   ticker: a lone ESC: not before the wait (700 ms of silence)
 ok   ticker: a lone ESC: and not far after it
 ok   ticker: ESC [ A in 3 ms steps is Up
 ok   ticker: ESC [ A in 30 ms steps is Up
 ok   ticker: each byte restarts the wait (a total beyond it is still Up)
 ok   ticker: ESC, a gap beyond the wait, then [A: Escape, [, A
 ok   ticker: a held ESC [ resolves as one key
-ok   ticker: a held ESC [: not before the wait (250 ms of silence)
+ok   ticker: a held ESC [: not before the wait (700 ms of silence)
 ok   ticker: a held ESC [: and not far after it
 ok   ticker: a whole sequence at once is one key
 == no ticker ==============================
 ok   idle: the child started
 ok   idle: a lone ESC is an Escape
-ok   idle: a lone ESC: not before the wait (250 ms of silence)
+ok   idle: a lone ESC: not before the wait (700 ms of silence)
 ok   idle: a lone ESC: and not far after it
 ok   idle: ESC [ A in 3 ms steps is Up
 ok   idle: ESC [ A in 30 ms steps is Up
 ok   idle: each byte restarts the wait (a total beyond it is still Up)
 ok   idle: ESC, a gap beyond the wait, then [A: Escape, [, A
 ok   idle: a held ESC [ resolves as one key
-ok   idle: a held ESC [: not before the wait (250 ms of silence)
+ok   idle: a held ESC [: not before the wait (700 ms of silence)
 ok   idle: a held ESC [: and not far after it
 ok   idle: a whole sequence at once is one key
 == escape_wait_ms 0 is the loop as it was ==============================
