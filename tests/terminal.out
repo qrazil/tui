@@ -230,6 +230,11 @@ ok   should_repaint_on_focus off: but is counted
 ok   not asked: the report is the program's
 ok   not asked: has_focus stays true
 ok   not asked: not counted
+ok   should_repaint_on_ctrl_l: CTRL-L repaints
+ok   should_repaint_on_ctrl_l: and the frame is drawn
+ok   should_repaint_on_ctrl_l: the program still sees the key
+ok   should_repaint_on_ctrl_l: another key does not
+ok   not asked: CTRL-L is the program's
 ok   defaults: no focus mode in the enter or leave bytes
 
 == emoji sequences: widths against Unicode's table =============
@@ -352,4 +357,4 @@ ok   set: it is what was asked
 ok   the read timeout is the ticker's alone: a timer still shortens it
 ok   and still never under one
 
--- 327 passed, 0 failed
+-- 332 passed, 0 failed

@@ -275,6 +275,10 @@ pub type Loop {
     /// full, not as a difference: the way to repair a screen something else wrote
     /// on. The loop clears it after that frame.
     pub bool should_repaint = false;
+    /// CTRL-L writes the next frame in full (`should_repaint`), for a program that has no key of its own
+    /// for it: the screen is cleared and every cell written again, which is what repairs a terminal that
+    /// something else wrote on. The key is still handed to the program. Off by default (m3 has its own).
+    pub bool should_repaint_on_ctrl_l = false;
     /// The program sets `cursor` (and so its shape): put the shape back on the way out.
     pub bool should_manage_cursor = false;
     /// The off switch of `copy`: false and a copy writes nothing (a setting, a
@@ -769,6 +773,22 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
             return on_event.handle(event);
         }
         case Key(term.Key key): {
+            if (should_repaint_on_ctrl_l && is_ctrl_l(key)) {
+                should_repaint = true;
+                Action answer = on_event.handle(event);
+                match (answer) {
+                    case Quit: {
+                        return answer;
+                    }
+                    case Continue: {
+                        // a repaint is drawn even when the program had nothing to change
+                        return Action.Redraw;
+                    }
+                    case Redraw: {
+                        return answer;
+                    }
+                }
+            }
             return on_event.handle(event);
         }
         case Paste(str text): {
@@ -810,6 +830,63 @@ Result<term.Input, term.Error> Loop.read_next(term.Reader reader, int timeout_ms
         return reader.read_keys(timeout_ms, escape_wait_ms);
     }
     return reader.read(timeout_ms);
+}
+
+/// Is this key CTRL-L (form feed, or `l` with Control)?
+pub bool is_ctrl_l(term.Key key) {
+    match (key.code) {
+        case Char(int code): {
+            return code == 12 || ((code == 'l' || code == 'L') && key.has_modifiers(term.CTRL));
+        }
+        case Enter: {
+            return false;
+        }
+        case Tab: {
+            return false;
+        }
+        case BackTab: {
+            return false;
+        }
+        case Backspace: {
+            return false;
+        }
+        case Escape: {
+            return false;
+        }
+        case Up: {
+            return false;
+        }
+        case Down: {
+            return false;
+        }
+        case Right: {
+            return false;
+        }
+        case Left: {
+            return false;
+        }
+        case Home: {
+            return false;
+        }
+        case End: {
+            return false;
+        }
+        case PageUp: {
+            return false;
+        }
+        case PageDown: {
+            return false;
+        }
+        case Insert: {
+            return false;
+        }
+        case Delete: {
+            return false;
+        }
+        case F(int number): {
+            return false;
+        }
+    }
 }
 
 /// Is this Apple's Terminal (`TERM_PROGRAM=Apple_Terminal`)?

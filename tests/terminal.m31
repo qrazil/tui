@@ -659,6 +659,28 @@ void focus_tests(Tally tally) {
     check(tally, "not asked: the report is the program's", own.seen.join(","), "unknown[1b5b4f]");
     ok(tally, "not asked: has_focus stays true", unasked.has_focus);
     check_int(tally, "not asked: not counted", unasked.focus_changes, 0);
+    TUI_app.Loop clear_key = TUI_app.Loop(should_repaint_on_ctrl_l: true);
+    Recorder given = Recorder();
+    TUI_app.Action after = clear_key.dispatch(term.decode("\x0c".to_bytes())[0], given, TUI_app.NoMouse());
+    ok(tally, "should_repaint_on_ctrl_l: CTRL-L repaints", clear_key.should_repaint);
+    bool is_drawn = false;
+    match (after) {
+        case Redraw: {
+            is_drawn = true;
+        }
+        case Continue: {
+        }
+        case Quit: {
+        }
+    }
+    ok(tally, "should_repaint_on_ctrl_l: and the frame is drawn", is_drawn);
+    check_int(tally, "should_repaint_on_ctrl_l: the program still sees the key", given.seen.size(), 1);
+    TUI_app.Loop other_key = TUI_app.Loop(should_repaint_on_ctrl_l: true);
+    other_key.dispatch(term.decode("l".to_bytes())[0], Recorder(), TUI_app.NoMouse());
+    ok(tally, "should_repaint_on_ctrl_l: another key does not", !other_key.should_repaint);
+    TUI_app.Loop not_asked = TUI_app.Loop();
+    not_asked.dispatch(term.decode("\x0c".to_bytes())[0], Recorder(), TUI_app.NoMouse());
+    ok(tally, "not asked: CTRL-L is the program's", !not_asked.should_repaint);
     ok(tally, "defaults: no focus mode in the enter or leave bytes", !(TUI_app.Loop().enter_sequence() + TUI_app.Loop().leave_sequence()).contains("1004"));
 }
 
