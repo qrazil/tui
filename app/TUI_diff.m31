@@ -98,6 +98,14 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             pen = write_style(out, pen, next.style_at(x, y), depth);
             if (has_links) {
                 link = write_link(out, link, next.link_at(x, y));
+            } else {
+                // a run of printable ASCII in the pen's style is just its bytes
+                int run_end = next.ascii_run_end(y, x, run_limit(x, tail, area.right()), pen);
+                if (run_end > x) {
+                    next.append_run(out, y, x, run_end);
+                    x = run_end;
+                    continue;
+                }
             }
             bool is_unsure = is_uncertain(next, x, y);
             if (is_unsure && cell_width > 1 && pen != TUI_style.RESET_STYLE) {
@@ -128,6 +136,15 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
         TUI_style.push_reset(out);
     }
     return out;
+}
+
+/// Where a run of cells written from `x` must stop: at the trailing blanks (from `tail`), which
+/// become an erase when there are `ERASE_WORTH` of them, and otherwise at the row's end.
+int run_limit(int x, int tail, int right) {
+    if (x < tail && tail <= right - ERASE_WORTH) {
+        return tail;
+    }
+    return right;
 }
 
 /// `count` spaces in the pen's style.
@@ -224,14 +241,21 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
         if (next_unsure < forced_from) {
             forced_from = next_unsure;
         }
+        int scan_until = forced_from;
+        if (scan_until > area.right()) {
+            scan_until = area.right();
+        }
         while (x < area.right()) {
+            if (x < forced_from) {
+                // the cells that have not changed are passed in one scan of the row
+                x = next.next_change(previous, y, x, scan_until);
+                if (x >= area.right()) {
+                    break;
+                }
+            }
             int cell_width = next.width_at(x, y);
             if (cell_width == 0) {
                 x = x + 1;
-                continue;
-            }
-            if (x < forced_from && !has_changed(previous, next, x, y)) {
-                x = x + cell_width;
                 continue;
             }
             // Put the cursor on this cell, by whichever route is shorter.
@@ -252,6 +276,18 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             pen = write_style(out, pen, next.style_at(x, y), depth);
             if (has_links) {
                 link = write_link(out, link, next.link_at(x, y));
+            } else {
+                // a run of changed printable ASCII in the pen's style is just its bytes
+                int run_end = next.changed_ascii_run_end(previous, y, x, run_limit(x, tail, area.right()), forced_from, pen);
+                if (run_end > x) {
+                    next.append_run(out, y, x, run_end);
+                    current_x = run_end;
+                    if (run_end >= area.right()) {
+                        current_x = -1;
+                    }
+                    x = run_end;
+                    continue;
+                }
             }
             bool is_unsure = false;
             if (next.symbol_size_at(x, y) > MAX_PLAIN_BYTES) {
@@ -512,11 +548,6 @@ pub bytes synchronized(bytes body) {
     out.extend(body);
     out.extend(SYNC_END.to_bytes());
     return out;
-}
-
-/// Does the cell at `x`, `y` have to be written again?
-bool has_changed(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, int x, int y) {
-    return !previous.is_same_cell(next, x, y);
 }
 
 /// Get from column `from` to column `target` in row `y`: either by walking over
