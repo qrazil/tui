@@ -171,7 +171,7 @@ pub bool is_uncertain(TUI_buffer.Buffer buffer, int x, int y) {
     if (cell_width == 0) {
         return false;
     }
-    return TUI_text.is_uncertain_cluster(buffer.symbol_at(x, y), cell_width);
+    return buffer.table.is_uncertain(buffer.symbol_at(x, y), cell_width);
 }
 
 /// How far past the cell at `x`, `y` a terminal may have drawn it: 0 for a cell

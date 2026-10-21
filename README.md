@@ -32,7 +32,7 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.13.0) is built and tested against m31 v0.9.0 (CI pins the release named by
+version (0.14.0) is built and tested against m31 v0.9.0 (CI pins the release named by
 `M31_REF`); `RENAMES.md` lists what a program moving from an earlier version has to change and
 `CHANGELOG.md` what each version added.
 
@@ -152,7 +152,7 @@ read, as `MDV_loop` does too.
 
 ## The modules
 
-Thirty, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
+Thirty-one, in three folders (see "Layout" below). They are all prefixed `TUI_` because module
 names are globally unique and every unprefixed name a UI library wants is
 either taken by `lib/` or likely to collide with a user's own file — see
 `docs/FRICTION.md` §1. `TUI_app` is the one exception worth naming: it is the only
@@ -174,6 +174,7 @@ buffer.
 | `TUI_word` | `core/` | word-boundary motion over grapheme clusters, shared by the two text widgets |
 | `TUI_syntax` | `core/` | `language_of`, `classify`, `class_style`, `spans`, `draw`, `Highlighter` — a lexical highlighter and the styles to draw it in |
 | `TUI_osc` | `core/` | `clipboard_sequence`, `clipboard_fit`, `hyperlink_uri`, `hyperlink_open` — the OSC 52 and OSC 8 encoders |
+| `TUI_width` | `core/` | `Table` (what the terminal measured), `Probe`, `Borders`, `class_of`, `ascii_for` — the start-up width calibration |
 | `TUI_keys` | `core/` | `reply_kind`, `modify_other_key`, `normalized`, and the kitty / modifyOtherKeys sequences |
 | `TUI_mouse` | `core/` | `Gesture`, `Pointer`, `Region`, `Router` — mouse reports to clicks, drags and hovers, routed to widgets |
 | `TUI_list_table` | `widgets/` | `ListView` and `Table` |
@@ -280,7 +281,7 @@ always an absolute `\x1b[r;cH`. Styles are written as differences, so
 stopping an underline is `\x1b[24m` rather than a reset and a repaint. A run
 of plain blanks to the end of a row becomes `\x1b[K`.
 
-**What it does not trust (0.13.0).** The renderer trusts a cell's width only for printable ASCII, precomposed
+**What it does not trust (0.13.0), and what it measures instead (0.14.0).** Without a measurement the renderer trusts a cell's width only for printable ASCII, precomposed
 Latin letters, box drawing, CJK ideographs, kana, Hangul syllables and fullwidth forms. Any other cluster (emoji,
 combining marks, Nerd Font glyphs, arrows, Greek, Cyrillic, Indic and Thai scripts) is "uncertain": terminals disagree on
 its width. A row that holds one is written from that cluster to the row's end whenever it changes, a two-column one is
@@ -289,6 +290,60 @@ re-anchored with an absolute move after it, and autowrap is off (`\e[?7l`, on en
 glyph drawn wider than expected cannot wrap onto the next row. A full frame starts with `\e[2J`. See
 `tests/stress.m31` for the terminals it is checked against, and `examples/width_probe.m31` to measure your own: it
 prints, per cluster, the width the terminal advanced the cursor (a cursor position report) against ours.
+That is the **static policy**, what a terminal that is not measured gets. 0.14.0 measures (next section).
+
+### Measuring the terminal (0.14.0)
+
+A table cannot know how *your* terminal draws a character: East Asian Ambiguous characters (box drawing, arrows,
+Greek, Cyrillic) are two columns wide when a locale, a profile or a font says so; U+FE0F widens a heart on kitty and not
+on Alacritty; a family is two columns on one terminal and six on another. So `Loop.run_with` asks. After it has entered
+the alternate screen it writes, in **one write**, a reference character for each class followed by a cursor position
+report request (`CSI 6 n`), and reads **all the answers at once**: the column the cursor reports is the width the terminal
+drew the character in. The classes are box drawing, block elements, arrows, Greek and Cyrillic, geometric shapes, Braille,
+the older emoji, a symbol with U+FE0F, a flag, a ZWJ family, a letter with a combining accent and a Nerd Font glyph,
+and two control questions (`A` must be 1 and an ideograph 2, or nothing is trusted). The same batch asks whether the
+terminal does grapheme clustering (DECRQM 2027): when it can and has it off, the loop switches it on, measures again,
+and switches it off on the way out. The whole thing has a budget of 150 ms (`Loop.width_probe_ms`); a terminal that does
+not answer keeps the static policy, and standard output that is not a terminal skips it.
+
+What the renderer does with the answer, per class:
+
+  - the terminal drew it **as the library expects**: the class is *certain*, and its cells are diffed one by one as ASCII is
+    (no forced rewrite, no re-anchoring). On Alacritty, rio, kitty and most others this is nearly every class, which gives back
+    the bytes the 0.13.0 distrust cost (the finder sequence of `tests/stress.m31` is 11 to 16 % smaller);
+  - it drew it **differently** (`wide 2 (library 1)`, `narrow 1 (library 2)`): the cells are laid out at the measured width
+    (a cell is one or two columns; a cluster the terminal draws wider has the columns after it written again), and a row that holds
+    one follows the 0.13.0 policy (written from there to its end, the cursor re-anchored);
+  - it **did not answer** that question, or the cluster is in no class (the newer emoji, keycaps, Indic scripts): the static rule.
+
+`Loop.width_table` (a `TUI_width.Table`, also the `table` of every buffer the loop draws into) says what was found:
+`table.is_measured`, `table.outcome`, `table.decision(class)` ("certain", "wide 2 (library 1)", "not measured"),
+`table.columns(cluster)`, `table.text_width(text)`, `table.is_grapheme_mode`. A program that lays text out
+itself and wants the terminal's widths asks the table instead of `TUI_text.width`.
+
+**Borders.** When box drawing is measured as other than one column, the loop writes line drawing and block characters as
+ASCII (`+-|`, `=` double, `#` blocks; `TUI_width.ascii_for`): every `Block`, scrollbar, chart axis and gauge keeps its
+columns, because a cell of ASCII is one column on every terminal. It is automatic, and overridable:
+
+| what | how |
+|---|---|
+| the whole program | `Loop.borders` = `TUI_width.Borders.Auto` (default), `Ascii`, `Unicode` |
+| the user | environment `TUI_BORDERS=auto`, `ascii` or `unicode`; `ascii` and `unicode` win over `Loop.borders` |
+| one block | `Block.charset` = `Auto`, `Ascii`, `Unicode`; wins over both |
+
+**Switches.** `Loop.should_calibrate_width` (default true) and the environment variable `TUI_WIDTH_PROBE=off` (also `0`, `no`,
+`false`) skip the measurement, with the loop exactly as 0.13.0 wrote it. `Loop.should_set_grapheme_mode` (default true)
+lets the loop switch mode 2027 on. A program with a loop of its own calls `Loop.calibrate_width(link, rows)` (the
+`TermLink` of a writer and a reader is the real link) before its first frame and sets `buffer.table = loop.width_table`.
+
+**Keys typed meanwhile are never lost.** Everything the calibration reads that is not one of its answers (a key typed while
+it waited, the replies to the loop's other questions) is kept in order and handed to the program before the loop reads
+anything else. The questions are asked on row 2 so a report is never `CSI 1 ; 2 R`, which is also Shift-F3 (the decoder reads
+a report on any other row as an unknown sequence and that one as the key). An answer that arrives after the calibration gave
+up is recognised and dropped, and not handed to the program as a key; an answer cut in two whose second half arrives after the
+loop's first idle read is the one thing this cannot repair (the program sees the first half as an unknown sequence).
+
+Run `examples/width_probe.m31` in a terminal to see what it measured, class by class, and what the renderer decided.
 
 Colour depth is a value you pass in — `Ansi16`, `Ansi256`, `TrueColour` —
 and a colour too rich for the depth is converted to the nearest entry of the
@@ -536,6 +591,12 @@ Stage 4 built the whole of stage 2's original wishlist (`Gauge`, `Sparkline`,
     methods (IME composition); those belong to an editor built on it, not to
     a widget. Its model (lines of grapheme clusters, a `Position`) is
     documented in `TUI_textarea.m31`'s header for that purpose.
+  - **Terminals that measure and do not say.** The calibration asks a terminal once, at start-up. A terminal whose
+    answer changes while the program runs (a font or locale changed in a profile, a window dragged to a screen with
+    another font, a tmux client attached from another terminal) is not asked again; Ctrl-L repaints with the widths measured
+    at start (`should_repaint_on_ctrl_l`). Rio and Alacritty are modelled from their source (`alacritty_terminal`'s grid,
+    `unicode-width`), and `tests/TST_emulator.m31`'s `preset` says how; `examples/width_probe.m31` is the way to find out what a
+    given build really does.
   - **A test of the real terminal path.** The loop's pure pieces are tested,
     and since 0.10.0 the bytes it writes are applied to a terminal emulator
     (`tests/TST_emulator.m31`), but no program is run in a pty by `tests/test.sh`

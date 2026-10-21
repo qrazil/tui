@@ -47,6 +47,7 @@ import core.TUI_buffer;
 import core.TUI_geometry;
 import core.TUI_style;
 import core.TUI_text;
+import core.TUI_width;
 
 /// Anything that can draw itself into a rectangle of a buffer.
 pub interface Widget {
@@ -128,6 +129,11 @@ pub type Block {
     pub int pad_x = 0;
     /// Blank rows between the border and the content.
     pub int pad_y = 0;
+    /// Which characters the border is made of, for this block: `Auto` follows the buffer's terminal (Unicode
+    /// line drawing unless it measured box drawing wider than a column, then ASCII: see `TUI_width`), `Ascii`
+    /// is `+-|` always, `Unicode` is line drawing always. The setting of the whole program is
+    /// `Loop.borders` and the environment variable `TUI_BORDERS`; this one wins over both for this block.
+    pub TUI_width.Borders charset = TUI_width.Borders.Auto;
 }
 
 bool Block.is_drawn(int side) {
@@ -173,6 +179,24 @@ pub void Block.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
+    // the block's own choice of characters holds while it draws (the buffer writes line drawing as ASCII
+    // when `is_ascii_lines`), and the buffer's setting is back afterwards
+    bool was_ascii = buffer.table.is_ascii_lines;
+    match (charset) {
+        case Auto: {
+        }
+        case Ascii: {
+            buffer.table.is_ascii_lines = true;
+        }
+        case Unicode: {
+            buffer.table.is_ascii_lines = false;
+        }
+    }
+    draw(buffer, area);
+    buffer.table.is_ascii_lines = was_ascii;
+}
+
+void Block.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     buffer.fill(area, " ", style);
     int row = borders.row();
     if (row >= 0) {

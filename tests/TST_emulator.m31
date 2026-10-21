@@ -16,6 +16,7 @@ import text.unicode;
 import core.TUI_buffer;
 import core.TUI_geometry;
 import core.TUI_text;
+import term;
 
 pub type Screen {
     pub int columns = 0;
@@ -50,6 +51,11 @@ pub type Screen {
     pub bool has_kitty = false;
     pub bool has_modify_other = false;
     pub int sync_status = -1;
+    /// Whether it answers a cursor position request (`CSI 6 n`) with `CSI row ; column R`.
+    pub bool has_cursor_report = true;
+    /// What it answers about grapheme clustering (mode 2027): -1 nothing, 0 not recognised, 2 supported and off,
+    /// 3 always on (1 is on, after a `CSI ? 2027 h`). With it on, text is measured by grapheme cluster.
+    pub int grapheme_status = -1;
     /// The bytes the terminal has said back, not yet read by the program.
     pub bytes replies = [];
     /// Sequences it was sent and did not act on, because it lacks the feature.
@@ -292,7 +298,7 @@ void Screen.flush_text() {
         }
         return;
     }
-    if (width_model == 0) {
+    if (width_model == 0 && !is_grapheme_on()) {
         for (int code in run) {
             print_char(code);
         }
@@ -305,6 +311,11 @@ void Screen.flush_text() {
         }
         place(cluster, width);
     }
+}
+
+/// Is mode 2027 on (set, or always on)?
+pub bool Screen.is_grapheme_on() {
+    return grapheme_status == 1 || grapheme_status == 3;
 }
 
 // How wide this terminal draws a cluster: the library's width, with the disagreements of `quirks`.
@@ -682,6 +693,13 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
             apply_sgr(parameters);
             return;
         }
+        if (final == 'n' && parameter_at(parameters, 0, 0) == 6) {
+            queries = queries + 1;
+            if (has_cursor_report) {
+                say("\x1b[" + str(cursor_y + 1) + ";" + str(cursor_x + 1) + "R");
+            }
+            return;
+        }
     }
     if (marker == '?' && intermediates == "" && (final == 'h' || final == 'l')) {
         bool is_on = final == 'h';
@@ -696,6 +714,13 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
                 is_cursor_visible = is_on;
             } else if (mode == 1004) {
                 is_focus_reporting = is_on;
+            } else if (mode == 2027) {
+                if (grapheme_status == 1 || grapheme_status == 2) {
+                    grapheme_status = 2;
+                    if (is_on) {
+                        grapheme_status = 1;
+                    }
+                }
             }
         }
         return;
@@ -723,6 +748,13 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
         queries = queries + 1;
         if (sync_status >= 0) {
             say("\x1b[?2026;" + str(sync_status) + "$y");
+        }
+        return;
+    }
+    if (final == 'p' && marker == '?' && intermediates == "$" && parameter_at(parameters, 0, 0) == 2027) {
+        queries = queries + 1;
+        if (grapheme_status >= 0) {
+            say("\x1b[?2027;" + str(grapheme_status) + "$y");
         }
         return;
     }
@@ -1004,4 +1036,173 @@ int clamp(int value, int limit) {
         return limit - 1;
     }
     return value;
+}
+
+/// A `TUI_app.ProbeLink` on a screen, for the calibration tests: what is sent is applied to the screen, and what the screen
+/// says back is decoded by `term`'s own decoder into events, as the loop's reader would. The test can
+/// have the user type between two answers (`type_after`), before them (`type_first`), cut the answers
+/// short (`stop_after`, `is_cut_last`) or hold them back to be read later (`is_held`).
+pub type Link {
+    pub Screen screen;
+    pub term.Decoder decoder = term.decoder();
+    /// Bytes typed before the first answer arrives.
+    pub bytes typed_first = [];
+    /// Bytes typed after the n-th answer (n counted from 1): `typed_at[i]` follows answer `typed_after[i]`.
+    pub List<int> typed_after = [];
+    pub List<bytes> typed_at = [];
+    /// Only this many answers are delivered (-1: all), the rest are never said.
+    pub int stop_after = -1;
+    /// The first answer that is not delivered is delivered cut in half (its first bytes only).
+    pub bool is_cut_last = false;
+    /// The answers are kept, not delivered, until `release`.
+    pub bool is_held = false;
+    pub List<bytes> held = [];
+    /// How many answers have been delivered.
+    pub int delivered = 0;
+    /// How many bytes were sent, and in how many writes.
+    pub int bytes_sent = 0;
+    pub int writes = 0;
+    /// The times the reader was asked for an event, and for how long in all (what it was told to wait).
+    pub int reads = 0;
+    pub List<int> waits = [];
+    /// Everything said toward the program, in the pieces it was said in (typing included): what a test on a pty writes to
+    /// the terminal's master side. `take_stream` empties it.
+    pub List<bytes> stream = [];
+}
+
+/// The pieces said toward the program since the last call.
+pub List<bytes> Link.take_stream() {
+    List<bytes> taken = stream;
+    stream = [];
+    return taken;
+}
+
+// Say `data` toward the program: to the decoder (what a `ProbeLink` reads) and to the stream (what a pty carries).
+void Link.say(bytes data) {
+    decoder.feed(data);
+    stream.push(data);
+}
+
+pub void Link.send(bytes data) {
+    writes = writes + 1;
+    bytes_sent = bytes_sent + data.size();
+    screen.feed(data);
+    deliver(screen.take_replies());
+}
+
+// Split what the screen said into its sequences and hand them to the decoder one by one, with
+// the user's typing between them where the test says.
+void Link.deliver(bytes said) {
+    if (typed_first.size() > 0) {
+        say(typed_first);
+        typed_first = [];
+    }
+    int start = 0;
+    int size = said.size();
+    while (start < size) {
+        int stop = start + 1;
+        while (stop < size && said[stop] != 27) {
+            stop = stop + 1;
+        }
+        bytes one = said.substr(start, stop);
+        start = stop;
+        if (is_held) {
+            held.push(one);
+            continue;
+        }
+        if (stop_after >= 0 && delivered >= stop_after) {
+            if (is_cut_last && one.size() > 3) {
+                say(one.substr(0, 3));
+                is_cut_last = false;
+            }
+            continue;
+        }
+        say(one);
+        delivered = delivered + 1;
+        for (int index in 0 .. typed_after.size()) {
+            if (typed_after[index] == delivered) {
+                say(typed_at[index]);
+            }
+        }
+    }
+}
+
+/// Deliver what was held back.
+pub void Link.release() {
+    is_held = false;
+    for (bytes one in held) {
+        say(one);
+        delivered = delivered + 1;
+    }
+    held = [];
+}
+
+pub Option<term.Event> Link.next(int wait_ms) {
+    reads = reads + 1;
+    waits.push(wait_ms);
+    match (decoder.next()) {
+        case Some(term.Event event): {
+            return Option<term.Event>.Some(event);
+        }
+        case None: {
+            return Option<term.Event>.None;
+        }
+    }
+}
+
+/// The terminals the width calibration is tried on, by name (`TST_emulator.Screen` knobs set the way each one behaves):
+///   ideal          grapheme clusters, no quirks, no mode 2027, no synchronized output
+///   alacritty      what the Rust `alacritty_terminal` grid does (rio is built on it): code points added up with
+///                  `unicode-width` (ambiguous narrow, U+FE0F zero width and appended to the cell before it, a family
+///                  is 2+2+2), pending wrap, synchronized output, no mode 2027
+///   rio            the same, as far as is known
+///   kitty          grapheme clusters, U+FE0F widens, a regional indicator is 2, mode 2027 always on, synchronized output
+///   terminal-app   code points added up, pending wrap, no synchronized output (ignored), erase without the
+///                  background colour; answers cursor reports and nothing about the modes
+///   box-wide       East Asian Ambiguous drawn wide (a locale, a profile): box drawing, blocks, arrows, shapes, Greek
+///   mode-2027      code points added up until mode 2027 is switched on (WezTerm, foot, iTerm2, Ghostty ...)
+///   mute           answers nothing at all (no cursor report, no mode report)
+pub Screen preset(str name, int columns, int rows) {
+    Screen screen = Screen.sized(columns, rows);
+    screen.wrap_mode = 1;
+    screen.width_model = 1;
+    if (name == "ideal") {
+        screen.wrap_mode = 0;
+        return screen;
+    }
+    if (name == "alacritty" || name == "rio") {
+        screen.width_model = 0;
+        screen.sync_status = 2;
+        return screen;
+    }
+    if (name == "kitty") {
+        screen.quirks = Q_VS16_WIDENS;
+        screen.regional_width = 2;
+        screen.sync_status = 2;
+        screen.grapheme_status = 3;
+        screen.has_kitty = true;
+        return screen;
+    }
+    if (name == "terminal-app") {
+        screen.width_model = 0;
+        screen.is_erase_coloured = false;
+        screen.is_sync_ignored = true;
+        return screen;
+    }
+    if (name == "box-wide") {
+        screen.quirks = Q_BOX_WIDE | Q_AMBIGUOUS_WIDE;
+        screen.sync_status = 2;
+        return screen;
+    }
+    if (name == "mode-2027") {
+        screen.width_model = 0;
+        screen.sync_status = 2;
+        screen.grapheme_status = 2;
+        return screen;
+    }
+    if (name == "mute") {
+        screen.has_cursor_report = false;
+        return screen;
+    }
+    trap("TST_emulator.preset: no terminal called " + name);
 }

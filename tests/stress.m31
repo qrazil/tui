@@ -46,6 +46,7 @@ import core.TUI_geometry;
 import core.TUI_style;
 import core.TUI_text;
 import core.TUI_widget;
+import core.TUI_width;
 import tests.TST_emulator;
 
 type Tally {
@@ -70,6 +71,15 @@ type Variant {
     /// The terminal agrees with the library on every width, so the screen must be the buffer.
     bool is_exact = true;
     int regional_width = 1;
+    /// A terminal of `TST_emulator.preset` (the owner's: alacritty, rio, kitty, a terminal that switches on mode 2027, one that
+    /// draws East Asian Ambiguous wide), with its own settings instead of the fields above.
+    str preset = "";
+    /// What the loop's calibration measured on this terminal (the default table: nothing measured).
+    TUI_width.Table table = TUI_width.Table();
+    /// Calibration switched mode 2027 on, so every screen of this terminal has it on.
+    bool is_grapheme_on = false;
+    /// What cannot be made right even with the calibration (none, so far).
+    bool is_known_limit_calibrated = false;
 }
 
 List<Variant> variants() {
@@ -97,7 +107,25 @@ List<Variant> variants() {
     return out;
 }
 
+/// The owner's terminals and the ones the calibration is for, as `TST_emulator.preset` models them.
+List<Variant> presets() {
+    List<Variant> out = [];
+    List<str> names = ["alacritty", "rio", "kitty", "mode-2027", "box-wide", "mute"];
+    for (str name in names) {
+        Variant variant = Variant(name: "preset " + name, preset: name, is_exact: false, is_known_limit: name == "box-wide");
+        out.push(variant);
+    }
+    return out;
+}
+
 TST_emulator.Screen screen_for(Variant variant, int columns, int rows) {
+    if (variant.preset != "") {
+        TST_emulator.Screen made = TST_emulator.preset(variant.preset, columns, rows);
+        if (variant.is_grapheme_on) {
+            made.grapheme_status = 1;
+        }
+        return made;
+    }
     TST_emulator.Screen screen = TST_emulator.Screen.sized(columns, rows);
     screen.wrap_mode = variant.wrap_mode;
     screen.width_model = variant.width_model;
@@ -109,7 +137,35 @@ TST_emulator.Screen screen_for(Variant variant, int columns, int rows) {
     screen.is_autowrap_locked = variant.is_autowrap_locked;
     screen.is_region_ignored = variant.is_region_ignored;
     screen.regional_width = variant.regional_width;
+    if (variant.is_grapheme_on) {
+        screen.grapheme_status = 1;
+    }
     return screen;
+}
+
+/// Does this variant, in the state it is in (asked or not), have a width disagreement nothing can repair?
+bool is_limit(Variant variant) {
+    if (variant.table.is_measured) {
+        return variant.is_known_limit_calibrated;
+    }
+    return variant.is_known_limit;
+}
+
+/// Ask a terminal like `variant` what it measures, the way the loop does at start-up, and keep the answer
+/// in the variant (and whether mode 2027 was switched on: the terminals the harness makes later have it on).
+void calibrate(Variant variant) {
+    TUI_app.Loop loop = TUI_app.Loop();
+    TST_emulator.Screen screen = screen_for(variant, 80, 24);
+    TST_emulator.Link link = TST_emulator.Link(screen);
+    loop.calibrate_width(link, screen.rows);
+    variant.table = loop.width_table;
+    variant.is_grapheme_on = variant.table.is_grapheme_set || screen.is_grapheme_on();
+}
+
+/// The same terminals, not asked: the static policy of 0.13.0.
+void uncalibrate(Variant variant) {
+    variant.table = TUI_width.Table();
+    variant.is_grapheme_on = false;
 }
 
 // --- the text pool: what a text user interface meets ------------------------------------
@@ -375,8 +431,9 @@ void draw(Scene scene, TUI_buffer.Buffer buffer) {
     }
 }
 
-TUI_buffer.Buffer buffer_of(Scene scene) {
+TUI_buffer.Buffer buffer_of(Scene scene, TUI_width.Table table) {
     TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(scene.width, scene.height);
+    buffer.table = table;
     draw(scene, buffer);
     return buffer;
 }
@@ -412,13 +469,13 @@ Run play(Variant variant, List<Scene> scenes, bool is_scroll, bool is_sync, TUI_
     loop.is_sync = is_sync;
     TUI_app.Shown shown = TUI_app.Shown();
     TST_emulator.Screen screen = screen_for(variant, scenes[0].width, scenes[0].height);
-    TUI_buffer.Buffer previous = buffer_of(scenes[0]);
+    TUI_buffer.Buffer previous = buffer_of(scenes[0], variant.table);
     loop.cursor.x = scenes[0].cursor_x;
     loop.cursor.y = scenes[0].cursor_y;
     screen.feed(loop.frame_bytes(previous, previous, true, shown));
     for (int index in 1 .. scenes.size()) {
         Scene scene = scenes[index];
-        TUI_buffer.Buffer next = buffer_of(scene);
+        TUI_buffer.Buffer next = buffer_of(scene, variant.table);
         loop.cursor.x = scene.cursor_x;
         loop.cursor.y = scene.cursor_y;
         bool is_resized = scene.width != previous.area().width || scene.height != previous.area().height;
@@ -539,8 +596,9 @@ List<str> rows_pool() {
 
 /// One row on a ten column, one row screen; `kind` 0 plain, 1 with a coloured background all
 /// along the row (blanks included), 2 coloured text on a plain tail.
-TUI_buffer.Buffer pair_buffer(str text, int kind) {
+TUI_buffer.Buffer pair_buffer(str text, int kind, TUI_width.Table table) {
     TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(PAIR_WIDTH, 2);
+    buffer.table = table;
     TUI_style.Style style = TUI_style.Style();
     if (kind == 1) {
         style = style_of(3);
@@ -566,8 +624,8 @@ void pair_phase(Tally tally, List<Variant> all) {
         for (str old_text in rows) {
             for (str new_text in rows) {
                 for (int kind in 0 .. 3) {
-                    TUI_buffer.Buffer before = pair_buffer(old_text, kind);
-                    TUI_buffer.Buffer after = pair_buffer(new_text, (kind + 1) % 3);
+                    TUI_buffer.Buffer before = pair_buffer(old_text, kind, variant.table);
+                    TUI_buffer.Buffer after = pair_buffer(new_text, (kind + 1) % 3, variant.table);
                     TUI_app.Loop loop = TUI_app.Loop();
                     TST_emulator.Screen screen = screen_for(variant, PAIR_WIDTH, 2);
                     screen.feed(loop.frame_bytes(before, before, true, TUI_app.Shown()));
@@ -587,7 +645,7 @@ void pair_phase(Tally tally, List<Variant> all) {
             print("ok   pairs: " + variant.name);
         } else {
             str mark = "FAIL";
-            if (variant.is_known_limit) {
+            if (is_limit(variant)) {
                 mark = "known";
             } else {
                 tally.fail = tally.fail + 1;
@@ -667,7 +725,7 @@ void random_phase(Tally tally, List<Variant> all, int sequences, int frames) {
                 print("ok   " + label + ": " + str(total) + " frames");
             } else {
                 str mark = "FAIL";
-                if (variant.is_known_limit || (is_scroll && variant.is_region_ignored)) {
+                if (is_limit(variant) || (is_scroll && variant.is_region_ignored)) {
                     mark = "known";
                 } else {
                     tally.fail = tally.fail + 1;
@@ -741,9 +799,12 @@ List<Scene> finder_plan(int width, int height, bool has_preview) {
     return plan;
 }
 
-void finder_phase(Tally tally, List<Variant> all) {
+/// Every variant's finder bytes (plain and scrolled, both sizes), in the order of `all`: what `finder_report` compares.
+List<int> finder_phase(Tally tally, List<Variant> all) {
     TUI_style.Depth depth = TUI_style.Depth.Ansi256;
+    List<int> totals = [];
     for (Variant variant in all) {
+        int variant_bytes = 0;
         for (int mode in 0 .. 2) {
             bool is_scroll = mode == 1;
             int bad = 0;
@@ -763,6 +824,7 @@ void finder_phase(Tally tally, List<Variant> all) {
                     first = run.first;
                 }
             }
+            variant_bytes = variant_bytes + bytes_total;
             str label = "finder: " + variant.name;
             if (is_scroll) {
                 label = label + " +scroll";
@@ -772,7 +834,7 @@ void finder_phase(Tally tally, List<Variant> all) {
                 print("ok   " + label + ": " + str(bytes_total) + " bytes");
             } else {
                 str mark = "FAIL";
-                if (variant.is_known_limit || (is_scroll && variant.is_region_ignored)) {
+                if (is_limit(variant) || (is_scroll && variant.is_region_ignored)) {
                     mark = "known";
                 } else {
                     tally.fail = tally.fail + 1;
@@ -781,16 +843,80 @@ void finder_phase(Tally tally, List<Variant> all) {
                 print("     first: " + first);
             }
         }
+        totals.push(variant_bytes);
+    }
+    return totals;
+}
+
+/// What the calibration saved on the finder sequence, per terminal: the bytes the static policy writes, the
+/// bytes with the terminal measured. A terminal that agrees with the library's tables must not write more.
+void finder_report(Tally tally, List<Variant> all, List<int> static_bytes, List<int> measured_bytes) {
+    for (int index in 0 .. all.size()) {
+        Variant variant = all[index];
+        int before = static_bytes[index];
+        int after = measured_bytes[index];
+        str saved = "";
+        if (before > 0) {
+            saved = " (" + str((before - after) * 100 / before) + " % less)";
+        }
+        if (variant.is_exact || variant.preset == "alacritty" || variant.preset == "rio" || variant.preset == "kitty" || variant.preset == "mode-2027" || variant.preset == "mute") {
+            if (after <= before) {
+                tally.pass = tally.pass + 1;
+                print("ok   finder bytes: " + variant.name + ": " + str(before) + " static, " + str(after) + " measured" + saved);
+            } else {
+                tally.fail = tally.fail + 1;
+                print("FAIL finder bytes: " + variant.name + ": " + str(before) + " static, " + str(after) + " measured (more)");
+            }
+        } else {
+            print("     finder bytes: " + variant.name + ": " + str(before) + " static, " + str(after) + " measured" + saved);
+        }
+    }
+}
+
+/// What the calibration found on each terminal.
+void calibration_report(List<Variant> all) {
+    for (Variant variant in all) {
+        TUI_width.Table table = variant.table;
+        List<str> parts = [];
+        for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+            str decision = table.decision(class_id);
+            if (decision != "certain") {
+                parts.push(TUI_width.class_name(class_id) + " " + decision);
+            }
+        }
+        str odd = "every class certain";
+        if (parts.size() > 0) {
+            odd = parts.join("; ");
+        }
+        print("     " + variant.name + ": " + table.outcome + ", mode 2027 " + str(table.is_grapheme_mode) + ", ascii lines " + str(table.is_ascii_lines) + ": " + odd);
     }
 }
 
 Tally tally = Tally();
 List<Variant> all = variants();
-print("== pairs " + "=".repeat(60));
+for (Variant preset in presets()) {
+    all.push(preset);
+}
+print("== the static policy (the terminal is not asked, as in 0.13.0) " + "=".repeat(20));
+for (Variant variant in all) {
+    uncalibrate(variant);
+}
+print("== pairs, static " + "=".repeat(60));
 pair_phase(tally, all);
-print("== finder " + "=".repeat(60));
-finder_phase(tally, all);
-print("== random " + "=".repeat(60));
+print("== finder, static " + "=".repeat(60));
+List<int> static_bytes = finder_phase(tally, all);
+print("== the width calibration (what the loop measures at start-up) " + "=".repeat(20));
+for (Variant variant in all) {
+    calibrate(variant);
+}
+calibration_report(all);
+print("== pairs, calibrated " + "=".repeat(60));
+pair_phase(tally, all);
+print("== finder, calibrated " + "=".repeat(60));
+List<int> measured_bytes = finder_phase(tally, all);
+print("== finder bytes " + "=".repeat(60));
+finder_report(tally, all, static_bytes, measured_bytes);
+print("== random, calibrated " + "=".repeat(60));
 random_phase(tally, all, 12, 40);
 print("");
 print("-- " + str(tally.pass) + " passed, " + str(tally.fail) + " failed");

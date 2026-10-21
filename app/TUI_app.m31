@@ -122,6 +122,7 @@ import core.TUI_mouse;
 import core.TUI_osc;
 import core.TUI_style;
 import core.TUI_widget;
+import core.TUI_width;
 
 /// What a `Handler` answers after one event: whether the loop keeps going,
 /// and whether the view needs to be drawn again before the next read. Not a
@@ -314,6 +315,164 @@ pub type Loop {
     /// no terminal on standard input, and the tty that standard output is is one file
     /// for reading and writing; or any other descriptor.
     pub int input_fd = 0;
+    /// Ask the terminal how wide it draws a few reference characters (box drawing, arrows, Greek, a
+    /// symbol with U+FE0F, a flag, a ZWJ family, a combining accent, a Nerd Font glyph, ...) right after
+    /// entering the alternate screen: one write, one read of the answers (cursor position reports), at most
+    /// `width_probe_ms` (a terminal that does not answer keeps the static policy of 0.13.0, and the
+    /// start-up waits that long at most). Classes the terminal drew as the library expects are then
+    /// trusted (the renderer diffs them per cell, as it does ASCII); classes it drew differently are
+    /// laid out at the measured width. Skipped when standard output is not a terminal and by the
+    /// environment variable `TUI_WIDTH_PROBE=off`. What it found is `width_table`.
+    pub bool should_calibrate_width = true;
+    /// The whole budget of the calibration, in milliseconds. 150 is plenty for a local terminal and an
+    /// ordinary ssh link; a slow link wants more, a program that cannot wait any wants `should_calibrate_width` off.
+    pub int width_probe_ms = TUI_width.DEFAULT_PROBE_MS;
+    /// When the terminal can do grapheme clustering (DEC mode 2027) and has it off, switch it on (the terminal then
+    /// measures clusters as the library does) and switch it off on the way out. Only with `should_calibrate_width`.
+    pub bool should_set_grapheme_mode = true;
+    /// The borders a program draws: `Auto` is Unicode line drawing unless the terminal drew box drawing wider than
+    /// one column, then ASCII (`+-|`); `Ascii` and `Unicode` are always. `TUI_BORDERS=ascii|unicode|auto` in the
+    /// environment wins over this (the user knows the terminal), and `Block.charset` wins for one block.
+    pub TUI_width.Borders borders = TUI_width.Borders.Auto;
+    /// Read-only: what the terminal measured (see `TUI_width.Table`); nothing measured until `run_with` has asked
+    /// (or `calibrate_width`). The buffers the loop draws into carry it as `Buffer.table`.
+    pub TUI_width.Table width_table = TUI_width.Table();
+    /// Events read while the calibration waited for its answers, in the order they came; handed to the program first.
+    List<term.Event> replay = [];
+    /// Cursor position reports asked for and not yet read: that many are the loop's own when they arrive late.
+    pub int late_reports = 0;
+    /// The loop asked the terminal about mode 2027 (its answer, early or late, is not the program's).
+    bool is_width_asked = false;
+}
+
+/// The borders in force: `TUI_BORDERS` when it says `ascii` or `unicode`, else `borders`.
+pub TUI_width.Borders Loop.effective_borders() {
+    match (os.env("TUI_BORDERS")) {
+        case Some(str value): {
+            TUI_width.Borders asked = TUI_width.borders_from_env(value);
+            match (asked) {
+                case Auto: {
+                }
+                case Ascii: {
+                    return asked;
+                }
+                case Unicode: {
+                    return asked;
+                }
+            }
+        }
+        case None: {
+        }
+    }
+    return borders;
+}
+
+/// Is the calibration to be skipped: `should_calibrate_width` off, or `TUI_WIDTH_PROBE=off`?
+pub bool Loop.is_width_probe_off() {
+    if (!should_calibrate_width) {
+        return true;
+    }
+    match (os.env("TUI_WIDTH_PROBE")) {
+        case Some(str value): {
+            return TUI_width.is_probe_off(value);
+        }
+        case None: {
+            return false;
+        }
+    }
+}
+
+/// Ask the terminal how wide it draws the reference characters of `TUI_width` and keep the answer as
+/// `width_table`. `rows` is the height of the screen (the questions are asked on row 2; a screen of one row is
+/// not asked). One write of all the questions, then the answers are read until all have come or
+/// `width_probe_ms` have passed in all; events that are not answers (a key typed meanwhile, the replies to
+/// the loop's other questions) are kept in order and handed to the program before anything else is read. A
+/// terminal that answers nothing, or answers wrongly (the control questions `A` and an ideograph), is left
+/// unmeasured. Sets `width_table.outcome`, `answers` and `elapsed_us`, and decides the borders.
+pub void Loop.calibrate_width(ProbeLink link, int rows) {
+    TUI_width.Borders choice = effective_borders();
+    if (is_width_probe_off()) {
+        width_table = TUI_width.unmeasured("disabled");
+        width_table.choose_borders(choice);
+        return;
+    }
+    if (rows < TUI_width.PROBE_ROW) {
+        width_table = TUI_width.unmeasured("screen too small");
+        width_table.choose_borders(choice);
+        return;
+    }
+    int started_ns = timer.monotonic_ns();
+    int deadline_ms = now_ms() + width_probe_ms;
+    is_width_asked = true;
+    TUI_width.Probe first = TUI_width.probe(true);
+    link.send(first.request());
+    collect_answers(link, first, deadline_ms);
+    late_reports = first.outstanding();
+    TUI_width.Table table = first.table();
+    if (table.is_measured && should_set_grapheme_mode && first.is_done() && first.grapheme_status == 2) {
+        // the terminal can cluster graphemes and has it off: on, and measured again with it on
+        TUI_width.Probe second = TUI_width.probe(false);
+        bytes again = TUI_width.GRAPHEME_ON.to_bytes;
+        again.extend(second.request());
+        link.send(again);
+        collect_answers(link, second, deadline_ms);
+        late_reports = late_reports + second.outstanding();
+        TUI_width.Table clustered = second.table();
+        if (clustered.is_measured && second.is_done()) {
+            clustered.is_grapheme_set = true;
+            clustered.is_grapheme_mode = true;
+            table = clustered;
+        } else {
+            link.send(TUI_width.GRAPHEME_OFF.to_bytes);
+        }
+    }
+    table.grapheme_status = first.grapheme_status;
+    if (first.grapheme_status == 1 || first.grapheme_status == 3) {
+        table.is_grapheme_mode = true;
+    }
+    table.elapsed_us = (timer.monotonic_ns() - started_ns) / 1000;
+    table.choose_borders(choice);
+    width_table = table;
+}
+
+// Read events until `probe` has all its answers or the deadline passes: an answer is taken, any other
+// event is kept for the program.
+void Loop.collect_answers(ProbeLink link, TUI_width.Probe probe, int deadline_ms) {
+    while (!probe.is_done()) {
+        int remaining_ms = deadline_ms - now_ms();
+        if (remaining_ms < 1) {
+            return;
+        }
+        match (link.next(remaining_ms)) {
+            case Some(term.Event event): {
+                bool is_answer = false;
+                match (event) {
+                    case Unknown(bytes raw): {
+                        is_answer = probe.did_take(raw);
+                    }
+                    case Key(term.Key key): {
+                    }
+                    case Mouse(term.Mouse report): {
+                    }
+                    case Paste(str pasted): {
+                    }
+                }
+                if (!is_answer) {
+                    replay.push(event);
+                }
+            }
+            case None: {
+                return;
+            }
+        }
+    }
+}
+
+/// A blank buffer of the loop's screen size, carrying what the terminal measured.
+pub TUI_buffer.Buffer Loop.new_buffer(int columns, int rows) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(columns, rows);
+    buffer.table = width_table;
+    return buffer;
 }
 
 /// Put `text` on the system clipboard (OSC 52, see `TUI_osc`): written before the
@@ -401,6 +560,10 @@ pub str Loop.leave_sequence() {
     if (should_manage_cursor) {
         // the cursor's shape is the user's again
         modes = modes + "\x1b[0 q";
+    }
+    if (width_table.is_grapheme_set) {
+        // clustering was off when the terminal was handed to us
+        modes = modes + TUI_width.GRAPHEME_OFF;
     }
     return modes + TUI_diff.AUTOWRAP_ON + leave;
 }
@@ -532,13 +695,22 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             start_keys();
             term.Reader reader = term.reader(descriptor: in_fd);
             term.Size window_size = screen_size();
+            if (term.is_terminal(1)) {
+                calibrate_width(TermLink(writer, reader), window_size.rows);
+            } else {
+                width_table = TUI_width.unmeasured("not a terminal");
+                width_table.choose_borders(effective_borders());
+            }
+            if (width_table.is_grapheme_set) {
+                session.on_exit(TUI_width.GRAPHEME_OFF);
+            }
             // Two buffers for the whole run, swapped each frame: the one
             // just shown and the one being drawn. A fresh buffer per frame
             // is three lists grown a cell at a time -- twice the cost of
             // clearing one that already exists -- and nothing about a
             // frame needs the last one's memory gone.
-            TUI_buffer.Buffer previous = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
-            TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
+            TUI_buffer.Buffer previous = new_buffer(window_size.columns, window_size.rows);
+            TUI_buffer.Buffer next = new_buffer(window_size.columns, window_size.rows);
             Shown shown = Shown();
             view.render(previous, previous.area());
             should_repaint = !present(writer, previous, previous, true, shown);
@@ -638,8 +810,8 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                         if (did_resize) {
                             // A resize is the one time the buffers are
                             // replaced: the old pair is the wrong shape.
-                            next = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
-                            previous = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
+                            next = new_buffer(window_size.columns, window_size.rows);
+                            previous = new_buffer(window_size.columns, window_size.rows);
                         } else {
                             next.clear();
                         }
@@ -803,6 +975,14 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
                 // view may show what it came to (`key_protocol`), so it is drawn again
                 return Action.Redraw;
             }
+            if (late_reports > 0 && TUI_width.is_cursor_report(raw)) {
+                // a calibration answer that came after the calibration gave up: the loop's own, not a key
+                late_reports = late_reports - 1;
+                return Action.Continue;
+            }
+            if (is_width_asked && TUI_width.mode_reply(raw, 2027) >= 0) {
+                return Action.Continue;
+            }
             int reply = TUI_diff.sync_reply(raw);
             if (reply >= 0) {
                 // the answer to the mode 2026 question: the loop's own business, and the
@@ -829,10 +1009,94 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
 /// is 0 (or less), `reader.read_keys(timeout_ms, escape_wait_ms)` above 0, so that the
 /// timeout is only how long to wait for a first byte and the escape wait is its own.
 Result<term.Input, term.Error> Loop.read_next(term.Reader reader, int timeout_ms) {
+    match (take_replayed()) {
+        case Some(term.Event held): {
+            return Result<term.Input, term.Error>.Ok(term.Input.Got(held));
+        }
+        case None: {
+        }
+    }
     if (escape_wait_ms > 0) {
         return reader.read_keys(timeout_ms, escape_wait_ms);
     }
     return reader.read(timeout_ms);
+}
+
+// The oldest event the calibration read and did not take, if any: the program sees them first, in order.
+pub Option<term.Event> Loop.take_replayed() {
+    if (replay.size() == 0) {
+        return Option<term.Event>.None;
+    }
+    term.Event held = replay[0];
+    replay = replay.slice(1, replay.size());
+    return Option<term.Event>.Some(held);
+}
+
+// The next event if one has already arrived; never waits.
+Option<term.Event> Loop.read_ahead(term.Reader reader) {
+    match (take_replayed()) {
+        case Some(term.Event held): {
+            return Option<term.Event>.Some(held);
+        }
+        case None: {
+        }
+    }
+    match (reader.read(0)) {
+        case Ok(term.Input inp): {
+            match (inp) {
+                case Got(term.Event event): {
+                    return Option<term.Event>.Some(event);
+                }
+                case Timeout: {
+                }
+                case End: {
+                }
+            }
+        }
+        case Err(term.Error error): {
+        }
+    }
+    return Option<term.Event>.None;
+}
+
+/// What the calibration talks to the terminal through: bytes out, events in. `TermLink` is the real one
+/// (a `term.Writer` and `term.Reader`); a test supplies its own and needs no terminal.
+pub interface ProbeLink {
+    /// Write `data` (and flush: the terminal must have it before anything is waited for).
+    void send(bytes data);
+    /// The next event, waiting at most `wait_ms` for it; `None` when none came in that time (or the input ended).
+    Option<term.Event> next(int wait_ms);
+}
+
+/// The `ProbeLink` on a terminal.
+pub type TermLink {
+    pub term.Writer writer;
+    pub term.Reader reader;
+}
+
+pub void TermLink.send(bytes data) {
+    writer.put_bytes(data);
+    flush(writer);
+}
+
+pub Option<term.Event> TermLink.next(int wait_ms) {
+    // a negative escape wait never resolves a held prefix: a report cut in two is finished by the loop's own reads
+    match (reader.read_keys(wait_ms, -1)) {
+        case Ok(term.Input inp): {
+            match (inp) {
+                case Got(term.Event event): {
+                    return Option<term.Event>.Some(event);
+                }
+                case Timeout: {
+                }
+                case End: {
+                }
+            }
+        }
+        case Err(term.Error error): {
+        }
+    }
+    return Option<term.Event>.None;
 }
 
 /// Is this key CTRL-L (form feed, or `l` with Control)?
@@ -951,26 +1215,6 @@ pub type Shown {
 /// How long one pass may keep handling already-arrived events before it
 /// draws, whatever `drain_events` allows: a storm of input still gets frames.
 const int BATCH_MS = 8;
-
-// The next event if one has already arrived; never waits.
-Option<term.Event> read_ahead(term.Reader reader) {
-    match (reader.read(0)) {
-        case Ok(term.Input inp): {
-            match (inp) {
-                case Got(term.Event event): {
-                    return Option<term.Event>.Some(event);
-                }
-                case Timeout: {
-                }
-                case End: {
-                }
-            }
-        }
-        case Err(term.Error error): {
-        }
-    }
-    return Option<term.Event>.None;
-}
 
 /// How long a read may wait, in milliseconds: `tick_ms`, or less when a timer
 /// tick is due sooner (`animate_ms` > 0, `since_tick_ms` since the last one),

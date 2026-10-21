@@ -1,4 +1,5 @@
-== pairs ============================================================
+== the static policy (the terminal is not asked, as in 0.13.0) ====================
+== pairs, static ============================================================
 ok   pairs: ideal
 ok   pairs: pending-wrap
 ok   pairs: instant-wrap
@@ -22,7 +23,16 @@ ok   pairs: unclamped
 ok   pairs: no-sync
 ok   pairs: no-decstbm
 ok   pairs: terminal-app
-== finder ============================================================
+ok   pairs: preset alacritty
+ok   pairs: preset rio
+ok   pairs: preset kitty
+ok   pairs: preset mode-2027
+known pairs: preset box-wide: 7 of 4563 pairs
+     [] -> [─│╭╮─│] style 2: differs from a repaint: row 0 col 8: [─│╭╮│] vs [─│╭╮  ]
+     [abc] -> [─│╭╮─│] style 2: differs from a repaint: row 0 col 8: [─│╭╮│] vs [─│╭╮  ]
+     [─│╭╮─│] -> [abc] style 2: differs from a repaint: row 0 col 6: [abc   ╮  ] vs [abc       ]
+ok   pairs: preset mute
+== finder, static ============================================================
 ok   finder: ideal: 39341 bytes
 ok   finder: ideal +scroll: 39341 bytes
 ok   finder: pending-wrap: 39341 bytes
@@ -65,7 +75,155 @@ ok   finder: no-decstbm: 39341 bytes
 ok   finder: no-decstbm +scroll: 39341 bytes
 ok   finder: terminal-app: 39341 bytes
 ok   finder: terminal-app +scroll: 39341 bytes
-== random ============================================================
+ok   finder: preset alacritty: 39341 bytes
+ok   finder: preset alacritty +scroll: 39341 bytes
+ok   finder: preset rio: 39341 bytes
+ok   finder: preset rio +scroll: 39341 bytes
+ok   finder: preset kitty: 39341 bytes
+ok   finder: preset kitty +scroll: 39341 bytes
+ok   finder: preset mode-2027: 39341 bytes
+ok   finder: preset mode-2027 +scroll: 39341 bytes
+known finder: preset box-wide: 16 frames wrong
+     first: frame 1: differs from a repaint: row 2 col 6: [こ│ >p                                                                         ] vs [こ│ > p                                                                        ]
+known finder: preset box-wide +scroll: 16 frames wrong
+     first: frame 1: differs from a repaint: row 2 col 6: [こ│ >p                                                                         ] vs [こ│ > p                                                                        ]
+ok   finder: preset mute: 39341 bytes
+ok   finder: preset mute +scroll: 39341 bytes
+== the width calibration (what the loop measures at start-up) ====================
+     ideal: measured, mode 2027 false, ascii lines false: every class certain
+     pending-wrap: measured, mode 2027 false, ascii lines false: every class certain
+     instant-wrap: measured, mode 2027 false, ascii lines false: every class certain
+     no-autowrap: measured, mode 2027 false, ascii lines false: every class certain
+     sum-codepoints: measured, mode 2027 false, ascii lines false: symbol+VS16 narrow 1 (library 2); ZWJ family wide 6 (library 2)
+     vs16-ignored: measured, mode 2027 false, ascii lines false: symbol+VS16 narrow 1 (library 2)
+     vs16-widens: measured, mode 2027 false, ascii lines false: every class certain
+     ambiguous-wide: measured, mode 2027 false, ascii lines false: arrows wide 2 (library 1); Greek/Cyrillic wide 2 (library 1); shapes wide 2 (library 1)
+     box-wide: measured, mode 2027 false, ascii lines true: box drawing wide 2 (library 1); block elements wide 2 (library 1)
+     private-wide: measured, mode 2027 false, ascii lines false: private use wide 2 (library 1)
+     new-emoji-narrow: measured, mode 2027 false, ascii lines false: every class certain
+     astral-narrow: measured, mode 2027 false, ascii lines false: emoji narrow 1 (library 2)
+     jamo-add: measured, mode 2027 false, ascii lines false: every class certain
+     no-combining: measured, mode 2027 false, ascii lines false: symbol+VS16 narrow 1 (library 2); ZWJ family wide 6 (library 2); combining wide 2 (library 1)
+     regional-2: measured, mode 2027 false, ascii lines false: every class certain
+     no-bce: measured, mode 2027 false, ascii lines false: every class certain
+     unclamped: measured, mode 2027 false, ascii lines false: every class certain
+     no-sync: measured, mode 2027 false, ascii lines false: every class certain
+     no-decstbm: measured, mode 2027 false, ascii lines false: every class certain
+     terminal-app: measured, mode 2027 false, ascii lines false: symbol+VS16 narrow 1 (library 2); ZWJ family wide 6 (library 2)
+     preset alacritty: measured, mode 2027 false, ascii lines false: symbol+VS16 narrow 1 (library 2); ZWJ family wide 6 (library 2)
+     preset rio: measured, mode 2027 false, ascii lines false: symbol+VS16 narrow 1 (library 2); ZWJ family wide 6 (library 2)
+     preset kitty: measured, mode 2027 true, ascii lines false: every class certain
+     preset mode-2027: measured, mode 2027 true, ascii lines false: every class certain
+     preset box-wide: measured, mode 2027 false, ascii lines true: box drawing wide 2 (library 1); block elements wide 2 (library 1); arrows wide 2 (library 1); Greek/Cyrillic wide 2 (library 1); shapes wide 2 (library 1)
+     preset mute: no answer, mode 2027 false, ascii lines false: box drawing not measured; block elements not measured; arrows not measured; Greek/Cyrillic not measured; shapes not measured; Braille not measured; emoji not measured; symbol+VS16 not measured; flag not measured; ZWJ family not measured; combining not measured; private use not measured
+== pairs, calibrated ============================================================
+ok   pairs: ideal
+ok   pairs: pending-wrap
+ok   pairs: instant-wrap
+ok   pairs: no-autowrap
+ok   pairs: sum-codepoints
+ok   pairs: vs16-ignored
+ok   pairs: vs16-widens
+ok   pairs: ambiguous-wide
+ok   pairs: box-wide
+ok   pairs: private-wide
+ok   pairs: new-emoji-narrow
+ok   pairs: astral-narrow
+ok   pairs: jamo-add
+ok   pairs: no-combining
+ok   pairs: regional-2
+ok   pairs: no-bce
+ok   pairs: unclamped
+ok   pairs: no-sync
+ok   pairs: no-decstbm
+ok   pairs: terminal-app
+ok   pairs: preset alacritty
+ok   pairs: preset rio
+ok   pairs: preset kitty
+ok   pairs: preset mode-2027
+ok   pairs: preset box-wide
+ok   pairs: preset mute
+== finder, calibrated ============================================================
+ok   finder: ideal: 32939 bytes
+ok   finder: ideal +scroll: 32939 bytes
+ok   finder: pending-wrap: 32939 bytes
+ok   finder: pending-wrap +scroll: 32939 bytes
+ok   finder: instant-wrap: 32939 bytes
+ok   finder: instant-wrap +scroll: 32939 bytes
+ok   finder: no-autowrap: 32939 bytes
+ok   finder: no-autowrap +scroll: 32939 bytes
+ok   finder: sum-codepoints: 34970 bytes
+ok   finder: sum-codepoints +scroll: 34970 bytes
+ok   finder: vs16-ignored: 34970 bytes
+ok   finder: vs16-ignored +scroll: 34970 bytes
+ok   finder: vs16-widens: 32939 bytes
+ok   finder: vs16-widens +scroll: 32939 bytes
+ok   finder: ambiguous-wide: 33557 bytes
+ok   finder: ambiguous-wide +scroll: 33557 bytes
+ok   finder: box-wide: 30371 bytes
+ok   finder: box-wide +scroll: 30371 bytes
+ok   finder: private-wide: 32939 bytes
+ok   finder: private-wide +scroll: 32939 bytes
+ok   finder: new-emoji-narrow: 32939 bytes
+ok   finder: new-emoji-narrow +scroll: 32939 bytes
+ok   finder: astral-narrow: 34151 bytes
+ok   finder: astral-narrow +scroll: 34151 bytes
+ok   finder: jamo-add: 32939 bytes
+ok   finder: jamo-add +scroll: 32939 bytes
+ok   finder: no-combining: 36038 bytes
+ok   finder: no-combining +scroll: 36038 bytes
+ok   finder: regional-2: 32939 bytes
+ok   finder: regional-2 +scroll: 32939 bytes
+ok   finder: no-bce: 32939 bytes
+ok   finder: no-bce +scroll: 32939 bytes
+ok   finder: unclamped: 32939 bytes
+ok   finder: unclamped +scroll: 32939 bytes
+ok   finder: no-sync: 32939 bytes
+ok   finder: no-sync +scroll: 32939 bytes
+ok   finder: no-decstbm: 32939 bytes
+ok   finder: no-decstbm +scroll: 32939 bytes
+ok   finder: terminal-app: 34970 bytes
+ok   finder: terminal-app +scroll: 34970 bytes
+ok   finder: preset alacritty: 34970 bytes
+ok   finder: preset alacritty +scroll: 34970 bytes
+ok   finder: preset rio: 34970 bytes
+ok   finder: preset rio +scroll: 34970 bytes
+ok   finder: preset kitty: 32939 bytes
+ok   finder: preset kitty +scroll: 32939 bytes
+ok   finder: preset mode-2027: 32939 bytes
+ok   finder: preset mode-2027 +scroll: 32939 bytes
+ok   finder: preset box-wide: 30941 bytes
+ok   finder: preset box-wide +scroll: 30941 bytes
+ok   finder: preset mute: 39341 bytes
+ok   finder: preset mute +scroll: 39341 bytes
+== finder bytes ============================================================
+ok   finder bytes: ideal: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: pending-wrap: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: instant-wrap: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: no-autowrap: 78682 static, 65878 measured (16 % less)
+     finder bytes: sum-codepoints: 78682 static, 69940 measured (11 % less)
+     finder bytes: vs16-ignored: 78682 static, 69940 measured (11 % less)
+     finder bytes: vs16-widens: 78682 static, 65878 measured (16 % less)
+     finder bytes: ambiguous-wide: 78682 static, 67114 measured (14 % less)
+     finder bytes: box-wide: 78682 static, 60742 measured (22 % less)
+     finder bytes: private-wide: 78682 static, 65878 measured (16 % less)
+     finder bytes: new-emoji-narrow: 78682 static, 65878 measured (16 % less)
+     finder bytes: astral-narrow: 78682 static, 68302 measured (13 % less)
+     finder bytes: jamo-add: 78682 static, 65878 measured (16 % less)
+     finder bytes: no-combining: 78682 static, 72076 measured (8 % less)
+     finder bytes: regional-2: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: no-bce: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: unclamped: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: no-sync: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: no-decstbm: 78682 static, 65878 measured (16 % less)
+     finder bytes: terminal-app: 78682 static, 69940 measured (11 % less)
+ok   finder bytes: preset alacritty: 78682 static, 69940 measured (11 % less)
+ok   finder bytes: preset rio: 78682 static, 69940 measured (11 % less)
+ok   finder bytes: preset kitty: 78682 static, 65878 measured (16 % less)
+ok   finder bytes: preset mode-2027: 78682 static, 65878 measured (16 % less)
+     finder bytes: preset box-wide: 78682 static, 61882 measured (21 % less)
+ok   finder bytes: preset mute: 78682 static, 78682 measured (0 % less)
+== random, calibrated ============================================================
 ok   random: ideal: 480 frames
 ok   random: ideal +scroll: 480 frames
 ok   random: ideal +sync: 480 frames
@@ -80,14 +238,12 @@ ok   random: sum-codepoints +sync: 480 frames
 ok   random: vs16-ignored: 480 frames
 ok   random: vs16-widens: 480 frames
 ok   random: ambiguous-wide: 480 frames
-known random: box-wide: 163 of 480 frames wrong
-     first: frame 13: differs from a repaint: row 4 col 7: [hello│สวัสดี␁␛[31mre │m3😀🚀     ] vs [hello│ วัสดี␁␛[31mre │m3😀🚀     ]
+ok   random: box-wide: 480 frames
 ok   random: private-wide: 480 frames
 ok   random: new-emoji-narrow: 480 frames
 ok   random: astral-narrow: 480 frames
 ok   random: jamo-add: 480 frames
-known random: no-combining: 11 of 480 frames wrong
-     first: frame 14: differs from a repaint: row 11 col 9: [❤️  😀🚀a❤️ ab z                                               ] vs [❤️  😀🚀a❤️́ab z                                               ]
+ok   random: no-combining: 480 frames
 ok   random: regional-2: 480 frames
 ok   random: no-bce: 480 frames
 ok   random: unclamped: 480 frames
@@ -99,5 +255,11 @@ ok   random: no-decstbm +sync: 480 frames
 ok   random: terminal-app: 480 frames
 ok   random: terminal-app +scroll: 480 frames
 ok   random: terminal-app +sync: 480 frames
+ok   random: preset alacritty: 480 frames
+ok   random: preset rio: 480 frames
+ok   random: preset kitty: 480 frames
+ok   random: preset mode-2027: 480 frames
+ok   random: preset box-wide: 480 frames
+ok   random: preset mute: 480 frames
 
--- 84 passed, 0 failed
+-- 198 passed, 0 failed

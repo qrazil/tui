@@ -1,0 +1,105 @@
+// The program tests/width_pty.m31 runs on a pseudo-terminal: a real `Loop.run_with` with the width calibration
+// on, which writes down, to a log file, when it started, what the calibration found when the first frame was
+// drawn, and every event it is handed (the monotonic clock, in milliseconds, which the test reads too).
+//
+//   width_child <log> <width_probe_ms>
+//
+// One line per fact: `<ms> start`, `<ms> ready <what the calibration found>`, then `<ms> <Event.to_str()>`.
+// It draws a six by three `Block` in the top left corner. A `q` key quits. The environment variables
+// `TUI_WIDTH_PROBE` and `TUI_BORDERS` are the loop's own to read.
+
+import io;
+import os;
+import term;
+import text;
+import timer;
+import app.TUI_app;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_widget;
+import core.TUI_width;
+
+type View {
+    str log_path;
+    TUI_app.Loop loop;
+    bool is_logged = false;
+}
+
+str View.stamp(str what) {
+    int milliseconds = timer.monotonic_ns() / 1000000;
+    return str(milliseconds) + " " + what + "\n";
+}
+
+void View.note(str what) {
+    match (io.append(log_path, stamp(what))) {
+        case Ok(int written): {
+        }
+        case Err(io.Error error): {
+            io.eprint("log: " + error.to_str() + "\n");
+        }
+    }
+}
+
+void View.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    TUI_widget.Block block = TUI_widget.Block();
+    block.render(buffer, TUI_geometry.Rect(0, 0, 6, 3));
+    if (is_logged) {
+        return;
+    }
+    is_logged = true;
+    TUI_width.Table table = loop.width_table;
+    List<str> classes = [];
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        classes.push(underscored(table.decision(class_id)));
+    }
+    note("ready outcome=" + underscored(table.outcome) + " answers=" + str(table.answers) + " ascii=" + str(table.is_ascii_lines) + " grapheme=" + str(table.is_grapheme_mode) + " set=" + str(table.is_grapheme_set) + " status=" + str(table.grapheme_status) + " classes=" + classes.join(","));
+}
+
+TUI_app.Action View.handle(term.Event event) {
+    note(event.to_str());
+    match (event) {
+        case Key(term.Key key): {
+            if (key.code.to_str() == "q") {
+                return TUI_app.Action.Quit;
+            }
+        }
+        case Mouse(term.Mouse report): {
+        }
+        case Paste(str pasted): {
+        }
+        case Unknown(bytes raw): {
+        }
+    }
+    return TUI_app.Action.Continue;
+}
+
+str underscored(str text_value) {
+    return text_value.split(" ").join("_");
+}
+
+int parse(str text_value) {
+    match (text.parse_int(text_value)) {
+        case Ok(int number): {
+            return number;
+        }
+        case Err(text.ParseError error): {
+            return 0;
+        }
+    }
+}
+
+List<str> arguments = os.arguments();
+if (arguments.size() < 3) {
+    print("usage: width_child <log> <width_probe_ms>");
+    os.exit(2);
+}
+TUI_app.Loop loop = TUI_app.Loop(width_probe_ms: parse(arguments[2]));
+View view = View(arguments[1], loop);
+view.note("start");
+match (loop.run_with(view, view, TUI_app.NoTicker(), TUI_app.NoMouse())) {
+    case Ok(int code): {
+    }
+    case Err(term.Error error): {
+        os.exit(3);
+    }
+}

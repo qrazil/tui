@@ -1,0 +1,45 @@
+== kitty, with the user typing among the answers ====================
+ok   kitty: the child started
+ok   kitty: the calibration measured all fourteen answers
+ok   kitty: every class certain, mode 2027 already on (the loop did not set it)
+ok   kitty: the keys typed among the answers reached the program, in order, with Shift-F3 for ESC [ 1 ; 2 R
+ok   kitty: the border is Unicode line drawing on the screen
+ok   kitty: the frame was one write on a screen the child owns (no unknown sequence reached the terminal)
+ok   kitty: and the loop reads on after the calibration
+== alacritty and rio: vs16 and a family disagree, the rest is certain ====================
+ok   alacritty: measured
+ok   alacritty: which classes disagree
+ok   alacritty: mode 2027 is not answered, so not set
+ok   alacritty: a Unicode border
+ok   rio: measured
+ok   rio: which classes disagree
+ok   rio: mode 2027 is not answered, so not set
+ok   rio: a Unicode border
+== terminal-app: answers cursor reports, nothing else ====================
+ok   terminal-app: measured
+ok   terminal-app: classes
+== a terminal that draws East Asian Ambiguous wide ====================
+ok   box-wide: box drawing and blocks measured wide, so ASCII borders
+ok   box-wide: the border on a terminal that draws box drawing in two columns
+== TUI_BORDERS ==================================================
+ok   TUI_BORDERS=ascii on kitty: ASCII by the user's word
+ok   TUI_BORDERS=unicode on a wide terminal: line drawing as told
+== mode 2027 ====================================================
+ok   mode-2027: the loop switched clustering on and measured again: all certain
+ok   mode-2027: the terminal has it on while the program runs
+ok   mode-2027: and off again on the way out (the shell gets the terminal as it was)
+== no answer ====================================================
+ok   mute: nothing measured, the static policy
+ok   mute: the start-up waited the whole budget (400 ms)
+ok   mute: and no longer than that (with a second of margin)
+ok   mute: the program is alive and hears keys
+== partial answers, and the rest late ==============================
+ok   partial: six answers make a partial table
+ok   partial: the start-up waited for the rest until the budget
+ok   partial: the late answers are swallowed, the key typed after them is heard
+== TUI_WIDTH_PROBE=off ========================================
+ok   off: nothing was asked of the terminal
+ok   off: the loop says so
+ok   off: and the first frame did not wait for answers
+
+-- 34 passed, 0 failed

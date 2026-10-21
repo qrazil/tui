@@ -2,13 +2,13 @@
 # The TUI library's gate.
 #
 #   M31_ROOT=/path/to/m31 bash tests/test.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax,terminal,escape,stress}.out from what the tests print
+#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax,terminal,width,escape,width_pty,stress}.out from what the tests print
 #
-# Four things are checked (and, last, the pty test of the escape wait: 3b below), and the rule is the repository's own: grep for
+# Four things are checked (and, last, the pty tests of the escape wait and of the width calibration: 3b and 3d below), and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
 #   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
-#   2. tests/{tests,widgets,syntax,terminal}.m31 and examples/{bench,demo,browse,widgets,features}.m31 all
+#   2. tests/{tests,widgets,syntax,terminal,width}.m31 and examples/{bench,demo,browse,widgets,features,width_probe}.m31 all
 #      compile under gcc and clang, at -O0 and -O2, with no warning from the emitted C
 #   3. each test's output matches its tests/<name>.out, and contains no `FAIL` line
 #   4. the refcount invariant holds: `__rc_live=0` at exit
@@ -71,7 +71,7 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/tests/escape."$LANG_EXT" "$DIR"/tests/escape_child."$LANG_EXT" "$DIR"/tests/stress."$LANG_EXT" "$DIR"/examples/width_probe."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/tests/width."$LANG_EXT" "$DIR"/tests/width_pty."$LANG_EXT" "$DIR"/tests/width_child."$LANG_EXT" "$DIR"/tests/escape."$LANG_EXT" "$DIR"/tests/escape_child."$LANG_EXT" "$DIR"/tests/stress."$LANG_EXT" "$DIR"/examples/width_probe."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
     # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
     case "$src" in */examples/widgets.*) base=example_widgets;; esac
@@ -101,18 +101,20 @@ done
 
 # 3. and 4. the corpora, and the refcount invariant --------------------------
 #
-# Four test programs, each with its own expected output: tests/tests.m31 (the
+# Five test programs, each with its own expected output: tests/tests.m31 (the
 # library as it was), tests/widgets.m31 (v0.3.0: the input, text, tab,
 # chart, gauge, spinner and mouse widgets, with golden renders),
 # tests/syntax.m31 (TUI_syntax and the highlighted DiffView) and
 # tests/terminal.m31 (v0.10.0: synchronized output, clipboard, hyperlinks, key
 # protocols, focus, emoji width -- checked against tests/TST_emulator.m31, a small
-# terminal emulator that applies the bytes the library writes).
+# terminal emulator that applies the bytes the library writes) and tests/width.m31
+# (v0.14.0: the width calibration against emulators of alacritty, rio, kitty, Terminal.app and
+# a terminal that draws East Asian Ambiguous wide: the probe, its failure modes, the borders).
 #
 # Every build must agree with every other, which is run.sh's layers 1 and 2
 # applied to one program: a disagreement between gcc and clang, or between
 # -O0 and -O2, means the emitted C leans on something C leaves open.
-for corpus in tests widgets syntax terminal; do
+for corpus in tests widgets syntax terminal width; do
     ref=""; ref_tag=""
     for entry in "${CCS[@]}"; do
         cc=${entry%%:*}; opt=${entry##*:}
@@ -171,12 +173,35 @@ if diff -q <(printf '%s\n' "$got") "$DIR/tests/escape.out" >/dev/null 2>&1; then
     bad; diff "$DIR/tests/escape.out" <(printf '%s\n' "$got") | head -30 | sed 's/^/    /'
 fi
 
+# 3d. the width calibration on a pty -------------------------------------------
+#
+# tests/width_pty.m31 starts tests/width_child.m31 (a real `Loop.run_with` with the calibration on) on a
+# pseudo-terminal and plays the terminal: it applies what the child writes to an emulator with the width model
+# of each of the owner's terminals, answers the cursor position reports by that model, types keys among the
+# answers, holds answers back and reads what the child logged. About ten seconds, once, in the first build.
+wlog=$WORK/width-logs; mkdir -p "$wlog"
+note "width calibration on a pty ($cc $opt)"
+got=$(TUI_WIDTH_CHILD="$WORK/width_child.$cc$opt" TUI_WIDTH_LOGDIR="$wlog" "$WORK/width_pty.$cc$opt" 2>&1)
+if grep -q '^FAIL' <<<"$got" || ! grep -q '^__rc_live=0$' <<<"$got"; then
+    bad; grep -A2 '^FAIL' <<<"$got" | head -20 | sed 's/^/    /'; grep '^__rc_live=' <<<"$got" | sed 's/^/    /'
+else good; fi
+got=$(grep -v '^__rc_live=' <<<"$got")
+if [ $bless -eq 1 ]; then
+    printf '%s\n' "$got" > "$DIR/tests/width_pty.out"
+    echo "blessed $DIR/tests/width_pty.out"
+fi
+note "output matches tests/width_pty.out"
+if diff -q <(printf '%s\n' "$got") "$DIR/tests/width_pty.out" >/dev/null 2>&1; then good; else
+    bad; diff "$DIR/tests/width_pty.out" <(printf '%s\n' "$got") | head -30 | sed 's/^/    /'
+fi
+
 # 3c. the stress harness -------------------------------------------------------
 #
-# tests/stress.m31 replays what the renderer writes on eighteen kinds of terminal (wrap,
-# width, erase, scroll and sync differences) and compares every frame with a repaint. About
-# half a minute, so it runs once, in the first build, like the escape wait; the output is
-# compared with tests/stress.out.
+# tests/stress.m31 replays what the renderer writes on twenty-six kinds of terminal (wrap,
+# width, erase, scroll and sync differences; alacritty, rio, kitty, a terminal with mode 2027, one that
+# draws ambiguous characters wide) and compares every frame with a repaint, with the terminal not asked
+# (0.13.0) and with the width calibration on. About a minute, so it runs once, in the first
+# build, like the escape wait; the output is compared with tests/stress.out.
 note "stress harness ($cc $opt)"
 got=$("$WORK/stress.$cc$opt" 2>&1)
 if grep -q '^FAIL' <<<"$got" || ! grep -q '^__rc_live=0$' <<<"$got"; then

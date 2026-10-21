@@ -65,7 +65,7 @@ pub const str ELLIPSIS = "\u{2026}";
 // cluster is one column wide.
 
 /// Is every byte of `text` printable ASCII?
-bool is_plain(str text) {
+pub bool is_plain(str text) {
     int length = text.size();
     for (int i in 0 .. length) {
         int byte_value = text.byte_at(i);

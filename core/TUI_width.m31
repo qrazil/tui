@@ -1,0 +1,799 @@
+// Measuring how wide the terminal draws what the library writes, instead of guessing.
+//
+// API
+// ---
+//   TUI_width.Table                    what a terminal measured, per class of character (`Loop.width_table`)
+//   table.is_certain(cluster)          may the renderer trust the library's width for this cluster?
+//   table.columns(cluster)             the columns the terminal draws it in (the library's, where they agree)
+//   table.text_width(text)             `TUI_text.width`, by this terminal's measures
+//   table.decision(class)              "certain", "wide 2 (library 1)", "not measured"
+//   TUI_width.Probe                    one batch of questions and the answers to it (`Loop` runs it)
+//   TUI_width.Borders                  Auto | Ascii | Unicode, for `Loop.borders` and `TUI_BORDERS`
+//   TUI_width.ascii_for(symbol)        a line-drawing or block character as ASCII
+//   TUI_width.borders_from_env(text)   `TUI_BORDERS`'s value as a `Borders`
+//   TUI_width.is_probe_off(text)       is `TUI_WIDTH_PROBE`'s value "off"?
+//
+// --- why measure ---------------------------------------------------------------
+//
+// `TUI_text` and `unicode.width` say how wide a cluster ought to be. A terminal says
+// otherwise in several ways that no table settles, because they are the terminal's
+// own choices: East Asian Ambiguous characters (box drawing, arrows, Greek, Cyrillic)
+// are two columns where the user asked for it (a locale, a profile, a font); a variation
+// selector widens a symbol on kitty and not on Alacritty; a flag is two columns or four;
+// a family is two columns or six; a Nerd Font glyph is one or two. 0.13.0 distrusted
+// every cluster that could differ, which is right and costs bytes, and drew every
+// border wrong on a terminal told to draw ambiguous characters wide.
+//
+// So the loop ASKS, once, after it has entered the alternate screen: it writes a few
+// reference characters, each followed by a cursor position report (`CSI 6 n`), and the
+// column the cursor reports is the width the terminal drew the character in. One write,
+// one read of all the answers, a budget of 150 ms for the whole of it (`Loop.width_probe_ms`);
+// a terminal that does not answer keeps the static policy of 0.13.0.
+//
+// --- classes -------------------------------------------------------------------
+//
+// One reference character stands for a class: box drawing (U+2500..257F), block
+// elements (U+2580..259F), arrows (U+2190..21FF), Greek and Cyrillic (U+0370..052F),
+// geometric shapes (U+25A0..25FF), Braille (U+2800..28FF), the older emoji
+// (U+1F300..1F64F), a text symbol with U+FE0F (a heart), a flag (two regional indicators),
+// a ZWJ family, a letter with a combining accent, and a private-use glyph (a Nerd Font
+// icon, U+E000..F8FF and the planes 15 and 16). Two more are control questions: `A` must
+// measure 1 and an ideograph 2, or the answers are not trusted at all.
+//
+// A class the terminal measured **equal to the library's width** is certain: the renderer
+// treats those clusters as it treats ASCII (diffed per cell, no re-anchoring), which is
+// what makes the 0.13.0 safety cost nothing on a terminal like Alacritty, rio or kitty. A
+// class it measured **differently** is drawn at the measured width, and a cluster in it
+// stays uncertain (written again from there to the end of the row, the cursor re-anchored).
+// A cluster in no class, or in a class the terminal did not answer, keeps the static rule.
+//
+// --- grapheme clustering (mode 2027) -------------------------------------------
+//
+// The same batch asks `CSI ? 2027 $ p`. A terminal that says the mode is off but can be
+// switched is asked to, and measured again: with the mode on it segments grapheme clusters
+// as the library does, so a family and a heart with U+FE0F are the width `unicode.width`
+// says. The loop writes `CSI ? 2027 l` on the way out when it was the one that set it.
+
+import text.unicode;
+import core.TUI_text;
+
+// --- the classes ----------------------------------------------------------------
+
+pub const int BOX = 0;
+pub const int BLOCK = 1;
+pub const int ARROW = 2;
+pub const int GREEK = 3;
+pub const int SHAPE = 4;
+pub const int BRAILLE = 5;
+pub const int EMOJI = 6;
+pub const int VS16 = 7;
+pub const int FLAG = 8;
+pub const int ZWJ = 9;
+pub const int COMBINING = 10;
+pub const int PRIVATE = 11;
+/// How many classes there are.
+pub const int CLASS_COUNT = 12;
+/// The control questions: `A` is asked first and must measure 1, then an ideograph, 2.
+const int CONTROL_ASCII = 12;
+const int CONTROL_WIDE = 13;
+/// How many questions a batch holds: the control ones, then one per class.
+pub const int PROBE_COUNT = 14;
+/// The row the questions are asked on: never the first, where `CSI 1 ; 2 R` (a report
+/// of row 1, column 2) is also Shift-F3.
+pub const int PROBE_ROW = 2;
+/// The whole budget of a calibration, in milliseconds (`Loop.width_probe_ms`).
+pub const int DEFAULT_PROBE_MS = 150;
+
+/// The reference character of a class (or of a control question).
+pub str sample(int class_id) {
+    if (class_id == BOX) {
+        return "\u{2500}";
+    }
+    if (class_id == BLOCK) {
+        return "\u{2588}";
+    }
+    if (class_id == ARROW) {
+        return "\u{2192}";
+    }
+    if (class_id == GREEK) {
+        return "\u{03B1}";
+    }
+    if (class_id == SHAPE) {
+        return "\u{25CF}";
+    }
+    if (class_id == BRAILLE) {
+        return "\u{2823}";
+    }
+    if (class_id == EMOJI) {
+        return "\u{1F600}";
+    }
+    if (class_id == VS16) {
+        return "\u{2764}\u{FE0F}";
+    }
+    if (class_id == FLAG) {
+        return "\u{1F1E9}\u{1F1EA}";
+    }
+    if (class_id == ZWJ) {
+        return "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    }
+    if (class_id == COMBINING) {
+        return "e\u{0301}";
+    }
+    if (class_id == PRIVATE) {
+        return "\u{E0B0}";
+    }
+    if (class_id == CONTROL_ASCII) {
+        return "A";
+    }
+    return "\u{4E2D}";
+}
+
+/// The name of a class, for a table a person reads.
+pub str class_name(int class_id) {
+    if (class_id == BOX) {
+        return "box drawing";
+    }
+    if (class_id == BLOCK) {
+        return "block elements";
+    }
+    if (class_id == ARROW) {
+        return "arrows";
+    }
+    if (class_id == GREEK) {
+        return "Greek/Cyrillic";
+    }
+    if (class_id == SHAPE) {
+        return "shapes";
+    }
+    if (class_id == BRAILLE) {
+        return "Braille";
+    }
+    if (class_id == EMOJI) {
+        return "emoji";
+    }
+    if (class_id == VS16) {
+        return "symbol+VS16";
+    }
+    if (class_id == FLAG) {
+        return "flag";
+    }
+    if (class_id == ZWJ) {
+        return "ZWJ family";
+    }
+    if (class_id == COMBINING) {
+        return "combining";
+    }
+    if (class_id == PRIVATE) {
+        return "private use";
+    }
+    if (class_id == CONTROL_ASCII) {
+        return "control: ASCII";
+    }
+    return "control: ideograph";
+}
+
+/// Is the class one character of a single code point? (The others are sequences.)
+bool is_single(int class_id) {
+    return class_id != VS16 && class_id != FLAG && class_id != ZWJ && class_id != COMBINING;
+}
+
+/// Which class `cluster` belongs to, or -1 for none (printable ASCII, Latin, CJK, and
+/// everything no reference character stands for). Byte tests only: no allocation.
+///
+/// A sequence belongs to its class only in the shape of the reference character, because the
+/// terminals that disagree do so about that shape: a symbol with U+FE0F is `base U+FE0F` and
+/// nothing else (a keycap or a letter with a selector is not), a flag is exactly two regional
+/// indicators, a family is a sequence of emoji joined by U+200D that starts at U+1F000 or
+/// above, a combined letter is an ASCII letter and marks of U+0300..036F.
+pub int class_of(str cluster) {
+    int length = cluster.size();
+    if (length < 2) {
+        return -1;
+    }
+    int lead = cluster.byte_at(0);
+    if (length == 2) {
+        return class_of_two_bytes(lead, cluster.byte_at(1));
+    }
+    if (length == 3 && lead >= 0xE0) {
+        return class_of_three_bytes(lead, cluster.byte_at(1), cluster.byte_at(2));
+    }
+    if (length == 4 && lead >= 0xF0) {
+        return class_of_four_bytes(lead, cluster.byte_at(1), cluster.byte_at(2), cluster.byte_at(3));
+    }
+    return class_of_sequence(cluster, length, lead);
+}
+
+int class_of_two_bytes(int lead, int second) {
+    // U+0370..U+052F
+    if ((lead == 0xCD && second >= 0xB0) || lead == 0xCE || lead == 0xCF || (lead >= 0xD0 && lead <= 0xD3) || (lead == 0xD4 && second <= 0xAF)) {
+        return GREEK;
+    }
+    return -1;
+}
+
+int class_of_three_bytes(int lead, int second, int third) {
+    if (lead == 0xE2) {
+        if (second == 0x94 || second == 0x95) {
+            return BOX;
+        }
+        if (second == 0x96 && third <= 0x9F) {
+            return BLOCK;
+        }
+        if ((second == 0x96 && third >= 0xA0) || second == 0x97) {
+            return SHAPE;
+        }
+        if ((second == 0x86 && third >= 0x90) || second == 0x87) {
+            return ARROW;
+        }
+        if (second >= 0xA0 && second <= 0xA3) {
+            return BRAILLE;
+        }
+        return -1;
+    }
+    // U+E000..U+F8FF
+    if (lead == 0xEE || (lead == 0xEF && second >= 0x80 && second <= 0xA3)) {
+        return PRIVATE;
+    }
+    return -1;
+}
+
+int class_of_four_bytes(int lead, int second, int third, int fourth) {
+    // U+1F300..U+1F64F: the older emoji (newer ones are in tables a terminal may not have)
+    if (lead == 0xF0 && second == 0x9F && ((third >= 0x8C && third <= 0x98) || (third == 0x99 && fourth <= 0x8F))) {
+        return EMOJI;
+    }
+    // U+F0000..U+10FFFD: the private-use planes
+    if (lead == 0xF3 && second >= 0xB0) {
+        return PRIVATE;
+    }
+    if (lead == 0xF4 && second <= 0x8F) {
+        return PRIVATE;
+    }
+    return -1;
+}
+
+int class_of_sequence(str cluster, int length, int lead) {
+    // base + U+FE0F, the base a symbol of U+2000..U+3299
+    if (length == 6 && (lead == 0xE2 || lead == 0xE3) && cluster.byte_at(3) == 0xEF && cluster.byte_at(4) == 0xB8 && cluster.byte_at(5) == 0x8F) {
+        return VS16;
+    }
+    // two regional indicators: F0 9F 87 A6..BF twice
+    if (length == 8 && lead == 0xF0 && cluster.byte_at(1) == 0x9F && cluster.byte_at(2) == 0x87 && cluster.byte_at(3) >= 0xA6 && cluster.byte_at(4) == 0xF0 && cluster.byte_at(5) == 0x9F && cluster.byte_at(6) == 0x87 && cluster.byte_at(7) >= 0xA6) {
+        return FLAG;
+    }
+    // an astral emoji (F0 9F) with a joiner (E2 80 8D) in it
+    if (lead == 0xF0 && cluster.byte_at(1) == 0x9F && has_joiner(cluster, length)) {
+        return ZWJ;
+    }
+    // a letter and combining marks U+0300..U+036F (CC 80..CD AF), one or more
+    if (length >= 3 && length % 2 == 1 && ((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
+        int offset = 1;
+        while (offset < length) {
+            int mark = cluster.byte_at(offset);
+            if (mark != 0xCC && !(mark == 0xCD && cluster.byte_at(offset + 1) <= 0xAF)) {
+                return -1;
+            }
+            offset = offset + 2;
+        }
+        return COMBINING;
+    }
+    return -1;
+}
+
+bool has_joiner(str cluster, int length) {
+    for (int index in 0 .. length - 2) {
+        if (cluster.byte_at(index) == 0xE2 && cluster.byte_at(index + 1) == 0x80 && cluster.byte_at(index + 2) == 0x8D) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- what a terminal measured -----------------------------------------------------
+
+/// The borders a program draws with: its terminal's decision, or one of the two it is told.
+pub enum Borders {
+    /// Unicode line drawing, unless the terminal measured box drawing wider than one column.
+    Auto;
+    /// ASCII (`+-|`, `=`, `#`) always.
+    Ascii;
+    /// Line drawing always, whatever the terminal measured.
+    Unicode;
+}
+
+/// The name a person (or `TUI_BORDERS`) gives it: "auto", "ascii", "unicode".
+pub str Borders.name() {
+    match (this) {
+        case Auto: {
+            return "auto";
+        }
+        case Ascii: {
+            return "ascii";
+        }
+        case Unicode: {
+            return "unicode";
+        }
+    }
+}
+
+/// What a terminal measured, per class; `Loop.width_table` once the loop has asked. The default
+/// table measured nothing and every question is answered by the static policy (`TUI_text`), so a
+/// program that never calibrates (a test, a program with a loop of its own) is as it was.
+pub type Table {
+    /// The columns the terminal drew each class in, -1 where it was not measured. `CLASS_COUNT` entries
+    /// once a calibration succeeded.
+    pub List<int> measured = [];
+    /// The library's own width for each class's reference character.
+    pub List<int> ours = [];
+    /// A calibration ran and the answers were sound (the control questions came out right).
+    pub bool is_measured = false;
+    /// The terminal segments grapheme clusters (mode 2027 was on, or was switched on).
+    pub bool is_grapheme_mode = false;
+    /// The loop switched mode 2027 on, and writes it off on the way out.
+    pub bool is_grapheme_set = false;
+    /// What the terminal said about mode 2027: -1 nothing, else DECRQM's Ps (0 unknown, 1 on, 2 off, 3 always on, 4 never).
+    pub int grapheme_status = -1;
+    /// Box drawing and blocks are written as ASCII (`ascii_for`) by every buffer that has this table.
+    pub bool is_ascii_lines = false;
+    /// How many of the questions were answered.
+    pub int answers = 0;
+    /// How long the calibration took, in microseconds.
+    pub int elapsed_us = 0;
+    /// Why the table is as it is: "measured", "not asked", "no answer", "partial: 7 of 14", "controls wrong", "disabled".
+    pub str outcome = "not asked";
+}
+
+/// The class's measured columns, or -1.
+pub int Table.width_of(int class_id) {
+    if (!is_measured || class_id < 0 || class_id >= measured.size()) {
+        return -1;
+    }
+    return measured[class_id];
+}
+
+// Did the terminal measure this class as the library does?
+bool Table.is_agreeing(int class_id) {
+    return measured[class_id] == ours[class_id];
+}
+
+/// May the renderer trust the library's width for `cluster`? With a measurement of its class, yes
+/// exactly when the terminal agreed; with none, the static rule of `TUI_text.is_certain_width`.
+pub bool Table.is_certain(str cluster) {
+    if (is_measured) {
+        int class_id = class_of(cluster);
+        if (class_id >= 0 && measured[class_id] >= 0) {
+            return is_agreeing(class_id);
+        }
+    }
+    return TUI_text.is_certain_width(cluster);
+}
+
+/// The columns the terminal draws `cluster` in: the library's width, except for a class the terminal
+/// measured differently, which is drawn at the measured width (at least 1 and at most 2: a cell holds
+/// no more, the columns a wider cluster takes are the ones the renderer writes over again).
+pub int Table.columns(str cluster) {
+    int base = TUI_text.cluster_columns(cluster);
+    if (!is_measured) {
+        return base;
+    }
+    int class_id = class_of(cluster);
+    if (class_id < 0 || measured[class_id] < 0 || is_agreeing(class_id)) {
+        return base;
+    }
+    int width = measured[class_id];
+    if (width < 1) {
+        return 1;
+    }
+    if (width > 2) {
+        return 2;
+    }
+    return width;
+}
+
+/// Is the cluster one whose width the renderer must not assume, given that it is drawn in `width` columns?
+pub bool Table.is_uncertain(str cluster, int width) {
+    return !is_certain(cluster);
+}
+
+/// `TUI_text.width` of `text` by this terminal's measures (a program that lays text out itself).
+pub int Table.text_width(str text) {
+    if (!is_measured || TUI_text.is_plain(text)) {
+        return TUI_text.width(text);
+    }
+    int total = 0;
+    for (str cluster in unicode.graphemes(text)) {
+        total = total + columns(cluster);
+    }
+    return total;
+}
+
+/// What the table says about a class, for a person: "certain" (the terminal agrees: the fast path),
+/// "wide 2 (library 1)" or "narrow 1 (library 2)" (it disagrees: drawn at the measured width and
+/// re-anchored), "not measured" (the static rule).
+pub str Table.decision(int class_id) {
+    int width = width_of(class_id);
+    if (width < 0 || class_id >= ours.size()) {
+        return "not measured";
+    }
+    if (width == ours[class_id]) {
+        return "certain";
+    }
+    str kind = "narrow";
+    if (width > ours[class_id]) {
+        kind = "wide";
+    }
+    return kind + " " + str(width) + " (library " + str(ours[class_id]) + ")";
+}
+
+/// Is box drawing measured as other than one column (the case `Borders.Auto` draws in ASCII for)?
+pub bool Table.is_box_unsafe() {
+    int box = width_of(BOX);
+    return box >= 0 && box != 1;
+}
+
+/// Decide the borders: `Ascii` and `Unicode` as told, `Auto` by what was measured. Sets `is_ascii_lines`.
+pub void Table.choose_borders(Borders choice) {
+    match (choice) {
+        case Auto: {
+            is_ascii_lines = is_box_unsafe();
+        }
+        case Ascii: {
+            is_ascii_lines = true;
+        }
+        case Unicode: {
+            is_ascii_lines = false;
+        }
+    }
+}
+
+/// The table of a terminal that was not asked, or did not answer: nothing measured. `outcome` says why.
+pub Table unmeasured(str outcome) {
+    Table table = Table();
+    table.outcome = outcome;
+    return table;
+}
+
+// --- the questions and their answers -------------------------------------------------
+
+/// `CSI ? 2027 $ p`: is grapheme clustering supported? Answered `CSI ? 2027 ; Ps $ y`.
+pub const str GRAPHEME_QUERY = "\x1b[?2027$p";
+/// `CSI ? 2027 h` and `l`: grapheme clustering on and off.
+pub const str GRAPHEME_ON = "\x1b[?2027h";
+pub const str GRAPHEME_OFF = "\x1b[?2027l";
+/// `CSI 6 n`: where is the cursor? Answered `CSI row ; column R`.
+pub const str CURSOR_REPORT_QUERY = "\x1b[6n";
+
+/// The bytes of one batch: optionally the mode 2027 question, then for each of the `PROBE_COUNT`
+/// questions the cursor put at the start of row `PROBE_ROW`, the reference character written
+/// and the cursor asked for. The screen is cleared at the end (the first frame is written over a
+/// blank one in any case).
+pub bytes request_bytes(bool should_ask_grapheme) {
+    bytes out = [];
+    if (should_ask_grapheme) {
+        out.extend(GRAPHEME_QUERY.to_bytes());
+    }
+    for (int index in 0 .. PROBE_COUNT) {
+        out.extend(("\x1b[" + str(PROBE_ROW) + ";1H" + sample(order_class(index))).to_bytes());
+        out.extend(CURSOR_REPORT_QUERY.to_bytes());
+    }
+    out.extend("\x1b[2J".to_bytes());
+    return out;
+}
+
+// The questions go in this order: the two controls, then the classes.
+int order_class(int index) {
+    if (index == 0) {
+        return CONTROL_ASCII;
+    }
+    if (index == 1) {
+        return CONTROL_WIDE;
+    }
+    return index - 2;
+}
+
+/// A cursor position report: `row` and `column`, 1-based, or -1 for both when the bytes are not one.
+pub type Position {
+    pub int row = -1;
+    pub int column = -1;
+}
+
+/// Read `CSI row ; column R` (two numbers, nothing else). Not a report: a `Position` of -1, -1.
+pub Position cursor_report(bytes raw) {
+    int size = raw.size();
+    if (size < 6 || raw[0] != 27 || raw[1] != '[' || raw[size - 1] != 'R') {
+        return Position();
+    }
+    int row = 0;
+    int column = 0;
+    int digits_in_row = 0;
+    int digits_in_column = 0;
+    bool is_second = false;
+    for (int index in 2 .. size - 1) {
+        int octet = raw[index];
+        if (octet == ';' && !is_second) {
+            is_second = true;
+        } else if (octet >= '0' && octet <= '9') {
+            if (is_second) {
+                column = column * 10 + octet - '0';
+                digits_in_column = digits_in_column + 1;
+            } else {
+                row = row * 10 + octet - '0';
+                digits_in_row = digits_in_row + 1;
+            }
+            if (digits_in_row > 6 || digits_in_column > 6) {
+                return Position();
+            }
+        } else {
+            return Position();
+        }
+    }
+    if (digits_in_row == 0 || digits_in_column == 0) {
+        return Position();
+    }
+    return Position(row: row, column: column);
+}
+
+/// Is `raw` a cursor position report?
+pub bool is_cursor_report(bytes raw) {
+    return cursor_report(raw).row >= 0;
+}
+
+/// What a DECRQM answer for `mode` says (`CSI ? mode ; Ps $ y`): Ps, or -1 when the bytes are not that answer.
+pub int mode_reply(bytes raw, int mode) {
+    str head = "\x1b[?" + str(mode) + ";";
+    int head_size = head.size();
+    if (raw.size() != head_size + 3) {
+        return -1;
+    }
+    for (int index in 0 .. head_size) {
+        if (raw[index] != head.byte_at(index)) {
+            return -1;
+        }
+    }
+    if (raw[head_size] < '0' || raw[head_size] > '4' || raw[head_size + 1] != '$' || raw[head_size + 2] != 'y') {
+        return -1;
+    }
+    return raw[head_size] - '0';
+}
+
+/// One batch of questions and what has been answered. Feed it the bytes of each reply
+/// (`Event.Unknown`'s) in the order they come; `table` says what they add up to.
+pub type Probe {
+    /// The mode 2027 question is in this batch.
+    pub bool has_grapheme_query = false;
+    /// The width each question was drawn in, in the order asked (`PROBE_COUNT` slots, -1 for none yet).
+    pub List<int> widths = [];
+    /// How many cursor reports have arrived.
+    pub int answered = 0;
+    /// What mode 2027 answered: -1 nothing.
+    pub int grapheme_status = -1;
+    /// A report came from another row than the one asked on (the terminal wrapped, scrolled or is not what it says).
+    pub bool is_off_row = false;
+}
+
+/// The bytes that ask this batch (`request_bytes`).
+pub bytes Probe.request() {
+    return request_bytes(has_grapheme_query);
+}
+
+/// Take `raw` if it is one of the answers: a cursor position report (the next question's width is
+/// its column less one) or the mode 2027 answer. False for anything else: that is the user's, or
+/// another question's, and goes on to the program untouched.
+pub bool Probe.did_take(bytes raw) {
+    Position where = cursor_report(raw);
+    if (where.row >= 0) {
+        if (answered >= PROBE_COUNT) {
+            return false;
+        }
+        if (where.row != PROBE_ROW) {
+            is_off_row = true;
+            widths[answered] = -1;
+        } else {
+            widths[answered] = where.column - 1;
+        }
+        answered = answered + 1;
+        return true;
+    }
+    int status = mode_reply(raw, 2027);
+    if (status >= 0) {
+        grapheme_status = status;
+        return true;
+    }
+    return false;
+}
+
+/// Have all the cursor reports arrived?
+pub bool Probe.is_done() {
+    return answered >= PROBE_COUNT;
+}
+
+/// How many of the replies this batch asked for have not arrived.
+pub int Probe.outstanding() {
+    return PROBE_COUNT - answered;
+}
+
+/// The table these answers make. Unsound answers (the control questions measured wrong, or a report
+/// from the wrong row) make an unmeasured table; unanswered questions leave their classes at -1.
+pub Table Probe.table() {
+    if (answered == 0) {
+        return unmeasured("no answer");
+    }
+    if (widths[0] != 1 || (answered > 1 && widths[1] != 2) || answered < 2) {
+        return unmeasured("controls wrong");
+    }
+    Table table = Table();
+    for (int class_id in 0 .. CLASS_COUNT) {
+        int width = widths[class_id + 2];
+        if (is_off_row && width < 0) {
+            width = -1;
+        }
+        table.measured.push(width);
+        table.ours.push(TUI_text.cluster_columns(sample(class_id)));
+    }
+    table.is_measured = true;
+    table.answers = answered;
+    table.grapheme_status = grapheme_status;
+    table.outcome = "measured";
+    if (answered < PROBE_COUNT) {
+        table.outcome = "partial: " + str(answered) + " of " + str(PROBE_COUNT);
+    }
+    return table;
+}
+
+/// A batch to ask: `should_ask_grapheme` adds the mode 2027 question (the second batch, after the
+/// mode was switched on, does not).
+pub Probe probe(bool should_ask_grapheme) {
+    Probe out = Probe(has_grapheme_query: should_ask_grapheme);
+    for (int index in 0 .. PROBE_COUNT) {
+        out.widths.push(-1);
+    }
+    return out;
+}
+
+// --- borders that cannot be misaligned -------------------------------------------------
+
+/// `symbol` as ASCII when it is line drawing or a block element, else as it is: the lines are `-`
+/// and `|` (`=` and `|` double, `=` and `#` thick, `/` and `\` diagonals), every corner and junction
+/// `+`, the blocks `#` (shaded ones `.` `:` `#`, the lower eighths `_ . , = = + * #`, the left ones `#` or `|`).
+/// Used by a buffer whose terminal draws box drawing wider than one column (or told to, `Borders.Ascii`).
+pub str ascii_for(str symbol) {
+    if (symbol.size() != 3 || symbol.byte_at(0) != 0xE2) {
+        return symbol;
+    }
+    int second = symbol.byte_at(1);
+    int third = symbol.byte_at(2);
+    if (second == 0x94 || second == 0x95) {
+        return ascii_line(second, third);
+    }
+    if (second == 0x96 && third <= 0x9F) {
+        return ascii_block(third);
+    }
+    return symbol;
+}
+
+// U+2500..U+257F, as the second and third byte of E2 94 80 .. E2 95 BF
+str ascii_line(int second, int third) {
+    int code = (second - 0x94) * 64 + (third - 0x80);
+    // U+2500..U+250B: light and heavy lines, in pairs of horizontal then vertical
+    if (code < 0x0C) {
+        if ((code / 2) % 2 == 0) {
+            if (code % 2 == 1) {
+                return "=";
+            }
+            return "-";
+        }
+        return "|";
+    }
+    // U+250C..U+254B: corners, tees and crosses
+    if (code < 0x4C) {
+        return "+";
+    }
+    // U+254C..U+254F: dashed lines
+    if (code < 0x4E) {
+        return "-";
+    }
+    if (code < 0x50) {
+        return "|";
+    }
+    // U+2550..U+256C: double lines; the first is horizontal, the second vertical, the rest corners and junctions
+    if (code < 0x6D) {
+        if (code == 0x50) {
+            return "=";
+        }
+        if (code == 0x51) {
+            return "|";
+        }
+        return "+";
+    }
+    // U+256D..U+2570: rounded corners
+    if (code < 0x71) {
+        return "+";
+    }
+    if (code == 0x71) {
+        return "/";
+    }
+    if (code == 0x72) {
+        return "\\";
+    }
+    if (code == 0x73) {
+        return "X";
+    }
+    // U+2574..U+257F: half lines, left, up, right, down in light, heavy and mixed
+    if (code % 2 == 0) {
+        return "-";
+    }
+    return "|";
+}
+
+// U+2580..U+259F, as the third byte of E2 96 80..9F
+str ascii_block(int third) {
+    int code = third - 0x80;
+    if (code == 0x00 || code == 0x04) {
+        return "=";
+    }
+    if (code >= 0x01 && code <= 0x07) {
+        // lower one eighth .. seven eighths
+        if (code == 0x01) {
+            return "_";
+        }
+        if (code == 0x02) {
+            return ".";
+        }
+        if (code == 0x03) {
+            return ",";
+        }
+        if (code == 0x05) {
+            return "=";
+        }
+        if (code == 0x06) {
+            return "+";
+        }
+        return "*";
+    }
+    if (code == 0x08) {
+        return "#";
+    }
+    if (code >= 0x09 && code <= 0x0B) {
+        return "#";
+    }
+    if (code == 0x0C) {
+        return "#";
+    }
+    if (code >= 0x0D && code <= 0x0F) {
+        return "|";
+    }
+    if (code == 0x10) {
+        return "#";
+    }
+    if (code == 0x11) {
+        return ".";
+    }
+    if (code == 0x12) {
+        return ":";
+    }
+    if (code == 0x14) {
+        return "-";
+    }
+    if (code == 0x15) {
+        return "|";
+    }
+    return "#";
+}
+
+/// What `TUI_BORDERS` says: "ascii" and "unicode" as they are (any case), anything else (or nothing) "auto".
+pub Borders borders_from_env(str value) {
+    str lowered = value.to_lower();
+    if (lowered == "ascii") {
+        return Borders.Ascii;
+    }
+    if (lowered == "unicode") {
+        return Borders.Unicode;
+    }
+    return Borders.Auto;
+}
+
+/// Does `TUI_WIDTH_PROBE`'s value turn the calibration off ("off", "0", "no", "false"; any case)?
+pub bool is_probe_off(str value) {
+    str lowered = value.to_lower();
+    return lowered == "off" || lowered == "0" || lowered == "no" || lowered == "false";
+}

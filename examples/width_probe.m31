@@ -2,24 +2,40 @@
 //
 //   bash scripts/build.sh examples/width_probe.m31 -o width_probe && ./width_probe
 //
-// For each cluster: clear the screen, put the cursor on row 5, column 10, print the cluster, ask
-// where the cursor is (CSI 6 n, the cursor position report) and read the answer. The
-// difference is the number of columns the terminal advanced, which is what every later
-// cell in a row depends on. Printed at the end, one line per cluster:
+// It prints two tables. The first is what the library's own start-up calibration (0.14.0,
+// `Loop.calibrate_width`) found, class by class, and what it decided from it:
 //
-//   cluster  codepoints  tui width  terminal width  verdict  tui treats it as
+//   class  reference  library  measured  decision
 //
-// A verdict of DIFFERS means the library's width table and this terminal disagree: that is the
-// kind of cell the renderer calls "uncertain" and rewrites defensively (`TUI_text.is_uncertain_cluster`).
-// If a cluster DIFFERS and the last column says "certain", tell the maintainers: the policy
-// has a hole. Run it in each terminal you use (Terminal.app, iTerm2, Ghostty, WezTerm, kitty) and
-// keep the output: the table is the evidence. The terminal's own name is printed first
-// (TERM_PROGRAM, TERM, and its answer to XTVERSION, CSI > 0 q, when it gives one).
+// "certain" means the terminal drew the class as the library expects: the renderer diffs those
+// cells per cell, as it does ASCII, which is what makes a terminal like Alacritty, rio or kitty
+// cost nothing extra. "wide 2 (library 1)" means it disagrees: drawn at the measured width, and a
+// row with one in it is written from there to its end. "not measured" is the static policy of 0.13.0.
+// Under it: the calibration's time, what mode 2027 (grapheme clustering) answered, whether the loop
+// switched it on, and which borders `Loop.borders = Auto` would draw (ASCII `+-|` when box drawing
+// was measured wider than one column).
+//
+// The second table is one line per cluster, measured with a cursor position report each (clear the
+// screen, put the cursor on row 5, column 10, print the cluster, ask where the cursor is, `CSI 6 n`):
+//
+//   cluster  terminal (library)  verdict  policy
+//
+// A verdict of DIFFERS means the library's width table and this terminal disagree. The policy says how
+// the renderer treats the cluster given what the calibration measured: "certain", or "uncertain
+// (rewritten defensively)". If a cluster DIFFERS and the policy says "certain", tell the maintainers:
+// the policy has a hole. Run it in each terminal you use (Terminal.app, iTerm2, Ghostty, WezTerm, kitty,
+// Alacritty, rio) and keep the output: the tables are the evidence. The terminal's own name is printed
+// first (TERM_PROGRAM, TERM, and its answer to XTVERSION, CSI > 0 q, when it gives one).
+//
+//   TUI_WIDTH_PROBE=off ./width_probe     no calibration: the first table says "not measured"
+//   TUI_BORDERS=ascii ./width_probe       borders forced to ASCII (the last line says so)
 
 import io;
 import os;
 import term;
+import app.TUI_app;
 import core.TUI_text;
+import core.TUI_width;
 
 type Probe {
     str label;
@@ -148,6 +164,7 @@ void write_out(term.Writer writer) {
 
 List<str> table = [];
 str terminal_name = "";
+TUI_width.Table calibration = TUI_width.Table();
 match (term.raw()) {
     case Err(term.Error error): {
         print("width_probe needs a terminal: run it in Terminal.app, iTerm2, Ghostty, WezTerm or kitty");
@@ -156,6 +173,16 @@ match (term.raw()) {
     case Ok(term.Session session): {
         term.Writer writer = term.writer(io.stdout());
         term.Reader reader = term.reader(descriptor: 0);
+        // the library's own calibration, the one a `Loop` runs after entering the alternate screen
+        TUI_app.Loop loop = TUI_app.Loop();
+        term.Size size = TUI_app.screen_size();
+        loop.calibrate_width(TUI_app.TermLink(writer, reader), size.rows);
+        calibration = loop.width_table;
+        if (calibration.is_grapheme_set) {
+            // switched on by the calibration: back off before anything else is printed
+            writer.put(TUI_width.GRAPHEME_OFF);
+            write_out(writer);
+        }
         // the terminal's own name, if it says (XTVERSION): a DCS > | name ST reply
         writer.put("\x1b[>0q");
         write_out(writer);
@@ -182,7 +209,7 @@ match (term.raw()) {
             int column = read_column(reader, 400);
             str measured = "no answer";
             str verdict = "?";
-            int ours = TUI_text.width(probe.text);
+            int ours = calibration.columns(probe.text);
             if (column >= 0) {
                 int advance = column - 10;
                 measured = str(advance);
@@ -192,7 +219,7 @@ match (term.raw()) {
                 }
             }
             str policy = "certain";
-            if (TUI_text.is_uncertain_cluster(probe.text, ours)) {
+            if (!calibration.is_certain(probe.text)) {
                 policy = "uncertain (rewritten defensively)";
             }
             table.push(probe.label + "\t" + measured + " (tui " + str(ours) + ")\t" + verdict + "\t" + policy);
@@ -202,7 +229,52 @@ match (term.raw()) {
     }
 }
 print(terminal_name);
-print("cluster\tterminal (tui)\tverdict\ttui policy");
+print("");
+print("calibration: " + calibration.outcome + ", " + str(calibration.answers) + " of " + str(TUI_width.PROBE_COUNT) + " answers, " + str(calibration.elapsed_us) + " us");
+print("class\treference\tlibrary\tmeasured\tdecision");
+for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+    str reference = TUI_width.sample(class_id);
+    int measured = calibration.width_of(class_id);
+    str shown = "-";
+    if (measured >= 0) {
+        shown = str(measured);
+    }
+    print(TUI_width.class_name(class_id) + "\t" + reference + " " + code_points(reference) + "\t" + str(TUI_text.cluster_columns(reference)) + "\t" + shown + "\t" + calibration.decision(class_id));
+}
+str mode = "no answer (not supported, or not asked)";
+if (calibration.grapheme_status >= 0) {
+    mode = "answered " + str(calibration.grapheme_status) + " (0 unknown, 1 on, 2 off, 3 always on, 4 never)";
+}
+if (calibration.is_grapheme_set) {
+    mode = mode + "; the loop switched it on (and off on the way out)";
+}
+print("mode 2027 (grapheme clustering): " + mode);
+str border_choice = "unicode line drawing";
+if (calibration.is_ascii_lines) {
+    border_choice = "ASCII (+-|)";
+}
+print("borders (Loop.borders = Auto, TUI_BORDERS=" + os.env("TUI_BORDERS").or("") + "): " + border_choice);
+print("");
+print("cluster\tterminal (library, as measured)\tverdict\tpolicy");
 for (str row in table) {
     print(row);
+}
+
+str code_points(str text) {
+    List<str> out = [];
+    for (int code in text.chars()) {
+        out.push("U+" + hex(code));
+    }
+    return out.join(" ");
+}
+
+str hex(int value) {
+    str digits = "0123456789ABCDEF";
+    str out = "";
+    int rest = value;
+    while (rest > 0) {
+        out = digits.substr(rest % 16, rest % 16 + 1) + out;
+        rest = rest / 16;
+    }
+    return out;
 }

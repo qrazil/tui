@@ -1,0 +1,460 @@
+// The width calibration (0.14.0) on a pseudo-terminal.
+//
+//   TUI_WIDTH_CHILD=/path/to/width_child  width_pty      (tests/test.sh builds both)
+//
+// `width_child` is a real `Loop.run_with`; this program starts it on a pty and plays the terminal: it applies what the
+// child writes to an emulator (`TST_emulator`, with the width model of one of the owner's terminals), writes back
+// the cursor position reports the emulator answers, types keys among them, holds answers back, and reads what
+// the child logged (what it found, its events, and when, on the monotonic clock both processes share). What is
+// printed is only `ok` or `FAIL` lines, so the output can be compared with tests/width_pty.out.
+//
+// Timing is asserted so a slow machine cannot fail it: a LOWER bound is strict (a terminal that never answers is
+// waited for the whole budget, which no delay can make false), an UPPER bound is loose (a second or more of margin).
+// Writes never block (a closed pty is ignored) and the pty is drained while waiting.
+
+import io;
+import os;
+import proc;
+import text;
+import timer;
+import tests.TST_emulator;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void ok(Tally tally, str name, bool is_condition_true, str detail) {
+    if (is_condition_true) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     " + detail);
+}
+
+int now_ms() {
+    return timer.monotonic_ns() / 1000000;
+}
+
+/// How long the child may wait for answers, in the scenarios that wait for none.
+const int PROBE_MS = 400;
+/// Silence that ends a burst of what the child writes (a frame is one write, but the pty hands it over in pieces).
+const int QUIET_MS = 80;
+/// A generous allowance for a slow machine.
+const int LATE_MS = 2500;
+
+type Session {
+    proc.Pty pty;
+    str log;
+    TST_emulator.Link link;
+    bytes incoming = [];
+    bool is_open = true;
+    int seen = 0;
+}
+
+/// Write `data` to the child, as the terminal's answer or the user's typing; a pty that has gone is not this test's failure.
+void Session.write(bytes data) {
+    pty.master.set_deadline_ns(timer.monotonic_ns() + 2000000000);
+    Result<int, io.Error> wrote = pty.master.write_some(data);
+    pty.master.set_deadline_ns(0);
+}
+
+/// Apply what has arrived to the terminal and send what the terminal says (and the user types) to the child,
+/// piece by piece, in the order the plan gives.
+void Session.settle() {
+    if (incoming.size() == 0) {
+        return;
+    }
+    bytes arrived = incoming;
+    incoming = [];
+    link.send(arrived);
+    for (bytes piece in link.take_stream()) {
+        write(piece);
+        timer.sleep_ms(2);
+    }
+}
+
+/// Wait `milliseconds`, reading what the child draws; a burst that has gone quiet is applied to the terminal.
+void Session.pause(int milliseconds) {
+    int until_ms = now_ms() + milliseconds;
+    while (now_ms() < until_ms) {
+        if (!is_open) {
+            timer.sleep_ms(10);
+            continue;
+        }
+        int slice_ms = until_ms - now_ms();
+        if (slice_ms > QUIET_MS) {
+            slice_ms = QUIET_MS;
+        }
+        pty.master.set_deadline_ns(timer.monotonic_ns() + slice_ms * 1000000);
+        match (pty.master.read(4096)) {
+            case Ok(bytes chunk): {
+                if (chunk.size() == 0) {
+                    is_open = false;
+                } else {
+                    incoming.extend(chunk);
+                }
+            }
+            case Err(io.Error error): {
+                settle();
+            }
+        }
+    }
+    pty.master.set_deadline_ns(0);
+    settle();
+}
+
+List<str> Session.lines() {
+    match (io.read(log)) {
+        case Ok(str content): {
+            return text.lines(content);
+        }
+        case Err(io.Error error): {
+            List<str> none = [];
+            return none;
+        }
+    }
+}
+
+/// The log line that starts with `prefix` (the part after its stamp), "" if none yet.
+str Session.find(str prefix) {
+    for (str line in lines()) {
+        if (what_of(line).starts_with(prefix)) {
+            return what_of(line);
+        }
+    }
+    return "";
+}
+
+int Session.stamp(str prefix) {
+    for (str line in lines()) {
+        if (what_of(line).starts_with(prefix)) {
+            return stamp_of(line);
+        }
+    }
+    return -1;
+}
+
+/// The events logged after the `ready` line, as names.
+List<str> Session.events() {
+    List<str> out = [];
+    bool is_after = false;
+    for (str line in lines()) {
+        if (is_after) {
+            out.push(what_of(line));
+        }
+        if (what_of(line).starts_with("ready")) {
+            is_after = true;
+        }
+    }
+    return out;
+}
+
+str Session.field(str name) {
+    for (str part in text.split_whitespace(find("ready"))) {
+        if (part.starts_with(name + "=")) {
+            return part.substr(name.size() + 1, part.size());
+        }
+    }
+    return "";
+}
+
+void Session.finish() {
+    write("q".to_bytes());
+    pause(300);
+    Result<bool, proc.Error> killed = pty.kill(9);
+    Result<os.ExitStatus, proc.Error> status = pty.wait();
+}
+
+int stamp_of(str line) {
+    List<str> parts = text.split_whitespace(line);
+    if (parts.size() == 0) {
+        return -1;
+    }
+    match (text.parse_int(parts[0])) {
+        case Ok(int milliseconds): {
+            return milliseconds;
+        }
+        case Err(text.ParseError error): {
+            return -1;
+        }
+    }
+}
+
+str what_of(str line) {
+    List<str> parts = text.split_whitespace(line);
+    List<str> rest = [];
+    int index = 1;
+    while (index < parts.size()) {
+        rest.push(parts[index]);
+        index = index + 1;
+    }
+    return rest.join(" ");
+}
+
+/// A child on a pty, on a terminal of `TST_emulator.preset(preset)`, with the given budget and environment
+/// (`probe` for TUI_WIDTH_PROBE, `borders` for TUI_BORDERS). None if it never drew its first frame.
+Option<Session> start(str child, str log, str preset, int probe_ms, str probe, str borders, TST_emulator.Link plan) {
+    Result<int, io.Error> cleared = io.write(log, "");
+    Map<str, str> environment = os.env_map();
+    environment.set("TUI_WIDTH_PROBE", probe);
+    environment.set("TUI_BORDERS", borders);
+    match (proc.start_pty([child, log, str(probe_ms)], env: Option<Map<str, str>>.Some(environment))) {
+        case Ok(proc.Pty pty): {
+            Session session = Session(pty, log, plan);
+            int give_up_ms = now_ms() + 20000;
+            while (now_ms() < give_up_ms) {
+                session.pause(50);
+                if (session.find("ready") != "") {
+                    session.pause(300);
+                    return Option<Session>.Some(session);
+                }
+            }
+            session.finish();
+            return Option<Session>.None;
+        }
+        case Err(proc.Error error): {
+            return Option<Session>.None;
+        }
+    }
+}
+
+TST_emulator.Link link_for(str preset) {
+    return TST_emulator.Link(TST_emulator.preset(preset, 80, 24));
+}
+
+str screen_rows(Session session, int count) {
+    List<str> rows = [];
+    for (int y in 0 .. count) {
+        rows.push(str.from_chars(session.link.screen.row_text(y).chars().slice(0, 6)));
+    }
+    return rows.join("/");
+}
+
+void scenario_tests(Tally tally, str child, str directory) {
+    // --- a terminal that answers everything, and a user who types while it does --------------------
+    print("== kitty, with the user typing among the answers " + "=".repeat(20));
+    TST_emulator.Link plan = link_for("kitty");
+    plan.typed_first = "ab".to_bytes();
+    plan.typed_after = [3, 8, 14];
+    plan.typed_at = ["c".to_bytes(), "\x1b[1;2R".to_bytes(), "d\x1b[A".to_bytes()];
+    Option<Session> started = start(child, directory + "/kitty.log", "kitty", 1500, "on", "auto", plan);
+    match (started) {
+        case None: {
+            ok(tally, "kitty: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            ok(tally, "kitty: the child started", true, "");
+            check(tally, "kitty: the calibration measured all fourteen answers", session.field("outcome") + " " + session.field("answers"), "measured 14");
+            check(tally, "kitty: every class certain, mode 2027 already on (the loop did not set it)", str(is_all_certain_text(session.field("classes"))) + " " + session.field("grapheme") + " " + session.field("set") + " " + session.field("status"), "true true false 3");
+            check(tally, "kitty: the keys typed among the answers reached the program, in order, with Shift-F3 for ESC [ 1 ; 2 R", session.events().join(","), "a,b,c,shift+f3,d,up");
+            check(tally, "kitty: the border is Unicode line drawing on the screen", screen_rows(session, 3), "\u{250C}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}/\u{2502}    \u{2502}/\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}");
+            check(tally, "kitty: the frame was one write on a screen the child owns (no unknown sequence reached the terminal)", str(session.link.screen.unknown.size()), "0");
+            session.write("x".to_bytes());
+            session.pause(500);
+            check(tally, "kitty: and the loop reads on after the calibration", session.events().join(","), "a,b,c,shift+f3,d,up,x");
+            session.finish();
+        }
+    }
+    // --- the owner's terminals --------------------------------------------------------------------
+    print("== alacritty and rio: vs16 and a family disagree, the rest is certain " + "=".repeat(20));
+    List<str> owners = ["alacritty", "rio"];
+    for (str name in owners) {
+        Option<Session> run = start(child, directory + "/" + name + ".log", name, 1500, "on", "auto", link_for(name));
+        match (run) {
+            case None: {
+                ok(tally, name + ": the child started", false, "no first frame");
+            }
+            case Some(Session session): {
+                check(tally, name + ": measured", session.field("outcome") + " " + session.field("answers") + " ascii=" + session.field("ascii"), "measured 14 ascii=false");
+                check(tally, name + ": which classes disagree", disagreeing(session.field("classes")), "symbol+VS16,ZWJ_family");
+                check(tally, name + ": mode 2027 is not answered, so not set", session.field("status") + " " + session.field("set"), "-1 false");
+                check(tally, name + ": a Unicode border", screen_rows(session, 1), "\u{250C}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+                session.finish();
+            }
+        }
+    }
+    print("== terminal-app: answers cursor reports, nothing else " + "=".repeat(20));
+    Option<Session> apple = start(child, directory + "/apple.log", "terminal-app", 1500, "on", "auto", link_for("terminal-app"));
+    match (apple) {
+        case None: {
+            ok(tally, "terminal-app: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "terminal-app: measured", session.field("outcome") + " " + session.field("answers") + " " + session.field("status"), "measured 14 -1");
+            check(tally, "terminal-app: classes", disagreeing(session.field("classes")), "symbol+VS16,ZWJ_family");
+            session.finish();
+        }
+    }
+    print("== a terminal that draws East Asian Ambiguous wide " + "=".repeat(20));
+    Option<Session> wide = start(child, directory + "/wide.log", "box-wide", 1500, "on", "auto", link_for("box-wide"));
+    match (wide) {
+        case None: {
+            ok(tally, "box-wide: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "box-wide: box drawing and blocks measured wide, so ASCII borders", session.field("ascii") + " " + disagreeing(session.field("classes")), "true box_drawing,block_elements,arrows,Greek/Cyrillic,shapes");
+            check(tally, "box-wide: the border on a terminal that draws box drawing in two columns", screen_rows(session, 3), "+----+/|    |/+----+");
+            session.finish();
+        }
+    }
+    print("== TUI_BORDERS " + "=".repeat(50));
+    Option<Session> forced = start(child, directory + "/forced.log", "kitty", 1500, "on", "ascii", link_for("kitty"));
+    match (forced) {
+        case None: {
+            ok(tally, "TUI_BORDERS=ascii: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "TUI_BORDERS=ascii on kitty: ASCII by the user's word", session.field("ascii") + " " + screen_rows(session, 1), "true +----+");
+            session.finish();
+        }
+    }
+    Option<Session> unicode = start(child, directory + "/unicode.log", "box-wide", 1500, "on", "unicode", link_for("box-wide"));
+    match (unicode) {
+        case None: {
+            ok(tally, "TUI_BORDERS=unicode: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "TUI_BORDERS=unicode on a wide terminal: line drawing as told", session.field("ascii"), "false");
+            session.finish();
+        }
+    }
+    // --- mode 2027 ---------------------------------------------------------------------------------
+    print("== mode 2027 " + "=".repeat(52));
+    Option<Session> clustered = start(child, directory + "/mode.log", "mode-2027", 1500, "on", "auto", link_for("mode-2027"));
+    match (clustered) {
+        case None: {
+            ok(tally, "mode-2027: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "mode-2027: the loop switched clustering on and measured again: all certain", session.field("set") + " " + session.field("grapheme") + " " + str(is_all_certain_text(session.field("classes"))), "true true true");
+            check(tally, "mode-2027: the terminal has it on while the program runs", str(session.link.screen.grapheme_status), "1");
+            session.finish();
+            session.pause(300);
+            check(tally, "mode-2027: and off again on the way out (the shell gets the terminal as it was)", str(session.link.screen.grapheme_status), "2");
+        }
+    }
+    // --- a terminal that does not answer ------------------------------------------------------------
+    print("== no answer " + "=".repeat(52));
+    TST_emulator.Link quiet = link_for("mute");
+    int before_ms = now_ms();
+    Option<Session> mute = start(child, directory + "/mute.log", "mute", PROBE_MS, "on", "auto", quiet);
+    match (mute) {
+        case None: {
+            ok(tally, "mute: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            int took_ms = session.stamp("ready") - session.stamp("start");
+            check(tally, "mute: nothing measured, the static policy", session.field("outcome") + " " + session.field("answers"), "no_answer 0");
+            ok(tally, "mute: the start-up waited the whole budget (" + str(PROBE_MS) + " ms)", took_ms >= PROBE_MS - 50, "took " + str(took_ms) + " ms");
+            ok(tally, "mute: and no longer than that (with a second of margin)", took_ms < PROBE_MS + 1000, "took " + str(took_ms) + " ms");
+            session.write("k".to_bytes());
+            session.pause(500);
+            check(tally, "mute: the program is alive and hears keys", session.events().join(","), "k");
+            session.finish();
+        }
+    }
+    print("== partial answers, and the rest late " + "=".repeat(30));
+    TST_emulator.Link some = link_for("alacritty");
+    some.stop_after = 6;
+    Option<Session> partial = start(child, directory + "/partial.log", "alacritty", PROBE_MS, "on", "auto", some);
+    match (partial) {
+        case None: {
+            ok(tally, "partial: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "partial: six answers make a partial table", session.field("outcome") + " " + session.field("answers"), "partial:_6_of_14 6");
+            ok(tally, "partial: the start-up waited for the rest until the budget", session.stamp("ready") - session.stamp("start") >= PROBE_MS - 50, "took " + str(session.stamp("ready") - session.stamp("start")) + " ms");
+            // the eight that never came arrive now, late: the loop's own, not keys
+            for (int count in 0 .. 8) {
+                session.write("\x1b[2;2R".to_bytes());
+            }
+            session.write("z".to_bytes());
+            session.pause(600);
+            check(tally, "partial: the late answers are swallowed, the key typed after them is heard", session.events().join(","), "z");
+            session.finish();
+        }
+    }
+    // --- off ---------------------------------------------------------------------------------------------
+    print("== TUI_WIDTH_PROBE=off " + "=".repeat(40));
+    TST_emulator.Link untouched = link_for("kitty");
+    Option<Session> off = start(child, directory + "/off.log", "kitty", 1500, "off", "auto", untouched);
+    match (off) {
+        case None: {
+            ok(tally, "off: the child started", false, "no first frame");
+        }
+        case Some(Session session): {
+            check(tally, "off: nothing was asked of the terminal", str(session.link.screen.queries), "0");
+            check(tally, "off: the loop says so", session.field("outcome") + " " + session.field("answers"), "disabled 0");
+            ok(tally, "off: and the first frame did not wait for answers", session.stamp("ready") - session.stamp("start") < 1000, "took " + str(session.stamp("ready") - session.stamp("start")) + " ms");
+            session.finish();
+        }
+    }
+}
+
+/// Does every class of the `classes=` field say "certain"?
+bool is_all_certain_text(str field) {
+    for (str decision in field.split(",")) {
+        if (decision != "certain") {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// The names of the classes that did not say "certain", comma separated (the log has classes in a fixed order).
+str disagreeing(str field) {
+    List<str> names = ["box_drawing", "block_elements", "arrows", "Greek/Cyrillic", "shapes", "Braille", "emoji", "symbol+VS16", "flag", "ZWJ_family", "combining", "private_use"];
+    List<str> out = [];
+    int index = 0;
+    for (str decision in field.split(",")) {
+        if (decision != "certain" && index < names.size()) {
+            out.push(names[index]);
+        }
+        index = index + 1;
+    }
+    return out.join(",");
+}
+
+str child_path = "";
+match (os.env("TUI_WIDTH_CHILD")) {
+    case Some(str path): {
+        child_path = path;
+    }
+    case None: {
+    }
+}
+str log_directory = ".";
+match (os.env("TUI_WIDTH_LOGDIR")) {
+    case Some(str path): {
+        log_directory = path;
+    }
+    case None: {
+    }
+}
+Tally score = Tally();
+if (child_path == "") {
+    print("FAIL TUI_WIDTH_CHILD is not set");
+    os.exit(1);
+}
+scenario_tests(score, child_path, log_directory);
+print("");
+print("-- " + str(score.pass) + " passed, " + str(score.fail) + " failed");
+if (score.fail > 0) {
+    os.exit(1);
+}

@@ -1,0 +1,640 @@
+// The width calibration (0.14.0): the probe, the table it makes, the borders that cannot misalign.
+//
+//   bash tests/test.sh
+//
+// Everything here is in one process: `TST_emulator.Link` is the terminal the calibration talks to (an emulator that answers
+// cursor position reports by its own width model, so the probe is exercised from the bytes it writes to the
+// decisions it takes), and `TUI_app.Loop.calibrate_width` is the real one. The pty test (`width_pty.m31`)
+// runs the same loop on a real pseudo-terminal.
+
+import os;
+import term;
+import timer;
+import app.TUI_app;
+import app.TUI_diff;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
+import core.TUI_width;
+import tests.TST_emulator;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void ok(Tally tally, str name, bool is_condition_true) {
+    if (is_condition_true) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+}
+
+int class_name_index(str name) {
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        if (TUI_width.class_name(class_id) == name) {
+            return class_id;
+        }
+    }
+    return -1;
+}
+
+str code_points(str text) {
+    List<str> out = [];
+    for (int code in text.chars()) {
+        out.push(hex(code));
+    }
+    return out.join(" ");
+}
+
+str hex(int value) {
+    str digits = "0123456789ABCDEF";
+    str out = "";
+    int rest = value;
+    while (rest > 0) {
+        out = digits.substr(rest % 16, rest % 16 + 1) + out;
+        rest = rest / 16;
+    }
+    if (out == "") {
+        return "0";
+    }
+    return out;
+}
+
+// --- the terminal and the loop it is calibrated against ----------------------------------
+
+type Trial {
+    TUI_app.Loop loop;
+    TST_emulator.Link link;
+    int elapsed_us = 0;
+}
+
+Trial calibrate(str name) {
+    TST_emulator.Screen screen = TST_emulator.preset(name, 80, 24);
+    return calibrate_on(screen);
+}
+
+Trial calibrate_on(TST_emulator.Screen screen) {
+    TUI_app.Loop loop = TUI_app.Loop();
+    TST_emulator.Link link = TST_emulator.Link(screen);
+    return calibrate_with(loop, link);
+}
+
+Trial calibrate_with(TUI_app.Loop loop, TST_emulator.Link link) {
+    int started = timer.monotonic_ns();
+    loop.calibrate_width(link, link.screen.rows);
+    return Trial(loop, link, elapsed_us: (timer.monotonic_ns() - started) / 1000);
+}
+
+List<str> terminals(bool is_all) {
+    List<str> out = ["ideal", "alacritty", "rio", "kitty", "terminal-app"];
+    if (is_all) {
+        out.push("box-wide");
+        out.push("mode-2027");
+        out.push("mute");
+    }
+    return out;
+}
+
+/// One line for a table: every class, as the table decided it.
+str decisions(TUI_width.Table table) {
+    List<str> parts = [];
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        parts.push(TUI_width.class_name(class_id) + "=" + table.decision(class_id));
+    }
+    return parts.join(", ");
+}
+
+// --- the classes -------------------------------------------------------------------------
+
+void class_tests(Tally tally) {
+    print("== which class a cluster is in " + "=".repeat(30));
+    check(tally, "class: box drawing", str(TUI_width.class_of("\u{2500}")) + str(TUI_width.class_of("\u{257F}")) + str(TUI_width.class_of("\u{2502}")), "000");
+    check(tally, "class: blocks", str(TUI_width.class_of("\u{2580}")) + " " + str(TUI_width.class_of("\u{259F}")) + " " + str(TUI_width.class_of("\u{2588}")), "1 1 1");
+    check(tally, "class: arrows", str(TUI_width.class_of("\u{2190}")) + " " + str(TUI_width.class_of("\u{21FF}")) + " " + str(TUI_width.class_of("\u{2192}")), "2 2 2");
+    check(tally, "class: Greek and Cyrillic", str(TUI_width.class_of("\u{0391}")) + " " + str(TUI_width.class_of("\u{03C9}")) + " " + str(TUI_width.class_of("\u{0416}")) + " " + str(TUI_width.class_of("\u{04FF}")) + " " + str(TUI_width.class_of("\u{052F}")), "3 3 3 3 3");
+    check(tally, "class: not Greek: a Latin letter, Armenian", str(TUI_width.class_of("\u{E9}")) + " " + str(TUI_width.class_of("\u{0531}")), "-1 -1");
+    check(tally, "class: shapes", str(TUI_width.class_of("\u{25A0}")) + " " + str(TUI_width.class_of("\u{25CF}")) + " " + str(TUI_width.class_of("\u{25FF}")), "4 4 4");
+    check(tally, "class: Braille", str(TUI_width.class_of("\u{2800}")) + " " + str(TUI_width.class_of("\u{28FF}")), "5 5");
+    check(tally, "class: older emoji", str(TUI_width.class_of("\u{1F300}")) + " " + str(TUI_width.class_of("\u{1F600}")) + " " + str(TUI_width.class_of("\u{1F64F}")), "6 6 6");
+    check(tally, "class: not the newer emoji (a table may lack them)", str(TUI_width.class_of("\u{1F680}")) + " " + str(TUI_width.class_of("\u{1FAE8}")), "-1 -1");
+    check(tally, "class: a symbol with U+FE0F", str(TUI_width.class_of("\u{2764}\u{FE0F}")) + " " + str(TUI_width.class_of("\u{26A0}\u{FE0F}")), "7 7");
+    check(tally, "class: not a keycap, a letter with a selector, a skin tone", str(TUI_width.class_of("1\u{FE0F}\u{20E3}")) + " " + str(TUI_width.class_of("a\u{FE0F}")) + " " + str(TUI_width.class_of("\u{1F44D}\u{1F3FD}")), "-1 -1 -1");
+    check(tally, "class: a flag", str(TUI_width.class_of("\u{1F1E9}\u{1F1EA}")), "8");
+    check(tally, "class: not a lone regional indicator", str(TUI_width.class_of("\u{1F1E9}")), "-1");
+    check(tally, "class: a ZWJ family and a ZWJ profession", str(TUI_width.class_of("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")) + " " + str(TUI_width.class_of("\u{1F9D1}\u{200D}\u{1F4BB}")), "9 9");
+    check(tally, "class: a letter with a combining accent", str(TUI_width.class_of("e\u{301}")) + " " + str(TUI_width.class_of("E\u{300}")), "10 10");
+    check(tally, "class: a letter with two marks, not a mark of another block, not a mark first", str(TUI_width.class_of("a\u{308}\u{301}")) + " " + str(TUI_width.class_of("a\u{483}")) + " " + str(TUI_width.class_of("\u{301}a")), "10 -1 -1");
+    check(tally, "class: private use, in the BMP and in the planes", str(TUI_width.class_of("\u{E0B0}")) + " " + str(TUI_width.class_of("\u{F115}")) + " " + str(TUI_width.class_of("\u{F0001}")) + " " + str(TUI_width.class_of("\u{10FFFD}")), "11 11 11 11");
+    check(tally, "class: none for ASCII, CJK, Latin, Hangul, a fullwidth form", str(TUI_width.class_of("a")) + " " + str(TUI_width.class_of("\u{4E2D}")) + " " + str(TUI_width.class_of("\u{E9}")) + " " + str(TUI_width.class_of("\u{D55C}")) + " " + str(TUI_width.class_of("\u{FF21}")), "-1 -1 -1 -1 -1");
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        check(tally, "the reference character of " + TUI_width.class_name(class_id) + " is in its class", str(TUI_width.class_of(TUI_width.sample(class_id))), str(class_id));
+    }
+}
+
+void reply_tests(Tally tally) {
+    print("== replies " + "=".repeat(50));
+    TUI_width.Position where = TUI_width.cursor_report("\x1b[2;3R".to_bytes());
+    check(tally, "a cursor report is read", str(where.row) + "," + str(where.column), "2,3");
+    where = TUI_width.cursor_report("\x1b[12;130R".to_bytes());
+    check(tally, "a report with more digits", str(where.row) + "," + str(where.column), "12,130");
+    ok(tally, "not a report: no column", !TUI_width.is_cursor_report("\x1b[2R".to_bytes()));
+    ok(tally, "not a report: a private marker", !TUI_width.is_cursor_report("\x1b[?2;3R".to_bytes()));
+    ok(tally, "not a report: a letter in it", !TUI_width.is_cursor_report("\x1b[2;3xR".to_bytes()));
+    ok(tally, "not a report: another final", !TUI_width.is_cursor_report("\x1b[2;3H".to_bytes()));
+    ok(tally, "not a report: no escape", !TUI_width.is_cursor_report("[2;3R".to_bytes()));
+    ok(tally, "not a report: empty parts", !TUI_width.is_cursor_report("\x1b[;3R".to_bytes()) && !TUI_width.is_cursor_report("\x1b[2;R".to_bytes()));
+    check(tally, "the mode 2027 answer: supported and off", str(TUI_width.mode_reply("\x1b[?2027;2$y".to_bytes(), 2027)), "2");
+    check(tally, "the mode 2027 answer: always on", str(TUI_width.mode_reply("\x1b[?2027;3$y".to_bytes(), 2027)), "3");
+    check(tally, "the mode answer of another mode is not it", str(TUI_width.mode_reply("\x1b[?2026;2$y".to_bytes(), 2027)), "-1");
+    check(tally, "a bad status is not an answer", str(TUI_width.mode_reply("\x1b[?2027;9$y".to_bytes(), 2027)), "-1");
+    // what the decoder does with a report: row 2 or more is an Unknown, row 1 is Shift-F3 (so the probe is never on row 1)
+    List<term.Event> events = term.decode("\x1b[2;3R".to_bytes());
+    ok(tally, "the decoder hands a report on row 2 over as Unknown", events.size() == 1 && events[0].to_str().starts_with("unknown"));
+    events = term.decode("\x1b[1;2R".to_bytes());
+    check(tally, "the decoder reads ESC [ 1 ; 2 R as Shift-F3 (why the questions are asked on row 2)", events[0].to_str(), "shift+f3");
+    check(tally, "the questions are asked on row 2", str(TUI_width.PROBE_ROW), "2");
+}
+
+void request_tests(Tally tally) {
+    print("== the request " + "=".repeat(50));
+    str text = TUI_diff.show(TUI_width.request_bytes(true));
+    ok(tally, "the batch starts with the mode 2027 question", text.starts_with("\\e[?2027$p"));
+    ok(tally, "and has no such question when it is the second", !TUI_diff.show(TUI_width.request_bytes(false)).contains("2027"));
+    int asked = text.split("\\e[6n").size() - 1;
+    check(tally, "one cursor report is asked for per question", str(asked), str(TUI_width.PROBE_COUNT));
+    ok(tally, "every question is on row 2", !text.contains("\\e[1;") && text.contains("\\e[2;1H"));
+    ok(tally, "the batch ends clearing the screen", text.ends_with("\\e[2J"));
+}
+
+// --- what the calibration found on each terminal -----------------------------------------
+
+void terminal_tests(Tally tally) {
+    print("== what the calibration found on each terminal " + "=".repeat(20));
+    for (str name in terminals(true)) {
+        Trial trial = calibrate(name);
+        TUI_width.Table table = trial.loop.width_table;
+        print("-- " + name + ": " + table.outcome + ", " + str(table.answers) + " answers, grapheme status " + str(table.grapheme_status) + ", mode 2027 " + str(table.is_grapheme_mode) + ", ascii lines " + str(table.is_ascii_lines));
+        print("   " + decisions(table));
+    }
+    Trial ideal = calibrate("ideal");
+    TUI_width.Table table = ideal.loop.width_table;
+    ok(tally, "ideal: measured, every class certain", table.is_measured && is_all_certain(table));
+    check(tally, "ideal: one write for the whole batch", str(ideal.link.writes), "1");
+    check(tally, "ideal: not asked about borders (box is one column)", str(table.is_ascii_lines), "false");
+    Trial alacritty = calibrate("alacritty");
+    table = alacritty.loop.width_table;
+    check(tally, "alacritty: box, blocks, arrows, Greek, shapes, Braille, emoji, flag, combining, private use are certain", certain_names(table), "box drawing, block elements, arrows, Greek/Cyrillic, shapes, Braille, emoji, flag, combining, private use");
+    check(tally, "alacritty: a symbol with U+FE0F is one column (the library says two)", table.decision(TUI_width.VS16), "narrow 1 (library 2)");
+    check(tally, "alacritty: a family is six columns (the library says two)", table.decision(TUI_width.ZWJ), "wide 6 (library 2)");
+    check(tally, "alacritty: mode 2027 is not answered", str(table.grapheme_status), "-1");
+    check(tally, "alacritty: the library draws a heart with FE0F in one column of the cell", str(table.columns("\u{2764}\u{FE0F}")), "1");
+    check(tally, "alacritty: and a family in two (a cell holds no more: the rest is written over)", str(table.columns("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")), "2");
+    ok(tally, "alacritty: a heart with FE0F is uncertain, a flag is not", !table.is_certain("\u{2764}\u{FE0F}") && table.is_certain("\u{1F1E9}\u{1F1EA}"));
+    ok(tally, "alacritty: borders stay Unicode", !table.is_ascii_lines);
+    check(tally, "alacritty: one write", str(alacritty.link.writes), "1");
+    Trial rio = calibrate("rio");
+    check(tally, "rio decides as alacritty does", decisions(rio.loop.width_table), decisions(table));
+    Trial kitty = calibrate("kitty");
+    table = kitty.loop.width_table;
+    ok(tally, "kitty: every class certain (U+FE0F widens, a family is two)", is_all_certain(table));
+    check(tally, "kitty: mode 2027 is always on", str(table.grapheme_status) + " " + str(table.is_grapheme_mode) + " " + str(table.is_grapheme_set), "3 true false");
+    check(tally, "kitty: one write (nothing to switch on)", str(kitty.link.writes), "1");
+    Trial apple = calibrate("terminal-app");
+    table = apple.loop.width_table;
+    check(tally, "terminal-app: measured though it answers no mode questions", table.outcome + " " + str(table.grapheme_status), "measured -1");
+    check(tally, "terminal-app: a symbol with U+FE0F and a family disagree", table.decision(TUI_width.VS16) + "; " + table.decision(TUI_width.ZWJ), "narrow 1 (library 2); wide 6 (library 2)");
+    Trial wide = calibrate("box-wide");
+    table = wide.loop.width_table;
+    check(tally, "box-wide: box drawing and blocks measured two columns", table.decision(TUI_width.BOX) + "; " + table.decision(TUI_width.BLOCK), "wide 2 (library 1); wide 2 (library 1)");
+    check(tally, "box-wide: arrows, Greek and shapes too, Braille not", table.decision(TUI_width.ARROW) + "; " + table.decision(TUI_width.GREEK) + "; " + table.decision(TUI_width.SHAPE) + "; " + table.decision(TUI_width.BRAILLE), "wide 2 (library 1); wide 2 (library 1); wide 2 (library 1); certain");
+    ok(tally, "box-wide: borders are ASCII by themselves", table.is_ascii_lines);
+    ok(tally, "box-wide: a box is not certain and is two columns", !table.is_certain("\u{2500}") && table.columns("\u{2500}") == 2);
+    Trial switched = calibrate("mode-2027");
+    table = switched.loop.width_table;
+    ok(tally, "mode-2027: the terminal had clustering off, the loop switched it on", table.is_grapheme_set && table.is_grapheme_mode && switched.link.screen.is_grapheme_on());
+    check(tally, "mode-2027: measured again with it on, so every class is certain", str(is_all_certain(table)) + " " + table.outcome, "true measured");
+    check(tally, "mode-2027: two writes (the first batch, then the switch and the second batch)", str(switched.link.writes), "2");
+    ok(tally, "mode-2027: the leave sequence switches it off again", switched.loop.leave_sequence().contains(TUI_width.GRAPHEME_OFF));
+    ok(tally, "other terminals' leave sequences do not touch the mode", !calibrate("alacritty").loop.leave_sequence().contains("2027"));
+    Trial mute = calibrate("mute");
+    table = mute.loop.width_table;
+    check(tally, "mute: no answer, nothing measured, the static policy", table.outcome + " " + str(table.is_measured) + " " + str(table.answers), "no answer false 0");
+    check(tally, "mute: the static policy is in force (box is certain, an arrow is not)", str(table.is_certain("\u{2500}")) + " " + str(table.is_certain("\u{2192}")), "true false");
+    check(tally, "mute: one write, and it waited for the reports (reads happened)", str(mute.link.writes) + " " + str(mute.link.reads > 0), "1 true");
+    TUI_app.Loop off = TUI_app.Loop(should_calibrate_width: false);
+    TST_emulator.Link quiet = TST_emulator.Link(TST_emulator.preset("kitty", 80, 24));
+    off.calibrate_width(quiet, 24);
+    check(tally, "should_calibrate_width off: nothing is written", str(quiet.writes) + " " + off.width_table.outcome, "0 disabled");
+    TUI_app.Loop tiny = TUI_app.Loop();
+    TST_emulator.Link one_row = TST_emulator.Link(TST_emulator.preset("kitty", 80, 1));
+    tiny.calibrate_width(one_row, 1);
+    check(tally, "a one-row screen is not asked", str(one_row.writes) + " " + tiny.width_table.outcome, "0 screen too small");
+    ok(tally, "TUI_WIDTH_PROBE: off, 0, no, false are off, any case", TUI_width.is_probe_off("off") && TUI_width.is_probe_off("OFF") && TUI_width.is_probe_off("0") && TUI_width.is_probe_off("No") && TUI_width.is_probe_off("false"));
+    ok(tally, "TUI_WIDTH_PROBE: on, auto, empty are not", !TUI_width.is_probe_off("on") && !TUI_width.is_probe_off("auto") && !TUI_width.is_probe_off(""));
+    // the loop takes the budget it is given
+    TUI_app.Loop brief = TUI_app.Loop(width_probe_ms: 40);
+    TST_emulator.Link silent = TST_emulator.Link(TST_emulator.preset("mute", 80, 24));
+    int started = timer.monotonic_ns();
+    brief.calibrate_width(silent, 24);
+    int took_ms = (timer.monotonic_ns() - started) / 1000000;
+    ok(tally, "a terminal that answers nothing costs at most the budget (the test link answers at once: well under it)", took_ms < 40 + 500);
+}
+
+bool is_all_certain(TUI_width.Table table) {
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        if (table.decision(class_id) != "certain") {
+            return false;
+        }
+    }
+    return true;
+}
+
+str certain_names(TUI_width.Table table) {
+    List<str> names = [];
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        if (table.decision(class_id) == "certain") {
+            names.push(TUI_width.class_name(class_id));
+        }
+    }
+    return names.join(", ");
+}
+
+// --- the failure modes ----------------------------------------------------------------------
+
+str event_names(List<term.Event> events) {
+    List<str> names = [];
+    for (term.Event event in events) {
+        names.push(event.to_str());
+    }
+    return names.join(",");
+}
+
+List<term.Event> replayed(TUI_app.Loop loop) {
+    List<term.Event> out = [];
+    while (true) {
+        match (loop.take_replayed()) {
+            case Some(term.Event event): {
+                out.push(event);
+            }
+            case None: {
+                return out;
+            }
+        }
+    }
+}
+
+void failure_tests(Tally tally) {
+    print("== failure modes " + "=".repeat(45));
+    // partial answers: only the first five arrive (the two controls and three classes)
+    TST_emulator.Link partial = TST_emulator.Link(TST_emulator.preset("box-wide", 80, 24));
+    partial.stop_after = 5;
+    Trial trial = calibrate_with(TUI_app.Loop(), partial);
+    TUI_width.Table table = trial.loop.width_table;
+    check(tally, "partial: five of fourteen answers make a partial table", table.outcome, "partial: 5 of 14");
+    check(tally, "partial: the classes that were asked are measured, the others are not", table.decision(TUI_width.BOX) + "; " + table.decision(TUI_width.BLOCK) + "; " + table.decision(TUI_width.ARROW) + "; " + table.decision(TUI_width.GREEK), "wide 2 (library 1); wide 2 (library 1); wide 2 (library 1); not measured");
+    ok(tally, "partial: an unmeasured class follows the static rule", table.is_certain("\u{03B1}") == false && table.is_certain("\u{2502}") == false);
+    ok(tally, "partial: the nine replies that never came are outstanding (and swallowed when they do)", trial.loop.late_reports == 9);
+    // only one answer: the control for ASCII, nothing else to know
+    TST_emulator.Link barely = TST_emulator.Link(TST_emulator.preset("alacritty", 80, 24));
+    barely.stop_after = 1;
+    trial = calibrate_with(TUI_app.Loop(), barely);
+    check(tally, "partial: one answer is not enough to trust (the second control is missing)", trial.loop.width_table.outcome + " " + str(trial.loop.width_table.is_measured), "controls wrong false");
+    // an answer cut in half: the decoder holds it, nothing is lost, nothing is taken for a key
+    TST_emulator.Link cut = TST_emulator.Link(TST_emulator.preset("alacritty", 80, 24));
+    cut.stop_after = 6;
+    cut.is_cut_last = true;
+    trial = calibrate_with(TUI_app.Loop(), cut);
+    check(tally, "cut: six whole answers and half of a seventh", trial.loop.width_table.outcome, "partial: 6 of 14");
+    check(tally, "cut: no event was made of the half (it is held for the loop's own reads)", str(replayed(trial.loop).size()) + " " + str(cut.decoder.pending() > 0), "0 true");
+    // keys typed while the answers arrive: before, between and after them, in order, and Shift-F3 is not an answer
+    TST_emulator.Link busy = TST_emulator.Link(TST_emulator.preset("alacritty", 80, 24));
+    busy.typed_first = "ab".to_bytes();
+    busy.typed_after = [1, 5, 14];
+    busy.typed_at = ["c".to_bytes(), "\x1b[1;2R".to_bytes(), "d\x1b[A".to_bytes()];
+    trial = calibrate_with(TUI_app.Loop(), busy);
+    // what came after the last answer is still to be read: the loop's own reads get it
+    List<term.Event> before_done = replayed(trial.loop);
+    List<str> after_done = [];
+    while (true) {
+        match (busy.next(1)) {
+            case Some(term.Event event): {
+                after_done.push(event.to_str());
+            }
+            case None: {
+                break;
+            }
+        }
+    }
+    check(tally, "interleaved: every key typed meanwhile is handed on, in order (and ESC[1;2R is Shift-F3)", event_names(before_done) + "," + after_done.join(","), "a,b,c,shift+f3,d,up");
+    check(tally, "interleaved: the answers were all taken", trial.loop.width_table.outcome + " " + str(trial.loop.width_table.answers), "measured 14");
+    check(tally, "interleaved: and the table is what it is without the typing", decisions(trial.loop.width_table), decisions(calibrate("alacritty").loop.width_table));
+    // a lone Escape typed in the middle, and a Ctrl key and a multi-byte character
+    TST_emulator.Link rough = TST_emulator.Link(TST_emulator.preset("kitty", 80, 24));
+    rough.typed_after = [2, 3];
+    rough.typed_at = ["\u{E9}".to_bytes(), "\x03".to_bytes()];
+    trial = calibrate_with(TUI_app.Loop(), rough);
+    check(tally, "interleaved: a character and a control key are handed on whole", event_names(replayed(trial.loop)), "\u{E9},ctrl+c");
+    // the loop's own other answers (the synchronized-output reply, the device attributes) are not lost either
+    TST_emulator.Link others = TST_emulator.Link(TST_emulator.preset("kitty", 80, 24));
+    others.typed_first = "\x1b[?2026;2$y".to_bytes();
+    others.typed_after = [14];
+    others.typed_at = ["\x1b[?62;22c".to_bytes()];
+    trial = calibrate_with(TUI_app.Loop(), others);
+    List<term.Event> kept = replayed(trial.loop);
+    check(tally, "interleaved: the replies to other questions are kept, in order", str(kept.size()) + " " + TUI_diff.show(raw_of(kept[0])) + " " + TUI_diff.show(raw_of(kept[1])), "2 \\e[?2026;2$y \\e[?62;22c");
+    // wrong answers: every column 4 (the controls are wrong), and a row that is not row 2
+    TUI_width.Probe wrong = TUI_width.probe(true);
+    for (int index in 0 .. TUI_width.PROBE_COUNT) {
+        ok(tally, "wrong: a report is taken", wrong.did_take("\x1b[2;4R".to_bytes()));
+    }
+    check(tally, "wrong: controls that measure 3 are not trusted: nothing is measured", wrong.table().outcome, "controls wrong");
+    TUI_width.Probe shifted = TUI_width.probe(true);
+    for (int index in 0 .. TUI_width.PROBE_COUNT) {
+        str row = "2";
+        str column = "2";
+        if (index == 5) {
+            row = "3";
+        }
+        if (index == 1) {
+            column = "3";
+        }
+        shifted.did_take(("\x1b[" + row + ";" + column + "R").to_bytes());
+    }
+    TUI_width.Table seen = shifted.table();
+    check(tally, "wrong: a report from another row leaves that class unmeasured", seen.outcome + " " + str(seen.width_of(3)), "measured -1");
+    ok(tally, "an extra report after the last is not taken (it is the program's)", !wrong.did_take("\x1b[2;2R".to_bytes()));
+    // answers that arrive after the calibration gave up
+    TST_emulator.Link late = TST_emulator.Link(TST_emulator.preset("kitty", 80, 24));
+    late.is_held = true;
+    TUI_app.Loop slow = TUI_app.Loop(width_probe_ms: 20);
+    trial = calibrate_with(slow, late);
+    check(tally, "late: nothing answered in time", trial.loop.width_table.outcome, "no answer");
+    late.release();
+    int swallowed = 0;
+    int passed = 0;
+    TUI_app.Loop receiver = trial.loop;
+    for (int index in 0 .. 20) {
+        match (late.next(1)) {
+            case Some(term.Event event): {
+                TUI_app.Action action = receiver.dispatch(event, Noted(), TUI_app.NoMouse());
+                match (action) {
+                    case Continue: {
+                        swallowed = swallowed + 1;
+                    }
+                    case Redraw: {
+                        passed = passed + 1;
+                    }
+                    case Quit: {
+                    }
+                }
+            }
+            case None: {
+            }
+        }
+    }
+    check(tally, "late: the fourteen late reports (and the mode answer) are the loop's, not the program's", str(swallowed) + " " + str(passed), "15 0");
+    TUI_app.Action genuine = receiver.dispatch(term.Event.Unknown("\x1b[5;9R".to_bytes()), Noted(), TUI_app.NoMouse());
+    check(tally, "late: a report after those is the program's again", action_name(genuine), "redraw");
+}
+
+pub type Noted {
+    pub int unused = 0;
+}
+
+pub TUI_app.Action Noted.handle(term.Event event) {
+    return TUI_app.Action.Redraw;
+}
+
+str action_name(TUI_app.Action action) {
+    match (action) {
+        case Continue: {
+            return "continue";
+        }
+        case Redraw: {
+            return "redraw";
+        }
+        case Quit: {
+            return "quit";
+        }
+    }
+}
+
+bytes raw_of(term.Event event) {
+    match (event) {
+        case Unknown(bytes raw): {
+            return raw;
+        }
+        case Key(term.Key key): {
+            return [];
+        }
+        case Mouse(term.Mouse report): {
+            return [];
+        }
+        case Paste(str text): {
+            return [];
+        }
+    }
+}
+
+// --- borders ----------------------------------------------------------------------------------
+
+str block_text(TUI_buffer.Buffer buffer, int y) {
+    return buffer.row_text(y);
+}
+
+TUI_buffer.Buffer buffer_for(TUI_width.Table table, int columns, int rows) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(columns, rows);
+    buffer.table = table;
+    return buffer;
+}
+
+void border_tests(Tally tally) {
+    print("== borders that cannot misalign " + "=".repeat(30));
+    TUI_width.Table plain = TUI_width.Table();
+    TUI_buffer.Buffer unicode = buffer_for(plain, 6, 3);
+    TUI_widget.Block block = TUI_widget.Block();
+    block.render(unicode, unicode.area());
+    check(tally, "a Block draws Unicode line drawing on a terminal not measured", block_text(unicode, 0) + "/" + block_text(unicode, 1), "\u{250C}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}/\u{2502}    \u{2502}");
+    TUI_width.Table wide = calibrate("box-wide").loop.width_table;
+    TUI_buffer.Buffer safe = buffer_for(wide, 6, 3);
+    block.render(safe, safe.area());
+    check(tally, "on a terminal that draws box drawing wide a Block is ASCII", block_text(safe, 0) + "/" + block_text(safe, 1) + "/" + block_text(safe, 2), "+----+/|    |/+----+");
+    TUI_widget.Block rounded = TUI_widget.Block(borders: TUI_widget.Borders.Rounded, title: "ab");
+    TUI_buffer.Buffer round_safe = buffer_for(wide, 8, 3);
+    rounded.render(round_safe, round_safe.area());
+    check(tally, "rounded, with a title", block_text(round_safe, 0) + "/" + block_text(round_safe, 2), "+ab----+/+------+");
+    TUI_widget.Block double_line = TUI_widget.Block(borders: TUI_widget.Borders.Double);
+    TUI_buffer.Buffer double_safe = buffer_for(wide, 5, 3);
+    double_line.render(double_safe, double_safe.area());
+    check(tally, "double", block_text(double_safe, 0) + "/" + block_text(double_safe, 1), "+===+/|   |");
+    TUI_widget.Block thick = TUI_widget.Block(borders: TUI_widget.Borders.Thick);
+    TUI_buffer.Buffer thick_safe = buffer_for(wide, 5, 3);
+    thick.render(thick_safe, thick_safe.area());
+    check(tally, "thick", block_text(thick_safe, 0) + "/" + block_text(thick_safe, 1), "+===+/|   |");
+    ok(tally, "every cell of the safe block is one column wide, so the columns line up", is_all_one_column(safe) && is_all_one_column(round_safe));
+    TUI_widget.Block forced = TUI_widget.Block(charset: TUI_width.Borders.Unicode);
+    TUI_buffer.Buffer wide_box = buffer_for(wide, 6, 3);
+    forced.render(wide_box, wide_box.area());
+    check(tally, "Block.charset Unicode wins over what the terminal measured (the first corner is a two-column cell)", str(wide_box.width_at(0, 0)) + " " + wide_box.symbol_at(0, 0), "2 \u{250C}");
+    ok(tally, "and the buffer's own setting is back afterwards", wide_box.table.is_ascii_lines);
+    TUI_widget.Block ascii = TUI_widget.Block(charset: TUI_width.Borders.Ascii);
+    TUI_buffer.Buffer on_plain = buffer_for(plain, 6, 3);
+    ascii.render(on_plain, on_plain.area());
+    check(tally, "Block.charset Ascii on a terminal that is fine", block_text(on_plain, 0), "+----+");
+    ok(tally, "and the buffer is Unicode again afterwards", !on_plain.table.is_ascii_lines);
+    TUI_width.Table chosen = TUI_width.Table();
+    chosen.choose_borders(TUI_width.Borders.Ascii);
+    ok(tally, "Borders.Ascii on a table that measured nothing", chosen.is_ascii_lines);
+    chosen.choose_borders(TUI_width.Borders.Unicode);
+    ok(tally, "Borders.Unicode switches it off", !chosen.is_ascii_lines);
+    TUI_app.Loop forced_ascii = TUI_app.Loop(borders: TUI_width.Borders.Ascii);
+    forced_ascii.calibrate_width(TST_emulator.Link(TST_emulator.preset("kitty", 80, 24)), 24);
+    ok(tally, "Loop.borders Ascii: ASCII on kitty, which measured box drawing fine", forced_ascii.width_table.is_ascii_lines && forced_ascii.width_table.is_measured);
+    TUI_app.Loop forced_unicode = TUI_app.Loop(borders: TUI_width.Borders.Unicode);
+    forced_unicode.calibrate_width(TST_emulator.Link(TST_emulator.preset("box-wide", 80, 24)), 24);
+    ok(tally, "Loop.borders Unicode: Unicode on a wide box terminal, as told", !forced_unicode.width_table.is_ascii_lines);
+    check(tally, "TUI_BORDERS: ascii, unicode, any case; anything else is auto", TUI_width.borders_from_env("ASCII").name() + " " + TUI_width.borders_from_env("unicode").name() + " " + TUI_width.borders_from_env("auto").name() + " " + TUI_width.borders_from_env("").name() + " " + TUI_width.borders_from_env("x").name(), "ascii unicode auto auto auto");
+    // every line drawing and block character has a one-byte ASCII stand-in
+    int bad = 0;
+    for (int code in 0x2500 .. 0x25A0) {
+        str mapped = TUI_width.ascii_for(str.from_chars([code]));
+        if (mapped.size() != 1 || mapped.byte_at(0) < 0x20 || mapped.byte_at(0) > 0x7E) {
+            bad = bad + 1;
+        }
+    }
+    check(tally, "ascii_for: U+2500..259F all become one printable ASCII character", str(bad), "0");
+    check(tally, "ascii_for: other text is left alone", TUI_width.ascii_for("a") + TUI_width.ascii_for("\u{4E2D}") + TUI_width.ascii_for("\u{2192}") + TUI_width.ascii_for("\u{25CF}"), "a\u{4E2D}\u{2192}\u{25CF}");
+    check(tally, "ascii_for: lines", TUI_width.ascii_for("\u{2500}") + TUI_width.ascii_for("\u{2502}") + TUI_width.ascii_for("\u{250C}") + TUI_width.ascii_for("\u{253C}") + TUI_width.ascii_for("\u{2550}") + TUI_width.ascii_for("\u{2551}") + TUI_width.ascii_for("\u{256D}") + TUI_width.ascii_for("\u{2571}") + TUI_width.ascii_for("\u{2572}"), "-|++=|+/\\");
+    check(tally, "ascii_for: blocks", TUI_width.ascii_for("\u{2588}") + TUI_width.ascii_for("\u{2591}") + TUI_width.ascii_for("\u{2592}") + TUI_width.ascii_for("\u{2581}") + TUI_width.ascii_for("\u{258F}"), "#.:_|");
+    // other widgets draw through the buffer: a scroll track, a chart axis are ASCII too
+    TUI_buffer.Buffer track = buffer_for(wide, 4, 1);
+    track.set_str(0, 0, "\u{2502}\u{2588}\u{2500}\u{2524}", TUI_style.Style());
+    check(tally, "set_str writes line drawing and blocks as ASCII on such a terminal (widgets other than Block)", block_text(track, 0), "|#-+");
+    TUI_buffer.Buffer filled = buffer_for(wide, 4, 1);
+    filled.fill(TUI_geometry.Rect(0, 0, 4, 1), "\u{2500}", TUI_style.Style());
+    check(tally, "and fill", block_text(filled, 0), "----");
+    TUI_buffer.Buffer placed = buffer_for(wide, 4, 1);
+    placed.set(0, 0, TUI_buffer.Cell("\u{2502}", style: TUI_style.Style(), width: 1));
+    check(tally, "and set", block_text(placed, 0), "|   ");
+    // text whose class the terminal measured wide is laid out wide: a Greek letter is two columns on box-wide
+    TUI_buffer.Buffer greek = buffer_for(wide, 6, 1);
+    int used = greek.set_str(0, 0, "\u{3B1}b", TUI_style.Style());
+    check(tally, "a class measured wide is laid out wide: alpha takes two columns", str(used) + " " + str(greek.width_at(0, 0)) + " " + str(greek.width_at(1, 0)) + " " + greek.symbol_at(2, 0), "3 2 0 b");
+    check(tally, "Table.text_width counts it so too", str(wide.text_width("\u{3B1}b")) + " " + str(TUI_text.width("\u{3B1}b")), "3 2");
+    TUI_buffer.Buffer one_column = buffer_for(TUI_width.Table(), 6, 1);
+    check(tally, "and on a terminal not measured it is one column", str(one_column.set_str(0, 0, "\u{3B1}b", TUI_style.Style())), "2");
+}
+
+bool is_all_one_column(TUI_buffer.Buffer buffer) {
+    for (int y in 0 .. buffer.area().height) {
+        for (int x in 0 .. buffer.area().width) {
+            if (buffer.width_at(x, y) != 1) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// --- the fast path: terminals that agree with the library get the minimal diff -------------------------
+
+/// The start of a row of everything but a symbol with U+FE0F and a family; two ASCII cells follow it.
+str agreeing_head() {
+    return "| ab \u{2500}\u{2502}\u{2588} \u{2192} \u{3B1} \u{25CF} \u{2823} \u{4E2D}\u{6587} \u{1F600} \u{1F1E9}\u{1F1EA} e\u{301} \u{E0B0} ";
+}
+
+TUI_buffer.Buffer row_buffer(TUI_width.Table table, str text) {
+    TUI_buffer.Buffer buffer = buffer_for(table, 60, 2);
+    buffer.set_str(0, 0, text, TUI_style.Style());
+    buffer.set_str(0, 1, "end", TUI_style.Style());
+    return buffer;
+}
+
+void fast_path_tests(Tally tally) {
+    print("== the fast path " + "=".repeat(45));
+    str before = agreeing_head() + "cd |";
+    str after = agreeing_head() + "XY |";
+    // the bytes of changing two ASCII cells at the end of the row: a move to the first and the two characters
+    int first_x = TUI_text.width(agreeing_head());
+    str minimal = "\\e[1;" + str(first_x + 1) + "HXY";
+    for (str name in terminals(false)) {
+        TUI_width.Table table = calibrate(name).loop.width_table;
+        TUI_buffer.Buffer old_frame = row_buffer(table, before);
+        TUI_buffer.Buffer new_frame = row_buffer(table, after);
+        str written = TUI_diff.show(TUI_diff.diff(old_frame, new_frame, TUI_style.Depth.TrueColour));
+        TUI_buffer.Buffer static_old = row_buffer(TUI_width.Table(), before);
+        TUI_buffer.Buffer static_new = row_buffer(TUI_width.Table(), after);
+        int static_size = TUI_diff.diff(static_old, static_new, TUI_style.Depth.TrueColour).size();
+        check(tally, name + ": a row of box, arrows, Greek, shapes, Braille, CJK, emoji, a flag, a combining letter and an icon changes by the minimal diff", written, minimal);
+        ok(tally, name + ": the static policy of 0.13.0 writes more (" + str(static_size) + " bytes against " + str(minimal.size() - 4) + ")", static_size > written.size() + 20);
+    }
+    // a terminal that disagrees on a class still gets rows right, with the rewrite
+    TUI_width.Table box_wide = calibrate("box-wide").loop.width_table;
+    TUI_buffer.Buffer old_arrows = row_buffer(box_wide, "ab \u{2192}\u{2192} cd");
+    TUI_buffer.Buffer new_arrows = row_buffer(box_wide, "ab \u{2192}\u{2192} XY");
+    ok(tally, "box-wide: a row with arrows (wide there) is rewritten from the first arrow", TUI_diff.show(TUI_diff.diff(old_arrows, new_arrows, TUI_style.Depth.TrueColour)).contains("\u{2192}"));
+    // ASCII and CJK rows are the same bytes with or without the table (the table costs nothing there)
+    TUI_buffer.Buffer plain_old = row_buffer(TUI_width.Table(), "hello \u{4E2D}\u{6587} world");
+    TUI_buffer.Buffer plain_new = row_buffer(TUI_width.Table(), "hello \u{4E2D}\u{6587} wxrld");
+    TUI_width.Table measured = calibrate("kitty").loop.width_table;
+    TUI_buffer.Buffer measured_old = row_buffer(measured, "hello \u{4E2D}\u{6587} world");
+    TUI_buffer.Buffer measured_new = row_buffer(measured, "hello \u{4E2D}\u{6587} wxrld");
+    check(tally, "ASCII and CJK rows: the same bytes with a measured table as without", TUI_diff.show(TUI_diff.diff(measured_old, measured_new, TUI_style.Depth.TrueColour)), TUI_diff.show(TUI_diff.diff(plain_old, plain_new, TUI_style.Depth.TrueColour)));
+    check(tally, "ASCII and CJK rows: the minimal diff", TUI_diff.show(TUI_diff.diff(plain_old, plain_new, TUI_style.Depth.TrueColour)), "\\e[1;" + str(TUI_text.width("hello \u{4E2D}\u{6587} w") + 1) + "Hx");
+}
+
+void cost_tests(Tally tally) {
+    print("== cost " + "=".repeat(54));
+    int best_us = 1000000;
+    for (int round in 0 .. 7) {
+        Trial trial = calibrate("alacritty");
+        if (trial.elapsed_us < best_us) {
+            best_us = trial.elapsed_us;
+        }
+    }
+    ok(tally, "a calibration on the test emulator costs under 5 ms", best_us < 5000);
+    int best_second_us = 1000000;
+    for (int round in 0 .. 7) {
+        Trial trial = calibrate("mode-2027");
+        if (trial.elapsed_us < best_second_us) {
+            best_second_us = trial.elapsed_us;
+        }
+    }
+    ok(tally, "and with the second batch for mode 2027 too", best_second_us < 5000);
+    if (os.env("WIDTH_BENCH").is_some()) {
+        print("calibration: " + str(best_us) + " us (alacritty), " + str(best_second_us) + " us (mode 2027, two batches)");
+    }
+}
+
+Tally tally = Tally();
+class_tests(tally);
+reply_tests(tally);
+request_tests(tally);
+terminal_tests(tally);
+failure_tests(tally);
+border_tests(tally);
+fast_path_tests(tally);
+cost_tests(tally);
+print("");
+print("-- " + str(tally.pass) + " passed, " + str(tally.fail) + " failed");
+if (tally.fail > 0) {
+    os.exit(1);
+}

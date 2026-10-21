@@ -4,6 +4,67 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## 0.14.0
+
+The owner of m3 draws in rio and Alacritty every day, wants Terminal.app and kitty to work, and asked for double-width
+characters that break borders to be handled. 0.13.0 treated box drawing as certain (one column), so a terminal or profile that draws East Asian Ambiguous characters
+wide ("ambiguous = wide", common with CJK locales and fonts) broke every border, and the harness listed it as a known limit. It
+also distrusted every cluster whose width a terminal may measure differently, which is right and costs bytes on terminals that agree with
+the library. 0.14.0 measures the terminal instead of guessing. Built and tested against m31 v0.9.0.
+
+### Added
+
+- **Start-up width calibration** (`TUI_width`, `Loop.calibrate_width`, run by `Loop.run_with`). After the alternate screen is entered, one write
+  puts a reference character per class (box drawing, block elements, arrows, Greek and Cyrillic, shapes, Braille, the older emoji, a symbol
+  with U+FE0F, a flag, a ZWJ family, a combining letter, a Nerd Font glyph; `A` and an ideograph as controls) each followed by a
+  cursor position report request, and one read collects the answers: the column of the report is the width drawn. At most
+  `Loop.width_probe_ms` (150) in all; standard output that is not a terminal, `Loop.should_calibrate_width = false` and `TUI_WIDTH_PROBE=off` skip it;
+  a terminal that answers nothing, or answers the controls wrongly, keeps the 0.13.0 policy.
+- **A per-session width table** (`TUI_width.Table`, `Loop.width_table`, `Buffer.table`). A class measured equal to the library's width is *certain*: its cells are
+  diffed per cell like ASCII, with no forced rewrite and no re-anchoring (the 0.13.0 distrust cost on Alacritty, rio and kitty is
+  gone: the stress finder sequence is 11 to 16 % smaller). A class measured differently is laid out at the measured width and its rows follow the 0.13.0
+  policy. `Table.is_certain`, `columns`, `text_width`, `decision`, `width_of`.
+- **Grapheme clustering (DEC mode 2027).** The same batch asks `CSI ? 2027 $ p`; a terminal that has the mode off and can switch it on is switched
+  (`Loop.should_set_grapheme_mode`, default true), measured again with it on, and switched off on the way out (`leave_sequence`).
+- **Border-safe output.** When box drawing is measured as other than one column, line drawing and block characters are written as ASCII
+  by `Buffer.set_str`, `fill` and `set` (`TUI_width.ascii_for`), so `Block`, scroll tracks, chart axes and gauges keep their columns.
+  `Loop.borders` (`Auto`, `Ascii`, `Unicode`), `TUI_BORDERS=ascii|unicode|auto` (ascii and unicode win over the field), and `Block.charset`
+  (wins over both) choose it.
+- **Replies never cost a key.** Events read while waiting for answers that are not answers (keys typed meanwhile, the replies to the loop's other questions)
+  are kept in order (`Loop.take_replayed`) and read first. The questions are asked on row 2 because `CSI 1 ; 2 R` is Shift-F3. Late
+  answers (`Loop.late_reports`) are dropped by `dispatch` instead of reaching the program as an unknown event.
+- `ProbeLink` and `TermLink`: what the calibration talks to the terminal through, so a test (or a program with a loop of its own) needs no terminal.
+- `tests/width.m31` (the classes, the replies, every terminal below, the failure modes, the borders, the fast path, the cost),
+  `tests/width_pty.m31` with `tests/width_child.m31` (a real `Loop.run_with` on a pty, the test playing the terminal: answers, keys typed among them, answers held back,
+  no answer at all, `TUI_WIDTH_PROBE=off`, `TUI_BORDERS`), emulator models of the owner's terminals (`TST_emulator.preset`: alacritty, rio, kitty, terminal-app,
+  box-wide, a terminal with mode 2027, a mute one) that answer cursor reports and DECRQM by their own width model.
+- `examples/width_probe.m31` prints what the calibration measured, class by class, and what the renderer decided, then the per-cluster table.
+
+### Changed
+
+- **`Loop.run_with` calibrates by default** (`should_calibrate_width` is true). It writes a batch of cursor position report requests after the alternate screen is entered and
+  waits for the answers, at most 150 ms; a program that must not do that (or a terminal it cannot ask) sets `should_calibrate_width = false`, or the user sets
+  `TUI_WIDTH_PROBE=off`. Nothing else about the loop's bytes changes on a terminal that answers: the frames are the 0.13.0 ones, minus the rewrites a measured class no longer needs.
+- `tests/stress.m31` runs every terminal twice: with the terminal not asked (0.13.0) and calibrated, adds `preset alacritty`, `rio`, `kitty`, `mode-2027`, `box-wide`
+  and `mute`, and asserts zero failures for every variant with the calibration on, `box-wide` and `no-combining` included (both were "known limits"); it reports the bytes
+  of the finder sequence both ways and asserts a terminal that agrees with the library does not write more.
+- `TUI_text.is_plain` is public.
+
+### Known limits
+
+- A terminal that answers the cursor report after the budget, or in pieces that arrive more than one idle read apart, may hand the program the first piece as an unknown event.
+- The terminal is asked once. A font or locale changed while the program runs is not noticed.
+- A class is measured by one reference character. A cluster of a class that the terminal draws differently from the reference (a newer emoji in a
+  class the terminal knows only in part) is the reference's width; the older emoji are a class and the newer ones are not, for that reason.
+- A cluster the terminal draws in more than two columns (a family is six on Alacritty) is a two-column cell, as before: the columns after it are written again.
+
+### Cost
+
+`bench` (200x50, in `examples/bench.m31`): `full`, `diff-1`, `diff-0` and `frame` are unchanged on a buffer with no table (12,555 bytes, 21, 0); on the
+same screen with the table of an Alacritty-like terminal `full` is 12,542 bytes (the triangles are certain, so they are not re-anchored). Building the table from the
+answers is 16 microseconds; the calibration, with the emulator on the other end, is about 0.12 ms (0.25 ms with the second batch for mode 2027); on a real terminal it is
+the round trip of one write (under a millisecond locally).
+
 ## 0.13.0
 
 Terminal corruption on real Macs (m3's fuzzy finder, mgit, tui-markdown) that every Linux test passed. The tests

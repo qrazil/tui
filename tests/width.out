@@ -1,0 +1,183 @@
+== which class a cluster is in ==============================
+ok   class: box drawing
+ok   class: blocks
+ok   class: arrows
+ok   class: Greek and Cyrillic
+ok   class: not Greek: a Latin letter, Armenian
+ok   class: shapes
+ok   class: Braille
+ok   class: older emoji
+ok   class: not the newer emoji (a table may lack them)
+ok   class: a symbol with U+FE0F
+ok   class: not a keycap, a letter with a selector, a skin tone
+ok   class: a flag
+ok   class: not a lone regional indicator
+ok   class: a ZWJ family and a ZWJ profession
+ok   class: a letter with a combining accent
+ok   class: a letter with two marks, not a mark of another block, not a mark first
+ok   class: private use, in the BMP and in the planes
+ok   class: none for ASCII, CJK, Latin, Hangul, a fullwidth form
+ok   the reference character of box drawing is in its class
+ok   the reference character of block elements is in its class
+ok   the reference character of arrows is in its class
+ok   the reference character of Greek/Cyrillic is in its class
+ok   the reference character of shapes is in its class
+ok   the reference character of Braille is in its class
+ok   the reference character of emoji is in its class
+ok   the reference character of symbol+VS16 is in its class
+ok   the reference character of flag is in its class
+ok   the reference character of ZWJ family is in its class
+ok   the reference character of combining is in its class
+ok   the reference character of private use is in its class
+== replies ==================================================
+ok   a cursor report is read
+ok   a report with more digits
+ok   not a report: no column
+ok   not a report: a private marker
+ok   not a report: a letter in it
+ok   not a report: another final
+ok   not a report: no escape
+ok   not a report: empty parts
+ok   the mode 2027 answer: supported and off
+ok   the mode 2027 answer: always on
+ok   the mode answer of another mode is not it
+ok   a bad status is not an answer
+ok   the decoder hands a report on row 2 over as Unknown
+ok   the decoder reads ESC [ 1 ; 2 R as Shift-F3 (why the questions are asked on row 2)
+ok   the questions are asked on row 2
+== the request ==================================================
+ok   the batch starts with the mode 2027 question
+ok   and has no such question when it is the second
+ok   one cursor report is asked for per question
+ok   every question is on row 2
+ok   the batch ends clearing the screen
+== what the calibration found on each terminal ====================
+-- ideal: measured, 14 answers, grapheme status -1, mode 2027 false, ascii lines false
+   box drawing=certain, block elements=certain, arrows=certain, Greek/Cyrillic=certain, shapes=certain, Braille=certain, emoji=certain, symbol+VS16=certain, flag=certain, ZWJ family=certain, combining=certain, private use=certain
+-- alacritty: measured, 14 answers, grapheme status -1, mode 2027 false, ascii lines false
+   box drawing=certain, block elements=certain, arrows=certain, Greek/Cyrillic=certain, shapes=certain, Braille=certain, emoji=certain, symbol+VS16=narrow 1 (library 2), flag=certain, ZWJ family=wide 6 (library 2), combining=certain, private use=certain
+-- rio: measured, 14 answers, grapheme status -1, mode 2027 false, ascii lines false
+   box drawing=certain, block elements=certain, arrows=certain, Greek/Cyrillic=certain, shapes=certain, Braille=certain, emoji=certain, symbol+VS16=narrow 1 (library 2), flag=certain, ZWJ family=wide 6 (library 2), combining=certain, private use=certain
+-- kitty: measured, 14 answers, grapheme status 3, mode 2027 true, ascii lines false
+   box drawing=certain, block elements=certain, arrows=certain, Greek/Cyrillic=certain, shapes=certain, Braille=certain, emoji=certain, symbol+VS16=certain, flag=certain, ZWJ family=certain, combining=certain, private use=certain
+-- terminal-app: measured, 14 answers, grapheme status -1, mode 2027 false, ascii lines false
+   box drawing=certain, block elements=certain, arrows=certain, Greek/Cyrillic=certain, shapes=certain, Braille=certain, emoji=certain, symbol+VS16=narrow 1 (library 2), flag=certain, ZWJ family=wide 6 (library 2), combining=certain, private use=certain
+-- box-wide: measured, 14 answers, grapheme status -1, mode 2027 false, ascii lines true
+   box drawing=wide 2 (library 1), block elements=wide 2 (library 1), arrows=wide 2 (library 1), Greek/Cyrillic=wide 2 (library 1), shapes=wide 2 (library 1), Braille=certain, emoji=certain, symbol+VS16=certain, flag=certain, ZWJ family=certain, combining=certain, private use=certain
+-- mode-2027: measured, 14 answers, grapheme status 2, mode 2027 true, ascii lines false
+   box drawing=certain, block elements=certain, arrows=certain, Greek/Cyrillic=certain, shapes=certain, Braille=certain, emoji=certain, symbol+VS16=certain, flag=certain, ZWJ family=certain, combining=certain, private use=certain
+-- mute: no answer, 0 answers, grapheme status -1, mode 2027 false, ascii lines false
+   box drawing=not measured, block elements=not measured, arrows=not measured, Greek/Cyrillic=not measured, shapes=not measured, Braille=not measured, emoji=not measured, symbol+VS16=not measured, flag=not measured, ZWJ family=not measured, combining=not measured, private use=not measured
+ok   ideal: measured, every class certain
+ok   ideal: one write for the whole batch
+ok   ideal: not asked about borders (box is one column)
+ok   alacritty: box, blocks, arrows, Greek, shapes, Braille, emoji, flag, combining, private use are certain
+ok   alacritty: a symbol with U+FE0F is one column (the library says two)
+ok   alacritty: a family is six columns (the library says two)
+ok   alacritty: mode 2027 is not answered
+ok   alacritty: the library draws a heart with FE0F in one column of the cell
+ok   alacritty: and a family in two (a cell holds no more: the rest is written over)
+ok   alacritty: a heart with FE0F is uncertain, a flag is not
+ok   alacritty: borders stay Unicode
+ok   alacritty: one write
+ok   rio decides as alacritty does
+ok   kitty: every class certain (U+FE0F widens, a family is two)
+ok   kitty: mode 2027 is always on
+ok   kitty: one write (nothing to switch on)
+ok   terminal-app: measured though it answers no mode questions
+ok   terminal-app: a symbol with U+FE0F and a family disagree
+ok   box-wide: box drawing and blocks measured two columns
+ok   box-wide: arrows, Greek and shapes too, Braille not
+ok   box-wide: borders are ASCII by themselves
+ok   box-wide: a box is not certain and is two columns
+ok   mode-2027: the terminal had clustering off, the loop switched it on
+ok   mode-2027: measured again with it on, so every class is certain
+ok   mode-2027: two writes (the first batch, then the switch and the second batch)
+ok   mode-2027: the leave sequence switches it off again
+ok   other terminals' leave sequences do not touch the mode
+ok   mute: no answer, nothing measured, the static policy
+ok   mute: the static policy is in force (box is certain, an arrow is not)
+ok   mute: one write, and it waited for the reports (reads happened)
+ok   should_calibrate_width off: nothing is written
+ok   a one-row screen is not asked
+ok   TUI_WIDTH_PROBE: off, 0, no, false are off, any case
+ok   TUI_WIDTH_PROBE: on, auto, empty are not
+ok   a terminal that answers nothing costs at most the budget (the test link answers at once: well under it)
+== failure modes =============================================
+ok   partial: five of fourteen answers make a partial table
+ok   partial: the classes that were asked are measured, the others are not
+ok   partial: an unmeasured class follows the static rule
+ok   partial: the nine replies that never came are outstanding (and swallowed when they do)
+ok   partial: one answer is not enough to trust (the second control is missing)
+ok   cut: six whole answers and half of a seventh
+ok   cut: no event was made of the half (it is held for the loop's own reads)
+ok   interleaved: every key typed meanwhile is handed on, in order (and ESC[1;2R is Shift-F3)
+ok   interleaved: the answers were all taken
+ok   interleaved: and the table is what it is without the typing
+ok   interleaved: a character and a control key are handed on whole
+ok   interleaved: the replies to other questions are kept, in order
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: a report is taken
+ok   wrong: controls that measure 3 are not trusted: nothing is measured
+ok   wrong: a report from another row leaves that class unmeasured
+ok   an extra report after the last is not taken (it is the program's)
+ok   late: nothing answered in time
+ok   late: the fourteen late reports (and the mode answer) are the loop's, not the program's
+ok   late: a report after those is the program's again
+== borders that cannot misalign ==============================
+ok   a Block draws Unicode line drawing on a terminal not measured
+ok   on a terminal that draws box drawing wide a Block is ASCII
+ok   rounded, with a title
+ok   double
+ok   thick
+ok   every cell of the safe block is one column wide, so the columns line up
+ok   Block.charset Unicode wins over what the terminal measured (the first corner is a two-column cell)
+ok   and the buffer's own setting is back afterwards
+ok   Block.charset Ascii on a terminal that is fine
+ok   and the buffer is Unicode again afterwards
+ok   Borders.Ascii on a table that measured nothing
+ok   Borders.Unicode switches it off
+ok   Loop.borders Ascii: ASCII on kitty, which measured box drawing fine
+ok   Loop.borders Unicode: Unicode on a wide box terminal, as told
+ok   TUI_BORDERS: ascii, unicode, any case; anything else is auto
+ok   ascii_for: U+2500..259F all become one printable ASCII character
+ok   ascii_for: other text is left alone
+ok   ascii_for: lines
+ok   ascii_for: blocks
+ok   set_str writes line drawing and blocks as ASCII on such a terminal (widgets other than Block)
+ok   and fill
+ok   and set
+ok   a class measured wide is laid out wide: alpha takes two columns
+ok   Table.text_width counts it so too
+ok   and on a terminal not measured it is one column
+== the fast path =============================================
+ok   ideal: a row of box, arrows, Greek, shapes, Braille, CJK, emoji, a flag, a combining letter and an icon changes by the minimal diff
+ok   ideal: the static policy of 0.13.0 writes more (132 bytes against 6)
+ok   alacritty: a row of box, arrows, Greek, shapes, Braille, CJK, emoji, a flag, a combining letter and an icon changes by the minimal diff
+ok   alacritty: the static policy of 0.13.0 writes more (132 bytes against 6)
+ok   rio: a row of box, arrows, Greek, shapes, Braille, CJK, emoji, a flag, a combining letter and an icon changes by the minimal diff
+ok   rio: the static policy of 0.13.0 writes more (132 bytes against 6)
+ok   kitty: a row of box, arrows, Greek, shapes, Braille, CJK, emoji, a flag, a combining letter and an icon changes by the minimal diff
+ok   kitty: the static policy of 0.13.0 writes more (132 bytes against 6)
+ok   terminal-app: a row of box, arrows, Greek, shapes, Braille, CJK, emoji, a flag, a combining letter and an icon changes by the minimal diff
+ok   terminal-app: the static policy of 0.13.0 writes more (132 bytes against 6)
+ok   box-wide: a row with arrows (wide there) is rewritten from the first arrow
+ok   ASCII and CJK rows: the same bytes with a measured table as without
+ok   ASCII and CJK rows: the minimal diff
+== cost ======================================================
+ok   a calibration on the test emulator costs under 5 ms
+ok   and with the second batch for mode 2027 too
+
+-- 157 passed, 0 failed

@@ -65,6 +65,7 @@ import core.TUI_geometry;
 import core.TUI_osc;
 import core.TUI_style;
 import core.TUI_text;
+import core.TUI_width;
 
 /// One cell of the grid.
 ///
@@ -114,6 +115,10 @@ pub type Buffer {
     List<int> widths;
     /// One link per cell, or EMPTY when no cell of this buffer has had one.
     List<str> links;
+    /// What the terminal measured (`TUI_width`, `Loop.width_table`): the widths of the cells written
+    /// here, which clusters the renderer trusts, and whether line drawing is written as ASCII. The
+    /// default measured nothing: the static policy of `TUI_text`. Shared, not copied.
+    pub TUI_width.Table table = TUI_width.Table();
 }
 
 /// A blank `width` by `height` buffer with its corner at the origin.
@@ -279,7 +284,7 @@ pub bool Buffer.is_plain_blank(int x, int y, int count) {
 }
 
 /// The first column of row `y` that holds a cluster whose width terminals may disagree on
-/// (`TUI_text.is_certain_width`), or the row's right edge when there is none. One pass over
+/// (`TUI_width.Table.is_certain`: `TUI_text.is_certain_width` until the terminal has been measured), or the row's right edge when there is none. One pass over
 /// the symbols; printable ASCII, nearly every cell there is, is passed by its size alone.
 /// **Traps** outside the buffer.
 pub int Buffer.first_unsure(int y) {
@@ -289,7 +294,7 @@ pub int Buffer.first_unsure(int y) {
     int base = (y - box.y) * box.width;
     for (int column in 0 .. box.width) {
         str symbol = symbols[base + column];
-        if (symbol.size() > 1 && !TUI_text.is_certain_width(symbol)) {
+        if (symbol.size() > 1 && !table.is_certain(symbol)) {
             return box.x + column;
         }
     }
@@ -348,8 +353,9 @@ pub void Buffer.set(int x, int y, Cell cell) {
         set_str(x, y, cell.symbol, cell.style, max: 1);
         return;
     }
+    str symbol = safe_symbol(cell.symbol);
     int packed_style = cell.style.pack();
-    if (cell.width >= 2) {
+    if (cell.width >= 2 && symbol == cell.symbol) {
         if (x + 1 >= box.right()) {
             put(x, y, " ", packed_style, 1);
             return;
@@ -365,7 +371,7 @@ pub void Buffer.set(int x, int y, Cell cell) {
         put(x, y, " ", packed_style, 1);
         return;
     }
-    put(x, y, cell.symbol, packed_style, 1);
+    put(x, y, symbol, packed_style, 1);
     link(TUI_geometry.Rect(x, y, 1, 1), cell.link);
 }
 
@@ -439,7 +445,10 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
         if (is_control_cluster(cluster)) {
             grapheme = control_picture(cluster);
         }
-        int grapheme_width = TUI_text.cluster_columns(grapheme);
+        if (table.is_ascii_lines) {
+            grapheme = TUI_width.ascii_for(grapheme);
+        }
+        int grapheme_width = table.columns(grapheme);
         if (grapheme_width == 0) {
             if (TUI_text.is_invisible(grapheme)) {
                 continue;
@@ -484,6 +493,14 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
     return used;
 }
 
+// `symbol` as ASCII when this buffer's terminal cannot be trusted with line drawing (`table.is_ascii_lines`).
+str Buffer.safe_symbol(str symbol) {
+    if (table.is_ascii_lines) {
+        return TUI_width.ascii_for(symbol);
+    }
+    return symbol;
+}
+
 int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
     int byte_count = text.size();
     if (byte_count > limit) {
@@ -499,11 +516,11 @@ int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
 /// written.
 /// **Traps** on a symbol of no width, which would never finish the row.
 pub void Buffer.fill(TUI_geometry.Rect rect, str symbol_in, TUI_style.Style style) {
-    str symbol = symbol_in;
+    str symbol = safe_symbol(symbol_in);
     if (has_control(symbol_in)) {
         symbol = control_picture(symbol_in);
     }
-    int symbol_width = TUI_text.cluster_columns(symbol);
+    int symbol_width = table.columns(symbol);
     if (symbol_width <= 0) {
         trap("TUI_buffer.Buffer.fill: the fill symbol has no width");
     }
@@ -598,6 +615,7 @@ pub bool Buffer.is_blank_row(int y) {
 /// scrolled, which the renderer then diffs against.
 pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
     Buffer out = Buffer.empty(box);
+    out.table = table;
     if (links.size() > 0) {
         out.make_links();
     }

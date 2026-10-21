@@ -14,6 +14,10 @@
 //   diff-1   `TUI_diff.diff` after one cell changed
 //   diff-0   `TUI_diff.diff` with nothing changed -- the cost of the scan
 //
+// Then the same screen on a terminal whose widths were measured (0.14.0, `TUI_width`): the table
+// of an Alacritty-like terminal (every class as the library expects but a symbol with U+FE0F and a
+// family), fed to the probe as the cursor reports it would have answered, and the time that takes.
+//
 // Times are the mean of many runs, because a single run of anything this
 // fast measures the clock.
 
@@ -27,6 +31,7 @@ import widgets.TUI_outline;
 import core.TUI_style;
 import core.TUI_text;
 import core.TUI_widget;
+import core.TUI_width;
 
 const int SCREEN_WIDTH = 200;
 const int SCREEN_HEIGHT = 50;
@@ -153,6 +158,58 @@ while (run_index < runs) {
 }
 stop_ns = date.now_ns();
 report("frame", stop_ns - start_ns, runs, 0);
+// --- the same screen, on a terminal whose widths were measured ---------------
+//
+// What `Loop.calibrate_width` makes of the answers (the I/O is not in the number: that is a few
+// hundred microseconds of syscalls and the terminal's own latency), and what the frame costs once
+// the box drawing, the triangles and the rest are certain and not rewritten.
+print("");
+print("the same screen, the terminal measured (alacritty-like: only U+FE0F and a family disagree)");
+int probe_start_ns = date.now_ns();
+int probe_runs = 2000;
+TUI_width.Table measured = TUI_width.Table();
+for (int probe_run in 0 .. probe_runs) {
+    measured = alacritty_table();
+}
+report("table", date.now_ns() - probe_start_ns, probe_runs, TUI_width.request_bytes(true).size());
+front.table = measured;
+back.table = measured;
+front.clear();
+paint(front, 1, names, rows);
+back.clear();
+paint(back, 1, names, rows);
+int measured_full_bytes = TUI_diff.full(back, depth).size();
+start_ns = date.now_ns();
+for (int measured_run in 0 .. runs) {
+    TUI_diff.full(back, depth);
+}
+report("full", date.now_ns() - start_ns, runs, measured_full_bytes);
+back.set_str(100, 25, "\u{2588}", TUI_style.Style(foreground: TUI_style.Colour.Indexed(9)));
+int measured_one_bytes = TUI_diff.diff(front, back, depth).size();
+start_ns = date.now_ns();
+for (int measured_run in 0 .. runs) {
+    TUI_diff.diff(front, back, depth);
+}
+report("diff-1", date.now_ns() - start_ns, runs, measured_one_bytes);
+back.clear();
+paint(back, 1, names, rows);
+int measured_zero_bytes = TUI_diff.diff(front, back, depth).size();
+start_ns = date.now_ns();
+for (int measured_run in 0 .. runs) {
+    TUI_diff.diff(front, back, depth);
+}
+report("diff-0", date.now_ns() - start_ns, runs, measured_zero_bytes);
+front.clear();
+paint(front, 0, names, rows);
+start_ns = date.now_ns();
+for (int measured_run in 0 .. runs) {
+    back.clear();
+    paint(back, measured_run, names, rows);
+    TUI_diff.diff(front, back, depth);
+}
+report("frame", date.now_ns() - start_ns, runs, 0);
+front.table = TUI_width.Table();
+back.table = TUI_width.Table();
 // --- the shapes a real client hits that the screen above does not -----------
 //
 // A git client's log is a tall outline -- hundreds of commits, each unfolding
@@ -247,3 +304,22 @@ while (run_index < runs) {
 }
 stop_ns = date.now_ns();
 report("clear", stop_ns - start_ns, runs, 0);
+
+/// The table an Alacritty-like terminal gives: each reference character drawn as the library expects, except
+/// a symbol with U+FE0F (one column) and a family (six), fed to the probe as cursor reports.
+TUI_width.Table alacritty_table() {
+    TUI_width.Probe probe = TUI_width.probe(true);
+    probe.did_take("\x1b[2;2R".to_bytes());
+    probe.did_take("\x1b[2;3R".to_bytes());
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        int columns = TUI_text.width(TUI_width.sample(class_id));
+        if (class_id == TUI_width.VS16) {
+            columns = 1;
+        }
+        if (class_id == TUI_width.ZWJ) {
+            columns = 6;
+        }
+        probe.did_take(("\x1b[2;" + str(columns + 1) + "R").to_bytes());
+    }
+    return probe.table();
+}
