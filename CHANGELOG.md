@@ -4,7 +4,7 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
-## Unreleased
+## 0.15.0
 
 Speed: the renderer and the buffer were profiled on the emitted C (`docs/FRICTION.md` §30), and the cost was calls, not
 cells -- five bounds-checked accessor calls per cell, each with a stack probe and a retain/release. The output is
