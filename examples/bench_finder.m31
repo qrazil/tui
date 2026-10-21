@@ -1,0 +1,207 @@
+// The same scenarios as the Rust and Go renderers' comparison benchmark: a 200x50 grid of coloured
+// text (full / diff-1 / diff-0), and the keystrokes of a file finder (a ruled box, a query row, forty
+// list rows with the selected one filled) in ASCII, CJK and emoji names.
+//
+//   bash scripts/build.sh examples/bench_finder.m31 -o /tmp/bench_finder && /tmp/bench_finder
+//
+// "diff" lines time the renderer alone on prebuilt frames; "paint" lines time laying the frame into
+// a cleared buffer (`set_str` of the rows, `fill`), and "key" lines are what a keystroke costs a
+// program: clear, paint the next frame, diff it against the last.
+
+import date;
+import core.TUI_buffer;
+import app.TUI_diff;
+import core.TUI_style;
+import core.TUI_geometry;
+import core.TUI_widget;
+
+const int SCREEN_WIDTH = 200;
+const int SCREEN_HEIGHT = 50;
+
+str pad4(int value) {
+    str text = str(value);
+    while (text.size() < 4) {
+        text = "0" + text;
+    }
+    return text;
+}
+
+str seg_text(int row, int first_column, int count) {
+    bytes letters = [];
+    for (int offset in 0 .. count) {
+        int column = first_column + offset;
+        if (column % 8 == 7) {
+            letters.push(' ');
+        } else {
+            letters.push('a' + (column * 7 + row * 13) % 26);
+        }
+    }
+    match (letters.utf8()) {
+        case Some(str text): {
+            return text;
+        }
+        case None: {
+            return "";
+        }
+    }
+}
+
+void paint_grid(TUI_buffer.Buffer buffer) {
+    for (int y in 0 .. SCREEN_HEIGHT) {
+        for (int seg in 0 .. 8) {
+            buffer.set_str(seg * 25, y, seg_text(y, seg * 25, 25), TUI_style.Style(foreground: TUI_style.Colour.Indexed(1 + seg)));
+        }
+    }
+}
+
+str name_of(int kind, int number) {
+    str id = pad4(number);
+    if (kind == 0) {
+        return "src/ui/widget_" + id + ".rs";
+    }
+    if (kind == 1) {
+        return "\u{6587}\u{6863}/\u{65E5}\u{672C}\u{8A9E}_" + id + ".txt";
+    }
+    if (number % 3 == 0) {
+        return "\u{1F680} launch_" + id;
+    }
+    if (number % 3 == 1) {
+        return "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} family_" + id;
+    }
+    return "\u{2764}\u{FE0F} love_" + id;
+}
+
+/// The names the list shows for `query`: the first forty of 4000 that contain it.
+List<str> matches_of(int kind, str query) {
+    List<str> names = [];
+    for (int number in 0 .. 4000) {
+        if (names.size() >= 40) {
+            break;
+        }
+        if (pad4(number).contains(query)) {
+            names.push(name_of(kind, number));
+        }
+    }
+    return names;
+}
+
+void paint_finder(TUI_buffer.Buffer buffer, int kind, str query) {
+    paint_rows(buffer, matches_of(kind, query), query);
+}
+
+void paint_rows(TUI_buffer.Buffer buffer, List<str> names, str query) {
+    TUI_style.Style faint = TUI_style.Style(foreground: TUI_style.Colour.Indexed(8));
+    TUI_style.Style plain = TUI_style.Style();
+    TUI_style.Style sel = TUI_style.Style(foreground: TUI_style.Colour.Indexed(15), background: TUI_style.Colour.Indexed(4));
+    TUI_widget.Block(borders: TUI_widget.Borders.Rounded, style: faint).render(buffer, TUI_geometry.Rect(0, 0, SCREEN_WIDTH, 44));
+    buffer.set_str(2, 1, "> " + query, plain);
+    buffer.fill(TUI_geometry.Rect(0, 2, SCREEN_WIDTH, 1), "\u{2500}", faint);
+    buffer.set_str(0, 2, "\u{251C}", faint);
+    buffer.set_str(SCREEN_WIDTH - 1, 2, "\u{2524}", faint);
+    int row = 0;
+    for (str name in names) {
+        int y = 3 + row;
+        if (row == 0) {
+            buffer.fill(TUI_geometry.Rect(1, y, SCREEN_WIDTH - 2, 1), " ", sel);
+            buffer.set_str(1, y, "> " + name, sel);
+        } else {
+            buffer.set_str(1, y, "  " + name, plain);
+        }
+        row = row + 1;
+    }
+}
+
+void report(str name, int total_ns, int runs, int bytes_n) {
+    int tenths = total_ns / runs / 100;
+    print(name + "  us/frame=" + str(tenths / 10) + "." + str(tenths % 10) + "  bytes=" + str(bytes_n));
+}
+
+TUI_style.Depth depth = TUI_style.Depth.Ansi256;
+int runs = 300;
+TUI_buffer.Buffer first = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+TUI_buffer.Buffer second = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+paint_grid(first);
+paint_grid(second);
+second.set_str(100, 25, "#", TUI_style.Style(foreground: TUI_style.Colour.Indexed(9)));
+TUI_diff.full(first, depth);
+int started = date.now_ns();
+for (int run in 0 .. runs) {
+    TUI_diff.full(first, depth);
+}
+report("m31 full-200x50", date.now_ns() - started, runs, TUI_diff.full(first, depth).size());
+started = date.now_ns();
+for (int run in 0 .. runs) {
+    TUI_diff.diff(first, second, depth);
+}
+report("m31 diff-1cell", date.now_ns() - started, runs, TUI_diff.diff(first, second, depth).size());
+TUI_buffer.Buffer third = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+paint_grid(third);
+started = date.now_ns();
+for (int run in 0 .. runs) {
+    TUI_diff.diff(first, third, depth);
+}
+report("m31 diff-0", date.now_ns() - started, runs, TUI_diff.diff(first, third, depth).size());
+List<str> queries = ["", "1", "12", "123", "1230"];
+List<str> kinds = ["ascii", "cjk", "emoji"];
+for (int kind in 0 .. 3) {
+    List<TUI_buffer.Buffer> frames = [];
+    for (str query in queries) {
+        TUI_buffer.Buffer frame = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+        paint_finder(frame, kind, query);
+        frames.push(frame);
+    }
+    int total_ns = 0;
+    int total_bytes = 0;
+    int total_sc_ns = 0;
+    int total_sc_bytes = 0;
+    for (int step in 0 .. 4) {
+        started = date.now_ns();
+        for (int run in 0 .. runs) {
+            TUI_diff.diff(frames[step], frames[step + 1], depth);
+        }
+        total_ns = total_ns + (date.now_ns() - started) / runs;
+        total_bytes = total_bytes + TUI_diff.diff(frames[step], frames[step + 1], depth).size();
+        started = date.now_ns();
+        for (int run in 0 .. runs) {
+            TUI_diff.diff_scrolled(frames[step], frames[step + 1], depth);
+        }
+        total_sc_ns = total_sc_ns + (date.now_ns() - started) / runs;
+        total_sc_bytes = total_sc_bytes + TUI_diff.diff_scrolled(frames[step], frames[step + 1], depth).size();
+    }
+    report("m31 finder-" + kinds[kind] + " mean-of-4-keys diff", total_ns, 4, total_bytes / 4);
+    report("m31 finder-" + kinds[kind] + " mean-of-4-keys diff_scrolled", total_sc_ns, 4, total_sc_bytes / 4);
+    // a keystroke as a program pays it: clear, paint, diff against the last frame
+    List<List<str>> lists = [];
+    for (str text in queries) {
+        lists.push(matches_of(kind, text));
+    }
+    TUI_buffer.Buffer shown = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+    TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(SCREEN_WIDTH, SCREEN_HEIGHT);
+    int paint_ns = 0;
+    int key_ns = 0;
+    for (int step in 0 .. 4) {
+        paint_rows(shown, lists[step], queries[step]);
+        started = date.now_ns();
+        for (int run in 0 .. runs) {
+            next.clear();
+            paint_rows(next, lists[step + 1], queries[step + 1]);
+        }
+        paint_ns = paint_ns + (date.now_ns() - started) / runs;
+        started = date.now_ns();
+        for (int run in 0 .. runs) {
+            next.clear();
+            paint_rows(next, lists[step + 1], queries[step + 1]);
+            TUI_diff.diff(shown, next, depth);
+        }
+        key_ns = key_ns + (date.now_ns() - started) / runs;
+        shown.clear();
+    }
+    report("m31 finder-" + kinds[kind] + " mean-of-4-keys paint", paint_ns, 4, 0);
+    report("m31 finder-" + kinds[kind] + " mean-of-4-keys key (paint+diff)", key_ns, 4, 0);
+    TUI_buffer.Buffer last = frames[4];
+    started = date.now_ns();
+    for (int run in 0 .. runs) {
+        TUI_diff.full(last, depth);
+    }
+    report("m31 finder-" + kinds[kind] + " full", date.now_ns() - started, runs, TUI_diff.full(last, depth).size());
+}
