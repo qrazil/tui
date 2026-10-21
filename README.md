@@ -32,7 +32,7 @@ remains.
 nothing about it, nothing was added to `src/stdlib.rs`, and nothing was put
 in `lib/`. It is an ordinary library: with m31 v0.2.0 or later a program
 depends on it from its own `deps` file and imports each module by path. This
-version (0.12.0) is built and tested against m31 v0.9.0 (CI pins the release named by
+version (0.13.0) is built and tested against m31 v0.9.0 (CI pins the release named by
 `M31_REF`); `RENAMES.md` lists what a program moving from an earlier version has to change and
 `CHANGELOG.md` what each version added.
 
@@ -279,6 +279,16 @@ only walks when the run is already in the pen's style. Row changes are
 always an absolute `\x1b[r;cH`. Styles are written as differences, so
 stopping an underline is `\x1b[24m` rather than a reset and a repaint. A run
 of plain blanks to the end of a row becomes `\x1b[K`.
+
+**What it does not trust (0.13.0).** The renderer trusts a cell's width only for printable ASCII, precomposed
+Latin letters, box drawing, CJK ideographs, kana, Hangul syllables and fullwidth forms. Any other cluster (emoji,
+combining marks, Nerd Font glyphs, arrows, Greek, Cyrillic, Indic and Thai scripts) is "uncertain": terminals disagree on
+its width. A row that holds one is written from that cluster to the row's end whenever it changes, a two-column one is
+written over blanks first (so the column a narrower terminal leaves undrawn is blank, not a leftover), the cursor is
+re-anchored with an absolute move after it, and autowrap is off (`\e[?7l`, on entry and in every full frame) so a
+glyph drawn wider than expected cannot wrap onto the next row. A full frame starts with `\e[2J`. See
+`tests/stress.m31` for the terminals it is checked against, and `examples/width_probe.m31` to measure your own: it
+prints, per cluster, the width the terminal advanced the cursor (a cursor position report) against ours.
 
 Colour depth is a value you pass in — `Ansi16`, `Ansi256`, `TrueColour` —
 and a colour too rich for the depth is converted to the nearest entry of the

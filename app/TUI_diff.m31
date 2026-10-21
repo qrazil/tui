@@ -69,6 +69,11 @@ const int ERASE_WORTH = 8;
 pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     bytes out = [];
     TUI_style.push_reset(out);
+    // Whatever the terminal shows is not to be trusted (a repaint is asked for because it
+    // is wrong): every cell is blanked first, and the cells of a cluster a terminal draws
+    // narrower than we do (which no write would reach) are blank, not leftovers.
+    clear_screen(out);
+    out.extend(AUTOWRAP_OFF.to_bytes());
     TUI_geometry.Rect area = next.area();
     int pen = TUI_style.RESET_STYLE;
     bool has_links = next.has_links();
@@ -94,9 +99,26 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             if (has_links) {
                 link = write_link(out, link, next.link_at(x, y));
             }
-            int size = next.append_symbol(out, x, y);
+            bool is_unsure = is_uncertain(next, x, y);
+            if (is_unsure && cell_width > 1 && pen != TUI_style.RESET_STYLE) {
+                // a styled blank under the cluster, for the columns it may leave undrawn
+                blank_under(out, cell_width);
+                move_to(out, x, y);
+            }
+            bool is_wrapping = is_unsure && cell_width == 1 && y < area.bottom() - 1 && x + 1 >= area.right() && TUI_text.count_code_points(next.symbol_at(x, y)) > 1;
+            if (is_wrapping) {
+                // with autowrap off a combining mark in the last column joins the cell on its
+                // left on some terminals: autowrap is on for this one narrow cell (a wide
+                // cluster must not wrap, that is what it is off for; the cursor is placed after)
+                out.extend(AUTOWRAP_ON.to_bytes());
+            }
+            next.append_symbol(out, x, y);
+            if (is_wrapping) {
+                out.extend(AUTOWRAP_OFF.to_bytes());
+            }
             x = x + cell_width;
-            if (size > MAX_CERTAIN_BYTES && is_uncertain(next, x - cell_width, y)) {
+            if (is_unsure && x < area.right()) {
+                // the cursor is not where it is believed to be
                 move_to(out, x, y);
             }
         }
@@ -108,26 +130,41 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     return out;
 }
 
-/// The longest symbol, in bytes, that is never a cluster of uncertain width: one code
-/// point of the BMP. `TUI_text.is_uncertain_cluster` answers false for these too.
-const int MAX_CERTAIN_BYTES = 3;
+/// `count` spaces in the pen's style.
+void blank_under(bytes out, int count) {
+    for (int index in 0 .. count) {
+        out.push(' ');
+    }
+}
+
+/// A symbol of more bytes than this is not printable ASCII (a cell of the buffer holds one
+/// grapheme cluster, and "" for the second half of a wide one).
+const int MAX_PLAIN_BYTES = 1;
 /// How many columns after a cluster of uncertain width are written again at least
 /// (`TUI_text.uncertain_reach` says how many a given cluster needs).
 const int UNCERTAIN_REACH = 2;
+/// `\e[?7l`: no autowrap. Written on entry, with every full frame and undone on leaving.
+/// A glyph a terminal draws wider than we think, or a character in the last column, then
+/// never wraps onto the next row (which a diff would not repair); on terminals that wrap
+/// at once instead of waiting, it also keeps the last cell of the last row from scrolling.
+pub const str AUTOWRAP_OFF = "\x1b[?7l";
+/// `\e[?7h`: autowrap back on, for the shell.
+pub const str AUTOWRAP_ON = "\x1b[?7h";
 
-/// Is the cell at `x`, `y` a cluster whose width terminals disagree on (see
-/// `TUI_text.is_uncertain_cluster`): an emoji ZWJ sequence, a flag, a keycap, a skin
-/// tone, a variation selector, a regional indicator alone, or a two-column cluster of
-/// several code points? Those that segment grapheme clusters draw it in `width`
-/// columns, the others add up the code points (a family is 6, a flag 2 to 4). Every
-/// cell after it in the row is then in a different column on one of them. So the
-/// cursor is put back with an absolute move after it, and the columns after it
-/// (`TUI_text.uncertain_reach` of them) are always written again, which repairs the
-/// cells it overdrew -- on a terminal that agrees this costs a few bytes.
+/// Is the cell at `x`, `y` a cluster whose width terminals may disagree on (see
+/// `TUI_text.is_uncertain_cluster`): anything but printable ASCII, Latin letters, CJK, kana,
+/// Hangul syllables and fullwidth forms -- an emoji, a sequence, a flag, a combining mark,
+/// a box-drawing character, an icon glyph? Those that segment grapheme clusters draw it in
+/// `width` columns, the others add up the code points, and some tables put it at another
+/// width altogether. Every cell after it in the row is then in a different column on one
+/// of them. So the cursor is put back with an absolute move after it, a cluster of two
+/// columns is written over a styled blank (what its columns show if it is drawn narrower),
+/// and the columns after it (`TUI_text.uncertain_reach` of them) are always written again,
+/// which repairs the cells it overdrew -- on a terminal that agrees this costs a few bytes.
 pub bool is_uncertain(TUI_buffer.Buffer buffer, int x, int y) {
-    // the size first: ASCII, Latin, Hangul syllables, CJK and box drawing are 1 to 3
-    // bytes and are never uncertain, and that is nearly every cell ever written
-    if (buffer.symbol_size_at(x, y) <= MAX_CERTAIN_BYTES) {
+    // the size first: printable ASCII is one byte and is never uncertain, and that is
+    // nearly every cell ever written
+    if (buffer.symbol_size_at(x, y) <= MAX_PLAIN_BYTES) {
         return false;
     }
     int cell_width = buffer.width_at(x, y);
@@ -171,16 +208,29 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
         if (previous.is_same_row(next, y)) {
             continue;
         }
+        if (pen != TUI_style.RESET_STYLE) {
+            // every row starts plain: a style a terminal did not take cannot run on into it
+            link = write_link(out, link, "");
+            pen = write_style(out, pen, TUI_style.RESET_STYLE, depth);
+        }
         int tail = tail_start(next, y);
         int x = area.x;
-        int forced_until = -1;
+        // From the first cluster of uncertain width in the row, in either frame, to its end,
+        // every cell is written: what a terminal that measures it differently left behind
+        // depends on what was written before, and a row written whole from there is the same
+        // picture whatever the frames before it were.
+        int forced_from = previous.first_unsure(y);
+        int next_unsure = next.first_unsure(y);
+        if (next_unsure < forced_from) {
+            forced_from = next_unsure;
+        }
         while (x < area.right()) {
             int cell_width = next.width_at(x, y);
             if (cell_width == 0) {
                 x = x + 1;
                 continue;
             }
-            if (x >= forced_until && !has_changed(previous, next, x, y)) {
+            if (x < forced_from && !has_changed(previous, next, x, y)) {
                 x = x + cell_width;
                 continue;
             }
@@ -203,23 +253,31 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             if (has_links) {
                 link = write_link(out, link, next.link_at(x, y));
             }
-            int size = next.append_symbol(out, x, y);
-            current_x = x + cell_width;
-            int reach = 0;
-            if (size > MAX_CERTAIN_BYTES || previous.symbol_size_at(x, y) > MAX_CERTAIN_BYTES) {
-                // only a long symbol can be a cluster of uncertain width
-                reach = uncertain_reach_at(next, x, y);
-                int old_reach = uncertain_reach_at(previous, x, y);
-                if (old_reach > reach) {
-                    reach = old_reach;
+            bool is_unsure = false;
+            if (next.symbol_size_at(x, y) > MAX_PLAIN_BYTES) {
+                is_unsure = is_uncertain(next, x, y);
+                if (is_unsure && cell_width > 1 && (pen != TUI_style.RESET_STYLE || !previous.is_plain_blank(x, y, cell_width))) {
+                    // a terminal may draw it in fewer columns than we do, and then the
+                    // ones it leaves undrawn would show what was there before (unless that
+                    // was nothing): blank them first, in the cell's own style, and come back
+                    blank_under(out, cell_width);
+                    move_to(out, x, y);
                 }
             }
-            if (reach > 0) {
-                // terminals disagree on how wide this cluster is (see `is_uncertain`):
-                // the cursor is not where it is believed to be, and the cells after it
-                // may have been overdrawn (or still hold the leftovers of the old one)
+            bool is_wrapping = is_unsure && cell_width == 1 && y < area.bottom() - 1 && x + 1 >= area.right() && TUI_text.count_code_points(next.symbol_at(x, y)) > 1;
+            if (is_wrapping) {
+                out.extend(AUTOWRAP_ON.to_bytes());
+            }
+            next.append_symbol(out, x, y);
+            if (is_wrapping) {
+                out.extend(AUTOWRAP_OFF.to_bytes());
+            }
+            current_x = x + cell_width;
+            if (is_unsure || current_x >= area.right()) {
+                // a cluster of uncertain width (see `is_uncertain`) leaves the cursor where
+                // it is not believed to be; on the last column it stays, or has wrapped, by
+                // terminal. Either way the next cell is reached with an absolute move.
                 current_x = -1;
-                forced_until = x + cell_width + reach;
             }
             x = x + cell_width;
         }

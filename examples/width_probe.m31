@@ -1,0 +1,208 @@
+// Measure how wide YOUR terminal draws the clusters this library has opinions about.
+//
+//   bash scripts/build.sh examples/width_probe.m31 -o width_probe && ./width_probe
+//
+// For each cluster: clear the screen, put the cursor on row 5, column 10, print the cluster, ask
+// where the cursor is (CSI 6 n, the cursor position report) and read the answer. The
+// difference is the number of columns the terminal advanced, which is what every later
+// cell in a row depends on. Printed at the end, one line per cluster:
+//
+//   cluster  codepoints  tui width  terminal width  verdict  tui treats it as
+//
+// A verdict of DIFFERS means the library's width table and this terminal disagree: that is the
+// kind of cell the renderer calls "uncertain" and rewrites defensively (`TUI_text.is_uncertain_cluster`).
+// If a cluster DIFFERS and the last column says "certain", tell the maintainers: the policy
+// has a hole. Run it in each terminal you use (Terminal.app, iTerm2, Ghostty, WezTerm, kitty) and
+// keep the output: the table is the evidence. The terminal's own name is printed first
+// (TERM_PROGRAM, TERM, and its answer to XTVERSION, CSI > 0 q, when it gives one).
+
+import io;
+import os;
+import term;
+import core.TUI_text;
+
+type Probe {
+    str label;
+    str text;
+}
+
+List<Probe> probes() {
+    List<Probe> out = [];
+    out.push(Probe("ascii", "a"));
+    out.push(Probe("e acute (precomposed)", "\u{E9}"));
+    out.push(Probe("e + combining acute", "e\u{301}"));
+    out.push(Probe("CJK ideograph", "\u{4E2D}"));
+    out.push(Probe("hiragana", "\u{3042}"));
+    out.push(Probe("hangul syllable", "\u{D55C}"));
+    out.push(Probe("hangul jamo L+V+T", "\u{1112}\u{1161}\u{11AB}"));
+    out.push(Probe("fullwidth A", "\u{FF21}"));
+    out.push(Probe("halfwidth ka", "\u{FF76}"));
+    out.push(Probe("halfwidth ka + dakuten", "\u{FF76}\u{FF9E}"));
+    out.push(Probe("box drawing (light horizontal)", "\u{2500}"));
+    out.push(Probe("rounded corner", "\u{256D}"));
+    out.push(Probe("block element", "\u{2588}"));
+    out.push(Probe("arrow", "\u{2192}"));
+    out.push(Probe("bullet", "\u{2022}"));
+    out.push(Probe("ellipsis", "\u{2026}"));
+    out.push(Probe("small triangle", "\u{25B8}"));
+    out.push(Probe("Greek alpha", "\u{3B1}"));
+    out.push(Probe("Cyrillic zhe", "\u{416}"));
+    out.push(Probe("private use (Nerd Font)", "\u{E0B0}"));
+    out.push(Probe("heart text (U+2764)", "\u{2764}"));
+    out.push(Probe("heart + VS16", "\u{2764}\u{FE0F}"));
+    out.push(Probe("warning + VS16", "\u{26A0}\u{FE0F}"));
+    out.push(Probe("check mark + VS16", "\u{2714}\u{FE0F}"));
+    out.push(Probe("white check mark (emoji presentation)", "\u{2705}"));
+    out.push(Probe("grinning face", "\u{1F600}"));
+    out.push(Probe("rocket", "\u{1F680}"));
+    out.push(Probe("melting face (Unicode 14)", "\u{1FAE0}"));
+    out.push(Probe("shaking face (Unicode 15)", "\u{1FAE8}"));
+    out.push(Probe("keycap 1", "1\u{FE0F}\u{20E3}"));
+    out.push(Probe("thumbs up + skin tone", "\u{1F44D}\u{1F3FD}"));
+    out.push(Probe("raised hand + skin tone", "\u{270B}\u{1F3FD}"));
+    out.push(Probe("family (ZWJ)", "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"));
+    out.push(Probe("technologist (ZWJ)", "\u{1F9D1}\u{200D}\u{1F4BB}"));
+    out.push(Probe("flag DE", "\u{1F1E9}\u{1F1EA}"));
+    out.push(Probe("regional indicator D alone", "\u{1F1E9}"));
+    out.push(Probe("Devanagari ki", "\u{915}\u{93F}"));
+    out.push(Probe("Devanagari conjunct", "\u{938}\u{94D}\u{924}\u{947}"));
+    out.push(Probe("Thai ko + mai ek", "\u{E01}\u{E47}"));
+    out.push(Probe("Thai sara am", "\u{E33}"));
+    out.push(Probe("Arabic lam-alef", "\u{644}\u{627}"));
+    out.push(Probe("Hebrew shalom", "\u{5E9}\u{5DC}\u{5D5}\u{5DD}"));
+    out.push(Probe("zero width space", "\u{200B}"));
+    out.push(Probe("soft hyphen", "\u{AD}"));
+    return out;
+}
+
+// Read events until a cursor position report (ESC [ row ; col R) arrives; the column, or -1.
+int read_column(term.Reader reader, int timeout_ms) {
+    for (int attempt in 0 .. 20) {
+        match (reader.read(timeout_ms)) {
+            case Ok(term.Input input): {
+                match (input) {
+                    case Got(term.Event event): {
+                        match (event) {
+                            case Unknown(bytes data): {
+                                int found = column_of(data);
+                                if (found >= 0) {
+                                    return found;
+                                }
+                            }
+                            case Key(term.Key key): {
+                            }
+                            case Mouse(term.Mouse mouse): {
+                            }
+                            case Paste(str text): {
+                            }
+                        }
+                    }
+                    case Timeout: {
+                        return -1;
+                    }
+                    case End: {
+                        return -1;
+                    }
+                }
+            }
+            case Err(term.Error error): {
+                return -1;
+            }
+        }
+    }
+    return -1;
+}
+
+// The column of an ESC [ row ; col R report, or -1.
+int column_of(bytes data) {
+    if (data.size() < 6 || data[0] != 27 || data[1] != '[' || data[data.size() - 1] != 'R') {
+        return -1;
+    }
+    int value = 0;
+    bool is_after_semicolon = false;
+    for (int index in 2 .. data.size() - 1) {
+        int code = data[index];
+        if (code == ';') {
+            is_after_semicolon = true;
+            value = 0;
+        } else if (code >= '0' && code <= '9') {
+            value = value * 10 + code - '0';
+        } else {
+            return -1;
+        }
+    }
+    if (!is_after_semicolon) {
+        return -1;
+    }
+    return value;
+}
+
+void write_out(term.Writer writer) {
+    match (writer.flush()) {
+        case Ok(int count): {
+        }
+        case Err(io.Error error): {
+        }
+    }
+}
+
+List<str> table = [];
+str terminal_name = "";
+match (term.raw()) {
+    case Err(term.Error error): {
+        print("width_probe needs a terminal: run it in Terminal.app, iTerm2, Ghostty, WezTerm or kitty");
+        os.exit(1);
+    }
+    case Ok(term.Session session): {
+        term.Writer writer = term.writer(io.stdout());
+        term.Reader reader = term.reader(descriptor: 0);
+        // the terminal's own name, if it says (XTVERSION): a DCS > | name ST reply
+        writer.put("\x1b[>0q");
+        write_out(writer);
+        str version = "";
+        match (reader.read(300)) {
+            case Ok(term.Input input): {
+                match (input) {
+                    case Got(term.Event event): {
+                        version = event.to_str();
+                    }
+                    case Timeout: {
+                    }
+                    case End: {
+                    }
+                }
+            }
+            case Err(term.Error error): {
+            }
+        }
+        terminal_name = "TERM_PROGRAM=" + os.env("TERM_PROGRAM").or("") + " TERM=" + os.env("TERM").or("") + " XTVERSION-reply=" + version;
+        for (Probe probe in probes()) {
+            writer.put("\x1b[2J\x1b[5;10H" + probe.text + "\x1b[6n");
+            write_out(writer);
+            int column = read_column(reader, 400);
+            str measured = "no answer";
+            str verdict = "?";
+            int ours = TUI_text.width(probe.text);
+            if (column >= 0) {
+                int advance = column - 10;
+                measured = str(advance);
+                verdict = "same";
+                if (advance != ours) {
+                    verdict = "DIFFERS";
+                }
+            }
+            str policy = "certain";
+            if (TUI_text.is_uncertain_cluster(probe.text, ours)) {
+                policy = "uncertain (rewritten defensively)";
+            }
+            table.push(probe.label + "\t" + measured + " (tui " + str(ours) + ")\t" + verdict + "\t" + policy);
+        }
+        writer.put("\x1b[2J\x1b[H");
+        write_out(writer);
+    }
+}
+print(terminal_name);
+print("cluster\tterminal (tui)\tverdict\ttui policy");
+for (str row in table) {
+    print(row);
+}

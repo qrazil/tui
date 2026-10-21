@@ -1,0 +1,103 @@
+== pairs ============================================================
+ok   pairs: ideal
+ok   pairs: pending-wrap
+ok   pairs: instant-wrap
+ok   pairs: no-autowrap
+ok   pairs: sum-codepoints
+ok   pairs: vs16-ignored
+ok   pairs: vs16-widens
+ok   pairs: ambiguous-wide
+known pairs: box-wide: 7 of 4563 pairs
+     [] -> [─│╭╮─│] style 2: differs from a repaint: row 0 col 8: [─│╭╮│] vs [─│╭╮  ]
+     [abc] -> [─│╭╮─│] style 2: differs from a repaint: row 0 col 8: [─│╭╮│] vs [─│╭╮  ]
+     [─│╭╮─│] -> [abc] style 2: differs from a repaint: row 0 col 6: [abc   ╮  ] vs [abc       ]
+ok   pairs: private-wide
+ok   pairs: new-emoji-narrow
+ok   pairs: astral-narrow
+ok   pairs: jamo-add
+ok   pairs: no-combining
+ok   pairs: regional-2
+ok   pairs: no-bce
+ok   pairs: unclamped
+ok   pairs: no-sync
+ok   pairs: no-decstbm
+ok   pairs: terminal-app
+== finder ============================================================
+ok   finder: ideal: 39341 bytes
+ok   finder: ideal +scroll: 39341 bytes
+ok   finder: pending-wrap: 39341 bytes
+ok   finder: pending-wrap +scroll: 39341 bytes
+ok   finder: instant-wrap: 39341 bytes
+ok   finder: instant-wrap +scroll: 39341 bytes
+ok   finder: no-autowrap: 39341 bytes
+ok   finder: no-autowrap +scroll: 39341 bytes
+ok   finder: sum-codepoints: 39341 bytes
+ok   finder: sum-codepoints +scroll: 39341 bytes
+ok   finder: vs16-ignored: 39341 bytes
+ok   finder: vs16-ignored +scroll: 39341 bytes
+ok   finder: vs16-widens: 39341 bytes
+ok   finder: vs16-widens +scroll: 39341 bytes
+ok   finder: ambiguous-wide: 39341 bytes
+ok   finder: ambiguous-wide +scroll: 39341 bytes
+known finder: box-wide: 16 frames wrong
+     first: frame 1: differs from a repaint: row 2 col 6: [こ│ >p                                                                         ] vs [こ│ > p                                                                        ]
+known finder: box-wide +scroll: 16 frames wrong
+     first: frame 1: differs from a repaint: row 2 col 6: [こ│ >p                                                                         ] vs [こ│ > p                                                                        ]
+ok   finder: private-wide: 39341 bytes
+ok   finder: private-wide +scroll: 39341 bytes
+ok   finder: new-emoji-narrow: 39341 bytes
+ok   finder: new-emoji-narrow +scroll: 39341 bytes
+ok   finder: astral-narrow: 39341 bytes
+ok   finder: astral-narrow +scroll: 39341 bytes
+ok   finder: jamo-add: 39341 bytes
+ok   finder: jamo-add +scroll: 39341 bytes
+ok   finder: no-combining: 39341 bytes
+ok   finder: no-combining +scroll: 39341 bytes
+ok   finder: regional-2: 39341 bytes
+ok   finder: regional-2 +scroll: 39341 bytes
+ok   finder: no-bce: 39341 bytes
+ok   finder: no-bce +scroll: 39341 bytes
+ok   finder: unclamped: 39341 bytes
+ok   finder: unclamped +scroll: 39341 bytes
+ok   finder: no-sync: 39341 bytes
+ok   finder: no-sync +scroll: 39341 bytes
+ok   finder: no-decstbm: 39341 bytes
+ok   finder: no-decstbm +scroll: 39341 bytes
+ok   finder: terminal-app: 39341 bytes
+ok   finder: terminal-app +scroll: 39341 bytes
+== random ============================================================
+ok   random: ideal: 480 frames
+ok   random: ideal +scroll: 480 frames
+ok   random: ideal +sync: 480 frames
+ok   random: pending-wrap: 480 frames
+ok   random: pending-wrap +scroll: 480 frames
+ok   random: pending-wrap +sync: 480 frames
+ok   random: instant-wrap: 480 frames
+ok   random: no-autowrap: 480 frames
+ok   random: sum-codepoints: 480 frames
+ok   random: sum-codepoints +scroll: 480 frames
+ok   random: sum-codepoints +sync: 480 frames
+ok   random: vs16-ignored: 480 frames
+ok   random: vs16-widens: 480 frames
+ok   random: ambiguous-wide: 480 frames
+known random: box-wide: 163 of 480 frames wrong
+     first: frame 13: differs from a repaint: row 4 col 7: [hello│สวัสดี␁␛[31mre │m3😀🚀     ] vs [hello│ วัสดี␁␛[31mre │m3😀🚀     ]
+ok   random: private-wide: 480 frames
+ok   random: new-emoji-narrow: 480 frames
+ok   random: astral-narrow: 480 frames
+ok   random: jamo-add: 480 frames
+known random: no-combining: 11 of 480 frames wrong
+     first: frame 14: differs from a repaint: row 11 col 9: [❤️  😀🚀a❤️ ab z                                               ] vs [❤️  😀🚀a❤️́ab z                                               ]
+ok   random: regional-2: 480 frames
+ok   random: no-bce: 480 frames
+ok   random: unclamped: 480 frames
+ok   random: no-sync: 480 frames
+ok   random: no-decstbm: 480 frames
+known random: no-decstbm +scroll: 17 of 480 frames wrong
+     first: frame 35: differs from a repaint: row 0 col 0: [ zनमस्ते                                     ] vs [नमस्ते🇩🇪 한글ä́␁␛[31mred                      ]
+ok   random: no-decstbm +sync: 480 frames
+ok   random: terminal-app: 480 frames
+ok   random: terminal-app +scroll: 480 frames
+ok   random: terminal-app +sync: 480 frames
+
+-- 84 passed, 0 failed

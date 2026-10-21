@@ -112,6 +112,7 @@
 // something this module can close.
 
 import io;
+import os;
 import term;
 import timer;
 import core.TUI_buffer;
@@ -345,7 +346,7 @@ pub bytes Loop.take_output() {
 
 /// The bytes written on entry: `enter`, then the modes asked for.
 pub str Loop.enter_sequence() {
-    str modes = "";
+    str modes = TUI_diff.AUTOWRAP_OFF;
     if (should_report_mouse || should_report_raw_mouse) {
         modes = modes + term.MOUSE_ON;
         if (should_report_hover) {
@@ -358,7 +359,8 @@ pub str Loop.enter_sequence() {
     if (should_report_focus) {
         modes = modes + "\x1b[?1004h";
     }
-    if (should_sync) {
+    if (should_sync && !is_apple_terminal()) {
+        // Terminal.app does not know mode 2026 and does not answer: not asked (Bubble Tea too)
         modes = modes + TUI_diff.SYNC_QUERY;
     }
     if (should_disambiguate_keys) {
@@ -393,7 +395,7 @@ pub str Loop.leave_sequence() {
         // the cursor's shape is the user's again
         modes = modes + "\x1b[0 q";
     }
-    return modes + leave;
+    return modes + TUI_diff.AUTOWRAP_ON + leave;
 }
 
 /// What the loop has to say about the keys now: `run_with` calls it once the
@@ -532,7 +534,7 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             TUI_buffer.Buffer next = TUI_buffer.Buffer.sized(window_size.columns, window_size.rows);
             Shown shown = Shown();
             view.render(previous, previous.area());
-            present(writer, previous, previous, true, shown);
+            should_repaint = !present(writer, previous, previous, true, shown);
             bool is_running = true;
             int last_tick_ms = now_ms();
             while (is_running) {
@@ -635,8 +637,9 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                             next.clear();
                         }
                         view.render(next, next.area());
-                        present(writer, previous, next, did_resize || should_repaint, shown);
-                        should_repaint = false;
+                        // a write that failed leaves the terminal showing an unknown part of
+                        // the frame: the next one is written in full
+                        should_repaint = !present(writer, previous, next, did_resize || should_repaint, shown);
                         last_frame_us = (timer.monotonic_ns() - started_ns) / 1000;
                         TUI_buffer.Buffer shown_buffer = previous;
                         previous = next;
@@ -659,16 +662,16 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
 // Draw one frame: `next` against `previous` (or all of it), the cursor, and
 // the synchronized-output markers, as ONE write. Nothing is written for a frame
 // that changes nothing.
-void Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
+bool Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
     bytes out = frame_bytes(previous, next, is_full, shown);
     if (out.size() == 0) {
         last_frame_bytes = 0;
-        return;
+        return true;
     }
     last_frame_bytes = out.size();
     frame_count = frame_count + 1;
     writer.put_bytes(out);
-    flush(writer);
+    return flush(writer);
 }
 
 /// The bytes of one frame, ready to write: `next` against `previous` (or all of it),
@@ -807,6 +810,11 @@ Result<term.Input, term.Error> Loop.read_next(term.Reader reader, int timeout_ms
         return reader.read_keys(timeout_ms, escape_wait_ms);
     }
     return reader.read(timeout_ms);
+}
+
+/// Is this Apple's Terminal (`TERM_PROGRAM=Apple_Terminal`)?
+pub bool is_apple_terminal() {
+    return os.env("TERM_PROGRAM").or("") == "Apple_Terminal";
 }
 
 /// `Loop.input_fd` for "standard input if it is a terminal, else standard output".
@@ -971,15 +979,17 @@ pub bool has_resized(term.Size previous, term.Size current) {
     return previous.rows != current.rows || previous.columns != current.columns;
 }
 
-void flush(term.Writer writer) {
+bool flush(term.Writer writer) {
     // A `Writer`'s error is `io.Error`, not `term.Error`, and turning one
     // into the other would invent a mapping nobody asked for. Same answer
     // `Loop.run`'s own header gives for a failed read: there is nothing left
     // to do with a terminal that has stopped taking writes but stop.
     match (writer.flush()) {
         case Ok(int count): {
+            return true;
         }
         case Err(io.Error error): {
+            return false;
         }
     }
 }

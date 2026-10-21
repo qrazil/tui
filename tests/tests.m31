@@ -415,7 +415,7 @@ void safety_tests(Tally tally) {
     ok(tally, "a ZWJ family is uncertain", TUI_diff.is_uncertain(family, 2, 0));
     ok(tally, "a plain wide character is not", !TUI_diff.is_uncertain(wide_cell(), 0, 0));
     ok(tally, "text is not", !TUI_diff.is_uncertain(family, 0, 0));
-    check(tally, "full: the cursor is placed again after it", TUI_diff.show(TUI_diff.full(family, depth)), "\\e[0m\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|   ");
+    check(tally, "full: the cursor is placed again after it", TUI_diff.show(TUI_diff.full(family, depth)), "\\e[0m\\e[2J\\e[?7l\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|   ");
     check(tally, "diff: placed again, and the columns after it are written (a family is 6 columns on a terminal that adds up code points, so 8 after it, not 2)", TUI_diff.show(TUI_diff.diff(blank, family, depth)), "\\e[1;1Hab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|   ");
     TUI_buffer.Buffer same = TUI_buffer.Buffer.sized(10, 1);
     same.set_str(0, 0, "ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}cd|", TUI_style.Style());
@@ -423,10 +423,10 @@ void safety_tests(Tally tally) {
     TUI_buffer.Buffer moved = TUI_buffer.Buffer.sized(10, 1);
     moved.set_str(0, 0, "ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}cd|", TUI_style.Style());
     moved.set_str(9, 0, "?", TUI_style.Style());
-    check(tally, "an unchanged cluster before a change is not written", TUI_diff.show(TUI_diff.diff(same, moved, depth)), "\\e[1;10H?");
+    check(tally, "an unchanged cluster before a change is not written", TUI_diff.show(TUI_diff.diff(same, moved, depth)), "\\e[1;3H  \\e[1;3H\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\\e[1;5Hcd|  ?");
     TUI_buffer.Buffer gone = TUI_buffer.Buffer.sized(10, 1);
     gone.set_str(0, 0, "abxxcd|", TUI_style.Style());
-    check(tally, "a cluster that goes away repaints the columns it overdrew", TUI_diff.show(TUI_diff.diff(family, gone, depth)), "\\e[1;3Hx\\e[1;4Hxcd|   ");
+    check(tally, "a cluster that goes away repaints the columns it overdrew", TUI_diff.show(TUI_diff.diff(family, gone, depth)), "\\e[1;3Hxxcd|   ");
     // a walk across unchanged cells never redraws such a cluster
     TUI_buffer.Buffer flags = TUI_buffer.Buffer.sized(12, 1);
     flags.set_str(1, 0, "\u{1F1E9}\u{1F1EA}", TUI_style.Style());
@@ -434,7 +434,7 @@ void safety_tests(Tally tally) {
     flags_edited.set_str(1, 0, "\u{1F1E9}\u{1F1EA}", TUI_style.Style());
     flags_edited.set_str(0, 0, ">", TUI_style.Style());
     flags_edited.set_str(4, 0, "<", TUI_style.Style());
-    check(tally, "the cluster is jumped, not walked", TUI_diff.show(TUI_diff.diff(flags, flags_edited, depth)), "\\e[1;1H>\\e[3C<");
+    check(tally, "the cluster is jumped, not walked", TUI_diff.show(TUI_diff.diff(flags, flags_edited, depth)), "\\e[1;1H>  \\e[1;2H\u{1F1E9}\u{1F1EA}\\e[1;4H <       ");
 }
 
 TUI_buffer.Buffer wide_cell() {
@@ -481,7 +481,7 @@ void diff_tests(Tally tally) {
     TUI_buffer.Buffer frame_buffer = TUI_buffer.Buffer.sized(16, 3);
     frame_buffer.set_str(0, 0, "hello", TUI_style.Style());
     frame_buffer.set_str(0, 2, "bye", TUI_style.Style(attrs: TUI_style.BOLD));
-    check(tally, "a full frame", TUI_diff.show(TUI_diff.full(frame_buffer, depth)), "\\e[0m\\e[1;1Hhello\\e[K\\e[2;1H\\e[K\\e[3;1H\\e[1mbye\\e[22m\\e[K");
+    check(tally, "a full frame", TUI_diff.show(TUI_diff.full(frame_buffer, depth)), "\\e[0m\\e[2J\\e[?7l\\e[1;1Hhello\\e[K\\e[2;1H\\e[K\\e[3;1H\\e[1mbye\\e[22m\\e[K");
     // A resize is not a diff.
     ok(tally, "buffers of one size diff", TUI_diff.diff(previous, current, depth).size() >= 0);
     print("");

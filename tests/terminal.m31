@@ -126,8 +126,8 @@ void sync_tests(Tally tally) {
     ok(tally, "oracle: the leave sequence releases a screen held by a killed frame", !held.is_sync);
     // defaults keep today's bytes
     TUI_app.Loop today = TUI_app.Loop();
-    check(tally, "default enter sequence", TUI_diff.show(today.enter_sequence().to_bytes()), "\\e[?1049h\\e[?25l");
-    check(tally, "default leave sequence", TUI_diff.show(today.leave_sequence().to_bytes()), "\\e[?25h\\e[0m\\e[?1049l");
+    check(tally, "default enter sequence", TUI_diff.show(today.enter_sequence().to_bytes()), "\\e[?1049h\\e[?25l\\e[?7l");
+    check(tally, "default leave sequence", TUI_diff.show(today.leave_sequence().to_bytes()), "\\e[?7h\\e[?25h\\e[0m\\e[?1049l");
 }
 
 // --- 2. the clipboard (OSC 52) -------------------------------------------------
@@ -304,7 +304,7 @@ void hyperlink_tests(Tally tally) {
     frame.set_str(0, 0, "see docs here", plain);
     frame.link(TUI_geometry.Rect(4, 0, 4, 1), "http://d");
     bytes bytes_full = TUI_diff.full(frame, TUI_style.Depth.Ansi16);
-    check(tally, "full: the link is open around its cells only, and closed", TUI_diff.show(bytes_full), "\\e[0m\\e[1;1Hsee \\e]8;id=" + str(TUI_osc.hyperlink_id("http://d")) + ";http://d\\e\\docs\\e]8;;\\e\\ here       \\e[2;1H\\e[K");
+    check(tally, "full: the link is open around its cells only, and closed", TUI_diff.show(bytes_full), "\\e[0m\\e[2J\\e[?7l\\e[1;1Hsee \\e]8;id=" + str(TUI_osc.hyperlink_id("http://d")) + ";http://d\\e\\docs\\e]8;;\\e\\ here       \\e[2;1H\\e[K");
     check(tally, "full: the terminal agrees", painted(frame), "");
     TUI_buffer.Buffer none = TUI_buffer.Buffer.sized(20, 2);
     none.set_str(0, 0, "see docs here", plain);
@@ -325,7 +325,7 @@ void hyperlink_tests(Tally tally) {
     check(tally, "diff: a link that grows", replayed(frame, longer), "");
     TUI_buffer.Buffer erased = TUI_buffer.Buffer.sized(30, 1);
     erased.set_link_str(0, 0, "docs", plain, "http://d");
-    check(tally, "full: a link is closed before the erase to the end of the row", TUI_diff.show(TUI_diff.full(erased, TUI_style.Depth.Ansi16)), "\\e[0m\\e[1;1H\\e]8;id=" + str(TUI_osc.hyperlink_id("http://d")) + ";http://d\\e\\docs\\e]8;;\\e\\\\e[K");
+    check(tally, "full: a link is closed before the erase to the end of the row", TUI_diff.show(TUI_diff.full(erased, TUI_style.Depth.Ansi16)), "\\e[0m\\e[2J\\e[?7l\\e[1;1H\\e]8;id=" + str(TUI_osc.hyperlink_id("http://d")) + ";http://d\\e\\docs\\e]8;;\\e\\\\e[K");
     // a link on blanks to the end of the row is not erased away
     TUI_buffer.Buffer tail = TUI_buffer.Buffer.sized(20, 1);
     tail.link(TUI_geometry.Rect(2, 0, 18, 1), "http://tail");
@@ -813,14 +813,18 @@ void uncertainty_tests(Tally tally) {
     ok(tally, "uncertain: a joined sequence that is one column wide (was not)", is_uncertain("2764 200D 1F525"));
     ok(tally, "uncertain: a tag sequence", is_uncertain("1F3F4 E0067 E0062 E0065 E006E E0067 E007F"));
     ok(tally, "uncertain: a text selector on a wide emoji", is_uncertain("231A FE0E"));
-    ok(tally, "certain: a plain emoji", !is_uncertain("1F600"));
-    ok(tally, "certain: a plain wide emoji with a high code point", !is_uncertain("1FAE0"));
+    ok(tally, "uncertain: a plain emoji (its table may be older than ours)", is_uncertain("1F600"));
+    ok(tally, "uncertain: a plain wide emoji with a high code point", is_uncertain("1FAE0"));
     ok(tally, "certain: a CJK character", !is_uncertain("4E2D"));
-    ok(tally, "certain: a letter with an accent", !is_uncertain("65 301"));
+    ok(tally, "uncertain: a letter with a combining accent", is_uncertain("65 301"));
+    ok(tally, "certain: a precomposed letter with an accent", !is_uncertain("E9"));
+    ok(tally, "certain: ASCII, a CJK ideograph, a kana, a Hangul syllable, a box", !is_uncertain("41") && !is_uncertain("4E2D") && !is_uncertain("3042") && !is_uncertain("D55C") && !is_uncertain("2502"));
+    ok(tally, "uncertain: an arrow, a Nerd Font glyph, a Cyrillic letter, halfwidth katakana", is_uncertain("2192") && is_uncertain("E0B0") && is_uncertain("416") && is_uncertain("FF76"));
     ok(tally, "uncertain, by the old rule: three Hangul jamo are two columns and several code points", is_uncertain("1100 1161 11A8"));
     ok(tally, "certain: ASCII", !is_uncertain("41"));
     ok(tally, "certain: a box-drawing character", !is_uncertain("2500"));
-    ok(tally, "certain: a Devanagari conjunct (one column, no joiner marker)", !is_uncertain("915 94D 937"));
+    ok(tally, "uncertain: a Devanagari conjunct (terminals add up its signs)", is_uncertain("915 94D 937"));
+    ok(tally, "uncertain: a Devanagari syllable with a spacing mark", is_uncertain("915 93F"));
     check_int(tally, "reach: a family of five code points", TUI_text.uncertain_reach(from_hex("1F468 200D 1F469 200D 1F467"), 2), 8);
     check_int(tally, "reach: a flag", TUI_text.uncertain_reach(from_hex("1F1E9 1F1EA"), 2), 2);
     check_int(tally, "reach: a regional indicator alone is at least 2", TUI_text.uncertain_reach(from_hex("1F1E9"), 1), 2);

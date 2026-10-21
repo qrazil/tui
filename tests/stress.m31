@@ -1,0 +1,799 @@
+// The stress harness: what the renderer writes, replayed on terminals that differ.
+//
+//   bash tests/test.sh
+//
+// Our emulator-based tests agreed with the renderer and real terminals did not, so this
+// harness asks the question the other way round. It draws random frames through the
+// library's real output (`Loop.frame_bytes`: the diff, the scrolled diff, the full frame
+// of a resize, the synchronized-output markers), applies the bytes to an emulator that
+// behaves like one kind of real terminal, and after EVERY frame asserts that its screen
+// is the screen a from-scratch repaint of the same frame gives on that same terminal.
+// Where the terminal has no disagreement with the library (it wraps differently, it
+// erases differently) the screen must also be exactly the buffer.
+//
+// The terminals (`TST_emulator.Screen`'s knobs):
+//   ideal          no autowrap; grapheme segmentation; what the older tests used
+//   pending-wrap   xterm: the cursor waits on the last column until the next printable
+//   instant-wrap   the cursor wraps the moment the last column is written
+//   no-autowrap    the last column is overwritten again and again
+//   sum-codepoints Terminal.app: a cluster is drawn as the sum of its code points
+//   vs16-ignored   a text emoji with U+FE0F is drawn one column (the base character)
+//   vs16-widens    U+FE0F makes anything two columns
+//   ambiguous-wide East Asian Ambiguous (box drawing, arrows, shapes, Greek) are two columns
+//   private-wide   private use glyphs (Nerd Font icons) take two columns
+//   new-emoji-narrow  emoji newer than the terminal's tables are one column
+//   astral-narrow  pictographs of U+1F300.. are one column
+//   jamo-add       conjoining Hangul jamo are two columns each
+//   no-combining   a combining mark takes a cell of its own
+//   no-bce         erase (EL) paints the default background, not the pen's
+//   unclamped      CUF/CUB do not stop at the margin, CUF keeps a pending wrap
+//   no-sync        mode 2026 is ignored and not answered
+//   terminal-app   sum-codepoints + pending-wrap + no-sync + no-bce
+//
+// Two phases. The pair phase is exhaustive over small rows: every row of a pool as the
+// old frame against every row as the new one, on a screen ten columns wide, which is
+// the minimal reproducer of anything that breaks. The random phase draws long
+// sequences of scenes (a text layer, a popup box with a list that grows and shrinks, a
+// query that is typed and erased, resizes) at 40 x 12 and 61 x 16.
+
+import os;
+import random;
+import text.unicode;
+import app.TUI_app;
+import app.TUI_diff;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import core.TUI_text;
+import core.TUI_widget;
+import tests.TST_emulator;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+type Variant {
+    str name = "";
+    int wrap_mode = 0;
+    int width_model = 1;
+    int quirks = 0;
+    bool is_erase_coloured = true;
+    bool is_move_clamped = true;
+    bool is_move_keeping_wrap = false;
+    bool is_sync_ignored = false;
+    bool is_autowrap_locked = false;
+    /// The terminal ignores DECSTBM (so a scroll the renderer trusts does not happen).
+    bool is_region_ignored = false;
+    /// What cannot be made right without asking the terminal how wide it draws: reported, not failed.
+    bool is_known_limit = false;
+    /// The terminal agrees with the library on every width, so the screen must be the buffer.
+    bool is_exact = true;
+    int regional_width = 1;
+}
+
+List<Variant> variants() {
+    List<Variant> out = [];
+    out.push(Variant(name: "ideal"));
+    out.push(Variant(name: "pending-wrap", wrap_mode: 1));
+    out.push(Variant(name: "instant-wrap", wrap_mode: 2));
+    out.push(Variant(name: "no-autowrap", wrap_mode: 3));
+    out.push(Variant(name: "sum-codepoints", wrap_mode: 1, width_model: 0, is_exact: false));
+    out.push(Variant(name: "vs16-ignored", wrap_mode: 1, quirks: TST_emulator.Q_VS16_IGNORED, is_exact: false));
+    out.push(Variant(name: "vs16-widens", wrap_mode: 1, quirks: TST_emulator.Q_VS16_WIDENS, is_exact: false));
+    out.push(Variant(name: "ambiguous-wide", wrap_mode: 1, quirks: TST_emulator.Q_AMBIGUOUS_WIDE, is_exact: false));
+    out.push(Variant(name: "box-wide", wrap_mode: 1, quirks: TST_emulator.Q_BOX_WIDE, is_exact: false, is_known_limit: true));
+    out.push(Variant(name: "private-wide", wrap_mode: 1, quirks: TST_emulator.Q_PRIVATE_USE_WIDE, is_exact: false));
+    out.push(Variant(name: "new-emoji-narrow", wrap_mode: 1, quirks: TST_emulator.Q_NEW_EMOJI_NARROW, is_exact: false));
+    out.push(Variant(name: "astral-narrow", wrap_mode: 1, quirks: TST_emulator.Q_ASTRAL_SYMBOL_NARROW, is_exact: false));
+    out.push(Variant(name: "jamo-add", wrap_mode: 1, quirks: TST_emulator.Q_JAMO_ADD, is_exact: false));
+    out.push(Variant(name: "no-combining", wrap_mode: 1, quirks: TST_emulator.Q_COMBINING_OWN_CELL, is_exact: false, is_known_limit: true));
+    out.push(Variant(name: "regional-2", wrap_mode: 1, regional_width: 2, is_exact: false));
+    out.push(Variant(name: "no-bce", wrap_mode: 1, is_erase_coloured: false));
+    out.push(Variant(name: "unclamped", wrap_mode: 1, is_move_clamped: false, is_move_keeping_wrap: true));
+    out.push(Variant(name: "no-sync", wrap_mode: 1, is_sync_ignored: true));
+    out.push(Variant(name: "no-decstbm", wrap_mode: 1, is_region_ignored: true));
+    out.push(Variant(name: "terminal-app", wrap_mode: 1, width_model: 0, is_erase_coloured: false, is_sync_ignored: true, is_exact: false));
+    return out;
+}
+
+TST_emulator.Screen screen_for(Variant variant, int columns, int rows) {
+    TST_emulator.Screen screen = TST_emulator.Screen.sized(columns, rows);
+    screen.wrap_mode = variant.wrap_mode;
+    screen.width_model = variant.width_model;
+    screen.quirks = variant.quirks;
+    screen.is_erase_coloured = variant.is_erase_coloured;
+    screen.is_move_clamped = variant.is_move_clamped;
+    screen.is_move_keeping_wrap = variant.is_move_keeping_wrap;
+    screen.is_sync_ignored = variant.is_sync_ignored;
+    screen.is_autowrap_locked = variant.is_autowrap_locked;
+    screen.is_region_ignored = variant.is_region_ignored;
+    screen.regional_width = variant.regional_width;
+    return screen;
+}
+
+// --- the text pool: what a text user interface meets ------------------------------------
+
+List<str> pool() {
+    List<str> out = [];
+    out.push("hello world");
+    out.push("x");
+    out.push("src/main.m31");
+    out.push("    indented");
+    out.push("\u{4E2D}\u{6587}\u{5B57}\u{7B26}");
+    out.push("\u{3053}\u{3093}\u{306B}\u{3061}\u{306F}");
+    out.push("\u{FF21}\u{FF22}\u{FF23}");
+    out.push("\u{1F600}\u{1F680}");
+    out.push("\u{2764}\u{FE0F}");
+    out.push("\u{2714}\u{FE0F} ok");
+    out.push("\u{2600}\u{FE0F}\u{26A0}\u{FE0F}");
+    out.push("\u{2764}");
+    out.push("\u{2705} \u{274C}");
+    out.push("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}");
+    out.push("\u{1F9D1}\u{200D}\u{1F4BB}");
+    out.push("\u{1F1E9}\u{1F1EA}");
+    out.push("\u{1F1E9}");
+    out.push("1\u{FE0F}\u{20E3}");
+    out.push("\u{1F44D}\u{1F3FD}");
+    out.push("\u{270B}\u{1F3FD}");
+    out.push("\u{D55C}\u{AE00}");
+    out.push("\u{1112}\u{1161}\u{11AB}");
+    out.push("e\u{301}");
+    out.push("a\u{308}\u{301}");
+    out.push("\u{E9}");
+    out.push("\u{2500}\u{2502}\u{256D}\u{256E}\u{2570}\u{256F}");
+    out.push("\u{25B8} \u{25CF} \u{2192} \u{2022}");
+    out.push("\u{B1}\u{B0}\u{D7}");
+    out.push("\u{03B1}\u{03B2}\u{0416}");
+    out.push("\u{E0B0}\u{F115}");
+    out.push("\u{1FAE8}\u{1FA77}");
+    out.push("a\tb");
+    out.push("\u{1}\u{1B}[31mred");
+    out.push("a\u{85}b");
+    out.push("a\u{200B}b");
+    out.push("\u{200E}x\u{FEFF}");
+    out.push("\u{E2A}\u{E27}\u{E31}\u{E2A}\u{E14}\u{E35}");
+    out.push("\u{928}\u{92E}\u{938}\u{94D}\u{924}\u{947}");
+    out.push("\u{645}\u{631}\u{62D}\u{628}\u{627}");
+    out.push("\u{5E9}\u{5DC}\u{5D5}\u{5DD}");
+    out.push("\u{2028}z");
+    out.push("\u{FE0F}q");
+    return out;
+}
+
+// --- one scene: what the program means to show -------------------------------------------
+
+type Scene {
+    int width = 0;
+    int height = 0;
+    List<str> base = [];
+    List<int> base_style = [];
+    bool has_popup = true;
+    int popup_x = 0;
+    int popup_y = 0;
+    int popup_w = 0;
+    int popup_h = 0;
+    str query = "";
+    List<str> items = [];
+    int selected = 0;
+    int style_kind = 0;
+    int cursor_x = -1;
+    int cursor_y = -1;
+}
+
+TUI_style.Style style_of(int kind) {
+    if (kind == 1) {
+        return TUI_style.Style(foreground: TUI_style.Colour.Indexed(2), background: TUI_style.Colour.Indexed(4));
+    }
+    if (kind == 2) {
+        return TUI_style.Style(attrs: TUI_style.BOLD);
+    }
+    if (kind == 3) {
+        return TUI_style.Style(background: TUI_style.Colour.Rgb(40, 44, 52));
+    }
+    if (kind == 4) {
+        return TUI_style.Style(foreground: TUI_style.Colour.Rgb(200, 100, 50), attrs: TUI_style.UNDERLINE);
+    }
+    if (kind == 5) {
+        return TUI_style.Style(attrs: TUI_style.REVERSE);
+    }
+    return TUI_style.Style();
+}
+
+str some_line(random.Seeded dice, List<str> texts, int width) {
+    int pieces = dice.integer(1, 6);
+    List<str> parts = [];
+    for (int index in 0 .. pieces) {
+        parts.push(texts[dice.integer(0, texts.size() - 1)]);
+        if (dice.integer(0, 2) == 0) {
+            parts.push(" ");
+        }
+    }
+    str line = parts.join("");
+    int fit = dice.integer(0, 6);
+    if (fit == 0) {
+        // exactly the width of the row, or one short of it: the last column and the one before
+        int target = width - dice.integer(0, 1);
+        List<str> cut = [];
+        int used = 0;
+        for (str cluster in TUI_text.clusters(line)) {
+            int cluster_width = TUI_text.width(cluster);
+            if (used + cluster_width > target) {
+                break;
+            }
+            cut.push(cluster);
+            used = used + cluster_width;
+        }
+        return cut.join("") + " ".repeat(target - used);
+    }
+    if (fit == 1) {
+        return line.repeat(width / 4 + 1);
+    }
+    return line;
+}
+
+Scene new_scene(random.Seeded dice, List<str> texts, int width, int height) {
+    Scene scene = Scene(width: width, height: height);
+    for (int y in 0 .. height) {
+        scene.base.push(some_line(dice, texts, width));
+        scene.base_style.push(dice.integer(0, 5));
+    }
+    scene.popup_x = dice.integer(0, width / 4);
+    scene.popup_y = dice.integer(0, height / 4);
+    scene.popup_w = dice.integer(width / 2, width - scene.popup_x);
+    scene.popup_h = dice.integer(5, height - scene.popup_y);
+    for (int index in 0 .. dice.integer(0, 14)) {
+        scene.items.push(some_line(dice, texts, scene.popup_w));
+    }
+    return scene;
+}
+
+Scene copy_scene(Scene scene) {
+    Scene out = Scene(width: scene.width, height: scene.height, has_popup: scene.has_popup, popup_x: scene.popup_x, popup_y: scene.popup_y, popup_w: scene.popup_w, popup_h: scene.popup_h, query: scene.query, selected: scene.selected, style_kind: scene.style_kind, cursor_x: scene.cursor_x, cursor_y: scene.cursor_y);
+    for (str line in scene.base) {
+        out.base.push(line);
+    }
+    for (int kind in scene.base_style) {
+        out.base_style.push(kind);
+    }
+    for (str item in scene.items) {
+        out.items.push(item);
+    }
+    return out;
+}
+
+/// The next scene: one small change, or a big one now and then.
+Scene mutate(random.Seeded dice, List<str> texts, Scene scene) {
+    Scene out = copy_scene(scene);
+    int op = dice.integer(0, 11);
+    if (op == 0) {
+        int y = dice.integer(0, out.height - 1);
+        out.base[y] = some_line(dice, texts, out.width);
+        out.base_style[y] = dice.integer(0, 5);
+    } else if (op == 1 || op == 2) {
+        // type a character, or erase the last one
+        if (op == 1 || out.query.size() == 0) {
+            List<str> clusters = TUI_text.clusters(texts[dice.integer(0, texts.size() - 1)]);
+            out.query = out.query + clusters[0];
+        } else {
+            List<str> clusters = TUI_text.clusters(out.query);
+            clusters.pop();
+            out.query = clusters.join("");
+        }
+        // the list narrows as the query grows
+        List<str> kept = [];
+        for (str item in out.items) {
+            if (dice.integer(0, 3) != 0) {
+                kept.push(item);
+            }
+        }
+        out.items = kept;
+    } else if (op == 3) {
+        out.items = [];
+        for (int index in 0 .. dice.integer(0, 16)) {
+            out.items.push(some_line(dice, texts, out.popup_w));
+        }
+    } else if (op == 4) {
+        out.selected = dice.integer(0, 14);
+    } else if (op == 5) {
+        out.style_kind = dice.integer(0, 5);
+    } else if (op == 6) {
+        out.has_popup = !out.has_popup;
+    } else if (op == 7) {
+        out.popup_x = dice.integer(0, out.width / 4);
+        out.popup_y = dice.integer(0, out.height / 4);
+        out.popup_w = dice.integer(out.width / 2, out.width - out.popup_x);
+        out.popup_h = dice.integer(5, out.height - out.popup_y);
+    } else if (op == 8) {
+        // the text layer scrolls by a few rows (the scrolled diff's case)
+        int by = dice.integer(1, 3);
+        List<str> lines = [];
+        List<int> kinds = [];
+        for (int y in by .. out.height) {
+            lines.push(out.base[y]);
+            kinds.push(out.base_style[y]);
+        }
+        for (int index in 0 .. by) {
+            lines.push(some_line(dice, texts, out.width));
+            kinds.push(dice.integer(0, 5));
+        }
+        out.base = lines;
+        out.base_style = kinds;
+    } else if (op == 9) {
+        for (int y in 0 .. out.height) {
+            out.base[y] = some_line(dice, texts, out.width);
+        }
+    } else if (op == 10) {
+        out.cursor_x = dice.integer(-1, out.width - 1);
+        out.cursor_y = dice.integer(0, out.height - 1);
+    } else {
+        out.has_popup = false;
+        int y = dice.integer(0, out.height - 1);
+        out.base[y] = "";
+    }
+    return out;
+}
+
+void draw(Scene scene, TUI_buffer.Buffer buffer) {
+    for (int y in 0 .. scene.height) {
+        TUI_style.Style style = style_of(scene.base_style[y]);
+        buffer.set_str(0, y, scene.base[y], style);
+        if (scene.base_style[y] == 3) {
+            // a styled tail: blanks in the row's own style, to the edge
+            int used = TUI_text.width(scene.base[y]);
+            if (used < scene.width) {
+                buffer.fill(TUI_geometry.Rect(used, y, scene.width - used, 1), " ", style);
+            }
+        }
+    }
+    if (!scene.has_popup) {
+        return;
+    }
+    TUI_style.Style plain = style_of(3);
+    TUI_style.Style chosen = style_of(1);
+    TUI_geometry.Rect box = TUI_geometry.Rect(scene.popup_x, scene.popup_y, scene.popup_w, scene.popup_h);
+    buffer.fill(box, " ", plain);
+    TUI_widget.Block block = TUI_widget.Block(title: " pick " + str(scene.items.size()) + " ", borders: TUI_widget.Borders.Rounded, style: plain, pad_x: 1);
+    block.render(buffer, box);
+    TUI_geometry.Rect inner = block.inner(box);
+    if (inner.height < 3 || inner.width < 4) {
+        return;
+    }
+    buffer.set_str(inner.x, inner.y, "> " + scene.query, plain, max: inner.width);
+    buffer.fill(TUI_geometry.Rect(inner.x, inner.y + 1, inner.width, 1), "\u{2500}", plain);
+    for (int row in 0 .. inner.height - 2) {
+        if (row >= scene.items.size()) {
+            break;
+        }
+        int y = inner.y + 2 + row;
+        TUI_style.Style style = plain;
+        if (row == scene.selected) {
+            style = chosen;
+            buffer.fill(TUI_geometry.Rect(inner.x, y, inner.width, 1), " ", chosen);
+        }
+        buffer.set_str(inner.x, y, scene.items[row], style, max: inner.width);
+    }
+}
+
+TUI_buffer.Buffer buffer_of(Scene scene) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(scene.width, scene.height);
+    draw(scene, buffer);
+    return buffer;
+}
+
+// --- running frames through a terminal ---------------------------------------------------
+
+type Run {
+    int frames = 0;
+    int bad = 0;
+    str first = "";
+    int bytes_written = 0;
+    int full_bytes = 0;
+    str detail = "";
+}
+
+/// A screen of another size that still shows what the old one did, as a resized window does.
+TST_emulator.Screen resized_from(Variant variant, TST_emulator.Screen old, int columns, int rows) {
+    TST_emulator.Screen screen = screen_for(variant, columns, rows);
+    for (int y in 0 .. rows) {
+        for (int x in 0 .. columns) {
+            if (x < old.columns && y < old.rows) {
+                screen.put_symbol(x, y, old.symbol_at(x, y));
+            }
+        }
+    }
+    return screen;
+}
+
+/// Replay the `scenes` on a terminal like `variant`; compare after every frame.
+Run play(Variant variant, List<Scene> scenes, bool is_scroll, bool is_sync, TUI_style.Depth depth) {
+    Run run = Run();
+    TUI_app.Loop loop = TUI_app.Loop(should_scroll: is_scroll);
+    loop.is_sync = is_sync;
+    TUI_app.Shown shown = TUI_app.Shown();
+    TST_emulator.Screen screen = screen_for(variant, scenes[0].width, scenes[0].height);
+    TUI_buffer.Buffer previous = buffer_of(scenes[0]);
+    loop.cursor.x = scenes[0].cursor_x;
+    loop.cursor.y = scenes[0].cursor_y;
+    screen.feed(loop.frame_bytes(previous, previous, true, shown));
+    for (int index in 1 .. scenes.size()) {
+        Scene scene = scenes[index];
+        TUI_buffer.Buffer next = buffer_of(scene);
+        loop.cursor.x = scene.cursor_x;
+        loop.cursor.y = scene.cursor_y;
+        bool is_resized = scene.width != previous.area().width || scene.height != previous.area().height;
+        bytes frame = [];
+        if (is_resized) {
+            screen = resized_from(variant, screen, scene.width, scene.height);
+            frame = loop.frame_bytes(next, next, true, shown);
+        } else {
+            frame = loop.frame_bytes(previous, next, false, shown);
+        }
+        run.frames = run.frames + 1;
+        run.bytes_written = run.bytes_written + frame.size();
+        screen.feed(frame);
+        // a terminal that holds the screen during a synchronized update has shown it by now
+        str why = verdict(variant, screen, next, scene);
+        if (why != "" && run.bad == 0) {
+            str note = "";
+            if (is_resized) {
+                note = " resize";
+            }
+            run.first = "frame " + str(index) + note + ": " + why;
+            TST_emulator.Screen fresh = screen_for(variant, scene.width, scene.height);
+            fresh.feed(TUI_app.Loop().frame_bytes(next, next, true, TUI_app.Shown()));
+            str cells = "";
+            for (int y in 0 .. scene.height) {
+                if (screen.row_text(y) != fresh.row_text(y)) {
+                    List<str> got = [];
+                    List<str> want = [];
+                    for (int x in 0 .. scene.width) {
+                        got.push(screen.symbol_at(x, y));
+                        want.push(fresh.symbol_at(x, y));
+                    }
+                    cells = cells + "prev row text: " + pair_name(previous.row_text(y)) + "\nnext row text: " + pair_name(next.row_text(y)) + "\n";
+                    cells = cells + "row " + str(y) + " screen: " + got.join("|") + "\nrow " + str(y) + " repaint: " + want.join("|") + "\n";
+                }
+            }
+            run.detail = cells + "previous:\n" + previous.to_str() + "\nnext:\n" + next.to_str() + "\nscreen:\n" + screen.to_str() + "\nbytes: " + TUI_diff.show(frame);
+        }
+        if (why != "") {
+            run.bad = run.bad + 1;
+        }
+        previous = next;
+    }
+    return run;
+}
+
+/// "" when the screen is right, else what is wrong with it.
+str verdict(Variant variant, TST_emulator.Screen screen, TUI_buffer.Buffer next, Scene scene) {
+    if (screen.unknown.size() > 0) {
+        return "the terminal did not understand " + screen.unknown[0];
+    }
+    if (screen.is_sync && !variant.is_sync_ignored) {
+        return "a synchronized update was left open";
+    }
+    TST_emulator.Screen fresh = screen_for(variant, scene.width, scene.height);
+    TUI_app.Loop reference = TUI_app.Loop();
+    fresh.feed(reference.frame_bytes(next, next, true, TUI_app.Shown()));
+    str why = screen.differs_from_screen(fresh);
+    if (why != "") {
+        return "differs from a repaint: " + why;
+    }
+    if (variant.is_exact) {
+        str other = screen.differs_from(next);
+        if (other != "") {
+            return "differs from the buffer: " + other;
+        }
+    }
+    return "";
+}
+
+// --- the pair phase: every small row against every other ---------------------------------
+
+const int PAIR_WIDTH = 10;
+
+List<str> rows_pool() {
+    List<str> out = [];
+    out.push("");
+    out.push("          ");
+    out.push("abcdefghij");
+    out.push("abcdefghi");
+    out.push("abc");
+    out.push("\u{4E2D}\u{4E2D}\u{4E2D}\u{4E2D}\u{4E2D}");
+    out.push("a\u{4E2D}b\u{4E2D}c");
+    out.push("abcdefghi\u{4E2D}");
+    out.push("abcdefgh\u{4E2D}");
+    out.push("\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}");
+    out.push("a\u{1F600}");
+    out.push("abcdefgh\u{1F600}");
+    out.push("\u{2764}\u{FE0F}abc");
+    out.push("abc\u{2764}\u{FE0F}");
+    out.push("a\u{2764}\u{FE0F}\u{2764}\u{FE0F}b");
+    out.push("abcdefgh\u{2764}\u{FE0F}");
+    out.push("abcdefghi\u{2764}\u{FE0F}");
+    out.push("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}x");
+    out.push("xxxxxxxx\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}");
+    out.push("\u{1F1E9}\u{1F1EA}abc");
+    out.push("\u{1F1E9}abc");
+    out.push("1\u{FE0F}\u{20E3}2\u{FE0F}\u{20E3}");
+    out.push("\u{1F44D}\u{1F3FD}a");
+    out.push("\u{D55C}\u{AE00}\u{D55C}\u{AE00}");
+    out.push("\u{1112}\u{1161}\u{11AB}ab");
+    out.push("e\u{301}e\u{301}e\u{301}");
+    out.push("a\u{308}\u{301}b");
+    out.push("\u{2500}\u{2502}\u{256D}\u{256E}\u{2500}\u{2502}");
+    out.push("\u{25B8} \u{25CF} \u{2192} z");
+    out.push("\u{E0B0}\u{E0B0}ab");
+    out.push("\u{1FAE8}ab");
+    out.push("\u{1FAE8}\u{1FA77}\u{1FAE8}");
+    out.push("a\tb");
+    out.push("a\u{1}b\u{1B}[2J");
+    out.push("\u{E2A}\u{E27}\u{E31}\u{E2A}\u{E14}\u{E35}");
+    out.push("\u{928}\u{92E}\u{938}\u{94D}\u{924}\u{947}");
+    out.push("\u{645}\u{631}\u{62D}\u{628}\u{627}");
+    out.push("a\u{200B}b");
+    out.push("\u{2028}z");
+    return out;
+}
+
+/// One row on a ten column, one row screen; `kind` 0 plain, 1 with a coloured background all
+/// along the row (blanks included), 2 coloured text on a plain tail.
+TUI_buffer.Buffer pair_buffer(str text, int kind) {
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(PAIR_WIDTH, 2);
+    TUI_style.Style style = TUI_style.Style();
+    if (kind == 1) {
+        style = style_of(3);
+        buffer.fill(TUI_geometry.Rect(0, 0, PAIR_WIDTH, 1), " ", style);
+    } else if (kind == 2) {
+        style = style_of(1);
+    }
+    buffer.set_str(0, 0, text, style);
+    buffer.set_str(0, 1, "end", TUI_style.Style());
+    return buffer;
+}
+
+str pair_name(str text) {
+    return TUI_diff.show(text.to_bytes());
+}
+
+void pair_phase(Tally tally, List<Variant> all) {
+    List<str> rows = rows_pool();
+    TUI_style.Depth depth = TUI_style.Depth.Ansi256;
+    for (Variant variant in all) {
+        int bad = 0;
+        List<str> examples = [];
+        for (str old_text in rows) {
+            for (str new_text in rows) {
+                for (int kind in 0 .. 3) {
+                    TUI_buffer.Buffer before = pair_buffer(old_text, kind);
+                    TUI_buffer.Buffer after = pair_buffer(new_text, (kind + 1) % 3);
+                    TUI_app.Loop loop = TUI_app.Loop();
+                    TST_emulator.Screen screen = screen_for(variant, PAIR_WIDTH, 2);
+                    screen.feed(loop.frame_bytes(before, before, true, TUI_app.Shown()));
+                    screen.feed(loop.frame_bytes(before, after, false, TUI_app.Shown()));
+                    str why = verdict(variant, screen, after, Scene(width: PAIR_WIDTH, height: 2));
+                    if (why != "") {
+                        bad = bad + 1;
+                        if (examples.size() < 3) {
+                            examples.push("[" + pair_name(old_text) + "] -> [" + pair_name(new_text) + "] style " + str(kind) + ": " + why);
+                        }
+                    }
+                }
+            }
+        }
+        if (bad == 0) {
+            tally.pass = tally.pass + 1;
+            print("ok   pairs: " + variant.name);
+        } else {
+            str mark = "FAIL";
+            if (variant.is_known_limit) {
+                mark = "known";
+            } else {
+                tally.fail = tally.fail + 1;
+            }
+            print(mark + " pairs: " + variant.name + ": " + str(bad) + " of " + str(rows.size() * rows.size() * 3) + " pairs");
+            for (str example in examples) {
+                print("     " + example);
+            }
+        }
+    }
+}
+
+// --- the random phase ------------------------------------------------------------------
+
+void random_phase(Tally tally, List<Variant> all, int sequences, int frames) {
+    List<str> texts = pool();
+    TUI_style.Depth depth = TUI_style.Depth.Ansi256;
+    // the same scenes for every terminal
+    List<List<Scene>> plans = [];
+    random.Seeded dice = random.seeded(20261020);
+    for (int sequence in 0 .. sequences) {
+        int width = 40;
+        int height = 12;
+        if (sequence % 2 == 1) {
+            width = 61;
+            height = 16;
+        }
+        List<Scene> plan = [];
+        Scene scene = new_scene(dice, texts, width, height);
+        plan.push(scene);
+        for (int frame in 0 .. frames) {
+            if (dice.integer(0, 14) == 0) {
+                // a resize: a few columns and rows more or fewer
+                Scene resized = new_scene(dice, texts, scene.width + dice.integer(-5, 5), scene.height + dice.integer(-3, 3));
+                scene = resized;
+            } else {
+                scene = mutate(dice, texts, scene);
+            }
+            plan.push(scene);
+        }
+        plans.push(plan);
+    }
+    for (Variant variant in all) {
+        int modes = 1;
+        if (variant.name == "ideal" || variant.name == "pending-wrap" || variant.name == "sum-codepoints" || variant.name == "terminal-app" || variant.name == "no-decstbm") {
+            // the scrolled diff and the synchronized markers, on the terminals that matter most
+            modes = 3;
+        }
+        for (int mode in 0 .. modes) {
+            bool is_scroll = mode == 1;
+            bool is_sync = mode == 2;
+            str label = "random: " + variant.name;
+            if (is_scroll) {
+                label = label + " +scroll";
+            }
+            if (is_sync) {
+                label = label + " +sync";
+            }
+            int bad = 0;
+            int total = 0;
+            int bytes_total = 0;
+            str first = "";
+            for (List<Scene> plan in plans) {
+                Run run = play(variant, plan, is_scroll, is_sync, depth);
+                total = total + run.frames;
+                bad = bad + run.bad;
+                bytes_total = bytes_total + run.bytes_written;
+                if (run.bad > 0 && first == "") {
+                    first = run.first;
+                    if (os.env("STRESS_EXPLAIN").or("") == variant.name) {
+                        print(run.detail);
+                    }
+                }
+            }
+            if (bad == 0) {
+                tally.pass = tally.pass + 1;
+                print("ok   " + label + ": " + str(total) + " frames");
+            } else {
+                str mark = "FAIL";
+                if (variant.is_known_limit || (is_scroll && variant.is_region_ignored)) {
+                    mark = "known";
+                } else {
+                    tally.fail = tally.fail + 1;
+                }
+                print(mark + " " + label + ": " + str(bad) + " of " + str(total) + " frames wrong");
+                print("     first: " + first);
+            }
+        }
+    }
+}
+
+// --- the finder: the sequence of the report ---------------------------------------------
+
+/// Open a picker over text, type p, o, m (the list narrows from many rows to few), erase the m:
+/// the scene sequence of m3's fuzzy finder, with entries of different lengths, wide characters,
+/// emoji and a path longer than the box.
+List<Scene> finder_plan(int width, int height, bool has_preview) {
+    List<str> entries = [];
+    for (int index in 0 .. 60) {
+        str name = "src/ui/module_" + str(index) + ".m31";
+        if (index % 7 == 0) {
+            name = "docs/pom_" + str(index) + "/" + "deep/".repeat(index % 5 + 1) + "a_path_longer_than_the_box_" + str(index) + ".xml";
+        } else if (index % 11 == 0) {
+            name = "\u{4E2D}\u{6587}/pom_\u{6F22}\u{5B57}_" + str(index) + ".md";
+        } else if (index % 13 == 0) {
+            name = "notes/\u{1F680}_pom_\u{26A0}\u{FE0F}_" + str(index) + ".md";
+        } else if (index % 5 == 0) {
+            name = "pom.xml " + str(index);
+        } else if (index % 3 == 0) {
+            name = "po_" + str(index);
+        }
+        entries.push(name);
+    }
+    random.Seeded dice = random.seeded(7);
+    List<str> texts = pool();
+    Scene scene = new_scene(dice, texts, width, height);
+    scene.has_popup = true;
+    scene.popup_x = 2;
+    scene.popup_y = 1;
+    scene.popup_w = width - 4;
+    scene.popup_h = height - 2;
+    scene.selected = 0;
+    List<Scene> plan = [];
+    List<str> queries = ["", "p", "po", "pom", "po", "p", "", "p", "pom"];
+    for (str query in queries) {
+        Scene frame = copy_scene(scene);
+        frame.query = query;
+        frame.items = [];
+        for (str entry in entries) {
+            int at = 0;
+            bool is_match = true;
+            for (str letter in TUI_text.clusters(query)) {
+                match (entry.substr(at, entry.size()).index_of(letter)) {
+                    case Some(int found): {
+                        at = at + found + letter.size();
+                    }
+                    case None: {
+                        is_match = false;
+                    }
+                }
+                if (!is_match) {
+                    break;
+                }
+            }
+            if (is_match) {
+                frame.items.push(entry);
+            }
+        }
+        plan.push(frame);
+    }
+    return plan;
+}
+
+void finder_phase(Tally tally, List<Variant> all) {
+    TUI_style.Depth depth = TUI_style.Depth.Ansi256;
+    for (Variant variant in all) {
+        for (int mode in 0 .. 2) {
+            bool is_scroll = mode == 1;
+            int bad = 0;
+            int bytes_total = 0;
+            str first = "";
+            for (int size in 0 .. 2) {
+                int width = 80;
+                int height = 24;
+                if (size == 1) {
+                    width = 120;
+                    height = 30;
+                }
+                Run run = play(variant, finder_plan(width, height, true), is_scroll, true, depth);
+                bad = bad + run.bad;
+                bytes_total = bytes_total + run.bytes_written;
+                if (run.bad > 0 && first == "") {
+                    first = run.first;
+                }
+            }
+            str label = "finder: " + variant.name;
+            if (is_scroll) {
+                label = label + " +scroll";
+            }
+            if (bad == 0) {
+                tally.pass = tally.pass + 1;
+                print("ok   " + label + ": " + str(bytes_total) + " bytes");
+            } else {
+                str mark = "FAIL";
+                if (variant.is_known_limit || (is_scroll && variant.is_region_ignored)) {
+                    mark = "known";
+                } else {
+                    tally.fail = tally.fail + 1;
+                }
+                print(mark + " " + label + ": " + str(bad) + " frames wrong");
+                print("     first: " + first);
+            }
+        }
+    }
+}
+
+Tally tally = Tally();
+List<Variant> all = variants();
+print("== pairs " + "=".repeat(60));
+pair_phase(tally, all);
+print("== finder " + "=".repeat(60));
+finder_phase(tally, all);
+print("== random " + "=".repeat(60));
+random_phase(tally, all, 12, 40);
+print("");
+print("-- " + str(tally.pass) + " passed, " + str(tally.fail) + " failed");
+if (tally.fail > 0) {
+    os.exit(1);
+}

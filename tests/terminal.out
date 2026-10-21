@@ -262,14 +262,18 @@ ok   uncertain: a letter and a variation selector (was not)
 ok   uncertain: a joined sequence that is one column wide (was not)
 ok   uncertain: a tag sequence
 ok   uncertain: a text selector on a wide emoji
-ok   certain: a plain emoji
-ok   certain: a plain wide emoji with a high code point
+ok   uncertain: a plain emoji (its table may be older than ours)
+ok   uncertain: a plain wide emoji with a high code point
 ok   certain: a CJK character
-ok   certain: a letter with an accent
+ok   uncertain: a letter with a combining accent
+ok   certain: a precomposed letter with an accent
+ok   certain: ASCII, a CJK ideograph, a kana, a Hangul syllable, a box
+ok   uncertain: an arrow, a Nerd Font glyph, a Cyrillic letter, halfwidth katakana
 ok   uncertain, by the old rule: three Hangul jamo are two columns and several code points
 ok   certain: ASCII
 ok   certain: a box-drawing character
-ok   certain: a Devanagari conjunct (one column, no joiner marker)
+ok   uncertain: a Devanagari conjunct (terminals add up its signs)
+ok   uncertain: a Devanagari syllable with a spacing mark
 ok   reach: a family of five code points
 ok   reach: a flag
 ok   reach: a regional indicator alone is at least 2
@@ -341,4 +345,4 @@ ok   set: it is what was asked
 ok   the read timeout is the ticker's alone: a timer still shortens it
 ok   and still never under one
 
--- 318 passed, 0 failed
+-- 322 passed, 0 failed

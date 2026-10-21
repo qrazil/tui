@@ -262,6 +262,40 @@ pub int Buffer.tail_start(int y) {
     return box.x;
 }
 
+/// Are the `count` cells from `x`, `y` plain blanks: a space, one column, in the reset style,
+/// no link? What a terminal shows there, if it was told so, is nothing to clear.
+pub bool Buffer.is_plain_blank(int x, int y, int count) {
+    if (!box.has_point(x, y) || x + count > box.right()) {
+        return false;
+    }
+    int base = at(x, y);
+    for (int cell in 0 .. count) {
+        int index = base + cell;
+        if (styles[index] != TUI_style.RESET_STYLE || symbols[index] != " " || widths[index] != 1 || (links.size() > 0 && links[index] != "")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// The first column of row `y` that holds a cluster whose width terminals may disagree on
+/// (`TUI_text.is_certain_width`), or the row's right edge when there is none. One pass over
+/// the symbols; printable ASCII, nearly every cell there is, is passed by its size alone.
+/// **Traps** outside the buffer.
+pub int Buffer.first_unsure(int y) {
+    if (y < box.y || y >= box.bottom()) {
+        trap("TUI_buffer.Buffer.first_unsure: outside the buffer");
+    }
+    int base = (y - box.y) * box.width;
+    for (int column in 0 .. box.width) {
+        str symbol = symbols[base + column];
+        if (symbol.size() > 1 && !TUI_text.is_certain_width(symbol)) {
+            return box.x + column;
+        }
+    }
+    return box.right();
+}
+
 /// Append the UTF-8 bytes of the symbol at `x`, `y` to `out`.
 ///
 /// `out.extend(b.symbol_at(x, y).to_bytes())` says the same thing and allocates
@@ -407,6 +441,9 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
         }
         int grapheme_width = TUI_text.cluster_columns(grapheme);
         if (grapheme_width == 0) {
+            if (TUI_text.is_invisible(grapheme)) {
+                continue;
+            }
             if (last >= 0) {
                 symbols[last] = symbols[last] + grapheme;
             }

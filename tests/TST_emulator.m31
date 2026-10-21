@@ -63,6 +63,41 @@ pub type Screen {
     /// or 2 (it has emoji presentation, and kitty and WezTerm draw it so).
     pub int regional_width = 1;
     List<int> pending = [];
+    /// --- the ways real terminals differ (the stress harness runs them all) ---
+    /// What happens at the last column. 0: nothing wraps and text past the edge is dropped (the
+    /// original oracle). 1: xterm's pending wrap -- the cursor stays on the last column and wraps
+    /// only when the next printable arrives (a cursor move, CR or CUP clears it). 2: the cursor
+    /// wraps at once, as soon as the last column is written. 3: autowrap is off, the last column
+    /// is overwritten again and again.
+    pub int wrap_mode = 0;
+    pub bool is_wrap_pending = false;
+    /// DECAWM (`CSI ? 7 h` / `l`): autowrap is on. A terminal that ignores `l` has
+    /// `is_autowrap_locked`.
+    pub bool is_autowrap = true;
+    pub bool is_autowrap_locked = false;
+    /// Width disagreements, as bits (`Q_*`): what this terminal draws differently from the library.
+    pub int quirks = 0;
+    /// Erase (EL, ECH, a scroll's new rows) paints the current background colour (BCE) or the default.
+    pub bool is_erase_coloured = true;
+    /// CUF, CUB, CHA stop at the margins (true) or let the cursor leave the screen (false).
+    pub bool is_move_clamped = true;
+    /// CUF from a pending wrap leaves the wrap pending (some terminals), instead of clearing it.
+    pub bool is_move_keeping_wrap = false;
+    /// Mode 2026 is ignored (Terminal.app): the screen is always live.
+    pub bool is_sync_ignored = false;
+    /// Control characters are obeyed (tab, backspace, CR, BEL) and listed in `controls`.
+    pub List<str> controls = [];
+    /// The scroll region (DECSTBM), -1 for the whole screen.
+    pub bool is_region_ignored = false;
+    pub int region_top = 0;
+    pub int region_bottom = -1;
+    /// The pen: the SGR state of text and erases to come.
+    pub str pen_foreground = "";
+    pub str pen_background = "";
+    pub int pen_attrs = 0;
+    List<str> cell_foreground = [];
+    List<str> cell_background = [];
+    List<int> cell_attrs = [];
     /// Sequences it did not recognise, as they were written.
     pub List<str> unknown = [];
     /// Bytes that did not make UTF-8 (ignored).
@@ -74,8 +109,48 @@ pub static Screen Screen.sized(int columns, int rows) {
     for (int index in 0 .. columns * rows) {
         screen.symbols.push(" ");
         screen.links.push("");
+        screen.cell_foreground.push("");
+        screen.cell_background.push("");
+        screen.cell_attrs.push(0);
     }
+    screen.region_bottom = rows - 1;
     return screen;
+}
+
+/// Put text in a cell (the screen showing what an earlier frame left).
+pub void Screen.put_symbol(int x, int y, str symbol) {
+    symbols[y * columns + x] = symbol;
+}
+
+/// What a cell looks like apart from its text: background, reverse; for text also the rest.
+pub str Screen.look_at(int x, int y) {
+    int index = y * columns + x;
+    str symbol = symbols[index];
+    if (symbol == " " || symbol == "") {
+        // a blank shows only its background (and reverse video)
+        str reverse = "";
+        if ((cell_attrs[index] & ATTR_REVERSE) != 0) {
+            reverse = "+reverse";
+        }
+        return "bg=" + cell_background[index] + reverse;
+    }
+    return "fg=" + cell_foreground[index] + " bg=" + cell_background[index] + " attrs=" + str(cell_attrs[index]);
+}
+
+/// Is this screen the same picture as `other` (symbols and looks)? "" when it is, else what differs first.
+pub str Screen.differs_from_screen(Screen other) {
+    for (int y in 0 .. rows) {
+        for (int x in 0 .. columns) {
+            int index = y * columns + x;
+            if (symbols[index] != other.symbols[index]) {
+                return "row " + str(y) + " col " + str(x) + ": [" + row_text(y) + "] vs [" + other.row_text(y) + "]";
+            }
+            if (look_at(x, y) != other.look_at(x, y)) {
+                return "look at " + str(x) + "," + str(y) + ": [" + look_at(x, y) + "] vs [" + other.look_at(x, y) + "] (symbol [" + symbols[index] + "])";
+            }
+        }
+    }
+    return "";
 }
 
 /// The screen a person looks at: while a synchronized update is open that is the
@@ -175,7 +250,7 @@ void Screen.run(List<int> chars) {
                 continue;
             }
             if (kind == 'M') {
-                unknown.push("ESC M");
+                reverse_index();
                 index = index + 2;
                 continue;
             }
@@ -189,7 +264,7 @@ void Screen.run(List<int> chars) {
             continue;
         }
         if (code < 32 || code == 127) {
-            unknown.push("control " + str(code));
+            obey_control(code);
             index = index + 1;
             continue;
         }
@@ -206,6 +281,17 @@ void Screen.flush_text() {
     }
     List<int> run = pending;
     pending = [];
+    if ((quirks & Q_COMBINING_OWN_CELL) != 0) {
+        // a terminal with no combining: each code point has its own cell, a mark too
+        for (int code in run) {
+            int width = code_width(code);
+            if (width == 0 && code >= 0x300 && code <= 0x36F) {
+                width = 1;
+            }
+            place(str.from_chars([code]), width);
+        }
+        return;
+    }
     if (width_model == 0) {
         for (int code in run) {
             print_char(code);
@@ -213,12 +299,56 @@ void Screen.flush_text() {
         return;
     }
     for (str cluster in unicode.graphemes(str.from_chars(run))) {
-        int width = TUI_text.cluster_columns(cluster);
+        int width = measure(cluster);
         if (cluster.size() == 4 && cluster.byte_at(1) == 0x9F && cluster.byte_at(2) == 0x87) {
             width = regional_width;
         }
         place(cluster, width);
     }
+}
+
+// How wide this terminal draws a cluster: the library's width, with the disagreements of `quirks`.
+int Screen.measure(str cluster) {
+    int width = TUI_text.cluster_columns(cluster);
+    if (quirks == 0) {
+        return width;
+    }
+    List<int> codes = cluster.chars();
+    int first = codes[0];
+    bool has_vs16 = codes.contains(0xFE0F);
+    if ((quirks & Q_VS16_IGNORED) != 0 && has_vs16 && codes.size() == 2) {
+        width = unicode.width(str.from_chars([first]));
+    }
+    if ((quirks & Q_VS16_WIDENS) != 0 && has_vs16) {
+        width = 2;
+    }
+    if ((quirks & Q_JAMO_ADD) != 0 && first >= 0x1100 && first <= 0x11FF) {
+        width = 2 * codes.size();
+    }
+    if (codes.size() == 1) {
+        width = quirk_width(first, width);
+    }
+    return width;
+}
+
+// The disagreements that concern one code point.
+int Screen.quirk_width(int code, int width) {
+    if ((quirks & Q_AMBIGUOUS_WIDE) != 0 && is_ambiguous(code)) {
+        return 2;
+    }
+    if ((quirks & Q_BOX_WIDE) != 0 && code >= 0x2500 && code <= 0x259F) {
+        return 2;
+    }
+    if ((quirks & Q_PRIVATE_USE_WIDE) != 0 && code >= 0xE000 && code <= 0xF8FF) {
+        return 2;
+    }
+    if ((quirks & Q_NEW_EMOJI_NARROW) != 0 && code >= 0x1FA70 && code <= 0x1FAFF) {
+        return 1;
+    }
+    if ((quirks & Q_ASTRAL_SYMBOL_NARROW) != 0 && code >= 0x1F300 && code <= 0x1F64F && width == 2) {
+        return 1;
+    }
+    return width;
 }
 
 // What a code point takes when it is added up: nothing for a joiner, a variation selector, an
@@ -230,19 +360,122 @@ int Screen.code_width(int code) {
     if (code >= 0x1F1E6 && code <= 0x1F1FF) {
         return regional_width;
     }
-    return unicode.width(str.from_chars([code]));
+    return quirk_width(code, unicode.width(str.from_chars([code])));
 }
 
 void Screen.print_char(int code) {
     place(str.from_chars([code]), code_width(code));
 }
 
+// A line feed, or the wrap at the last column: down a row, and the region scrolls at its bottom.
+void Screen.index_down() {
+    if (cursor_y == region_bottom) {
+        scroll_region(1);
+    } else if (cursor_y < rows - 1) {
+        cursor_y = cursor_y + 1;
+    }
+}
+
+// ESC M: up a row, the region scrolls down at its top.
+void Screen.reverse_index() {
+    if (cursor_y == region_top) {
+        scroll_region(-1);
+    } else if (cursor_y > 0) {
+        cursor_y = cursor_y - 1;
+    }
+}
+
+// Scroll the region `amount` rows up (negative: down); the rows that open are blank.
+void Screen.scroll_region(int amount) {
+    int top = region_top;
+    int bottom = region_bottom;
+    if (amount > 0) {
+        for (int y in top .. bottom + 1) {
+            for (int x in 0 .. columns) {
+                int to = y * columns + x;
+                if (y + amount <= bottom) {
+                    int from = (y + amount) * columns + x;
+                    copy_cell(to, from);
+                } else {
+                    erase_cell(to);
+                }
+            }
+        }
+        return;
+    }
+    int down = -amount;
+    for (int y in top .. bottom + 1) {
+        int row = bottom - (y - top);
+        for (int x in 0 .. columns) {
+            int to = row * columns + x;
+            if (row - down >= top) {
+                copy_cell(to, (row - down) * columns + x);
+            } else {
+                erase_cell(to);
+            }
+        }
+    }
+}
+
+void Screen.copy_cell(int to, int from) {
+    symbols[to] = symbols[from];
+    links[to] = links[from];
+    cell_foreground[to] = cell_foreground[from];
+    cell_background[to] = cell_background[from];
+    cell_attrs[to] = cell_attrs[from];
+}
+
+// A cell erased: a space, in the pen's background when this terminal erases with it.
+void Screen.erase_cell(int index) {
+    symbols[index] = " ";
+    links[index] = "";
+    cell_foreground[index] = "";
+    cell_attrs[index] = 0;
+    cell_background[index] = "";
+    if (is_erase_coloured) {
+        cell_background[index] = pen_background;
+    }
+}
+
+// A control character the terminal obeys. Anything but a line feed is a mistake of the writer.
+void Screen.obey_control(int code) {
+    if (code != 10) {
+        controls.push(str(code));
+        unknown.push("control " + str(code));
+    }
+    if (code == 13) {
+        cursor_x = 0;
+        is_wrap_pending = false;
+    } else if (code == 8) {
+        if (cursor_x > 0) {
+            cursor_x = cursor_x - 1;
+        }
+        is_wrap_pending = false;
+    } else if (code == 9) {
+        cursor_x = clamp((cursor_x / 8 + 1) * 8, columns);
+        is_wrap_pending = false;
+    } else if (code == 10 || code == 11 || code == 12) {
+        index_down();
+    }
+}
+
+// Wrap to the start of the next row (the terminal's autowrap).
+void Screen.wrap_line() {
+    cursor_x = 0;
+    is_wrap_pending = false;
+    index_down();
+}
+
 // Put `symbol` at the cursor, `width` columns wide (0: it joins the cell before).
 void Screen.place(str symbol, int width) {
+    int wrapping = effective_wrap();
     if (width == 0) {
         // a combining mark or a joiner: it belongs to the cell before the cursor
         int before = cursor_y * columns + cursor_x - 1;
-        if (cursor_x > 0 && before >= 0) {
+        if (is_wrap_pending) {
+            before = before + 1;
+        }
+        if (before >= 0 && (is_wrap_pending || cursor_x > 0)) {
             int target = before;
             if (symbols[target] == "" && target > 0) {
                 target = target - 1;
@@ -251,8 +484,28 @@ void Screen.place(str symbol, int width) {
         }
         return;
     }
-    if (cursor_x + width > columns) {
-        return;
+    if (wrapping == 0) {
+        if (cursor_x + width > columns) {
+            return;
+        }
+    } else {
+        if (is_wrap_pending) {
+            if (wrapping == 3) {
+                is_wrap_pending = false;
+            } else {
+                wrap_line();
+            }
+        }
+        if (cursor_x + width > columns) {
+            if (wrapping == 3) {
+                cursor_x = columns - width;
+                if (cursor_x < 0) {
+                    return;
+                }
+            } else {
+                wrap_line();
+            }
+        }
     }
     int index = cursor_y * columns + cursor_x;
     // a wide character half overwritten loses its other half, as on a real terminal
@@ -267,11 +520,35 @@ void Screen.place(str symbol, int width) {
     }
     symbols[index] = symbol;
     links[index] = link;
-    if (width == 2) {
-        symbols[index + 1] = "";
-        links[index + 1] = link;
+    cell_foreground[index] = pen_foreground;
+    cell_background[index] = pen_background;
+    cell_attrs[index] = pen_attrs;
+    if (width >= 2) {
+        for (int extra in 1 .. width) {
+            symbols[index + extra] = "";
+            links[index + extra] = link;
+            cell_foreground[index + extra] = pen_foreground;
+            cell_background[index + extra] = pen_background;
+            cell_attrs[index + extra] = pen_attrs;
+        }
     }
     cursor_x = cursor_x + width;
+    if (wrapping != 0 && cursor_x >= columns) {
+        cursor_x = columns - 1;
+        if (wrapping == 1 || wrapping == 3) {
+            // (with autowrap off the next printable overwrites this column again)
+            is_wrap_pending = true;
+        } else if (wrapping == 2) {
+            wrap_line();
+        }
+    }
+}
+
+int Screen.effective_wrap() {
+    if (wrap_mode != 0 && !is_autowrap) {
+        return 3;
+    }
+    return wrap_mode;
 }
 
 // One CSI sequence starting at `from` (just past ESC [); the index after it.
@@ -320,27 +597,89 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
         if (final == 'H' || final == 'f') {
             cursor_y = clamp(parameter_at(parameters, 0, 1) - 1, rows);
             cursor_x = clamp(parameter_at(parameters, 1, 1) - 1, columns);
+            is_wrap_pending = false;
             return;
         }
-        if (final == 'C') {
-            cursor_x = clamp(cursor_x + parameter_at(parameters, 0, 1), columns);
+        if (final == 'C' || final == 'D' || final == 'G' || final == 'A' || final == 'B') {
+            int amount = parameter_at(parameters, 0, 1);
+            if (amount < 1) {
+                amount = 1;
+            }
+            if (final == 'C') {
+                cursor_x = cursor_x + amount;
+            } else if (final == 'D') {
+                cursor_x = cursor_x - amount;
+            } else if (final == 'G') {
+                cursor_x = amount - 1;
+            } else if (final == 'A') {
+                cursor_y = clamp(cursor_y - amount, rows);
+            } else {
+                cursor_y = clamp(cursor_y + amount, rows);
+            }
+            if (is_move_clamped) {
+                cursor_x = clamp(cursor_x, columns);
+            } else if (cursor_x < 0) {
+                cursor_x = 0;
+            }
+            if (!is_move_keeping_wrap) {
+                is_wrap_pending = false;
+            }
             return;
         }
         if (final == 'K') {
-            for (int x in cursor_x .. columns) {
-                symbols[cursor_y * columns + x] = " ";
-                links[cursor_y * columns + x] = "";
+            int mode = parameter_at(parameters, 0, 0);
+            int from = cursor_x;
+            int to = columns;
+            if (mode == 1) {
+                from = 0;
+                to = cursor_x + 1;
+            } else if (mode == 2) {
+                from = 0;
+            }
+            for (int x in from .. to) {
+                if (x >= 0 && x < columns) {
+                    erase_cell(cursor_y * columns + x);
+                }
+            }
+            return;
+        }
+        if (final == 'X') {
+            int count = parameter_at(parameters, 0, 1);
+            for (int x in cursor_x .. cursor_x + count) {
+                if (x >= 0 && x < columns) {
+                    erase_cell(cursor_y * columns + x);
+                }
             }
             return;
         }
         if (final == 'J' && parameter_at(parameters, 0, 0) == 2) {
             for (int index in 0 .. columns * rows) {
-                symbols[index] = " ";
-                links[index] = "";
+                erase_cell(index);
             }
             return;
         }
+        if (final == 'r' && is_region_ignored) {
+            cursor_x = 0;
+            cursor_y = 0;
+            is_wrap_pending = false;
+            return;
+        }
+        if (final == 'r') {
+            int top = parameter_at(parameters, 0, 1) - 1;
+            int bottom = parameter_at(parameters, 1, rows) - 1;
+            if (top < 0 || bottom >= rows || top >= bottom) {
+                top = 0;
+                bottom = rows - 1;
+            }
+            region_top = top;
+            region_bottom = bottom;
+            cursor_x = 0;
+            cursor_y = 0;
+            is_wrap_pending = false;
+            return;
+        }
         if (final == 'm') {
+            apply_sgr(parameters);
             return;
         }
     }
@@ -349,6 +688,10 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
         for (int mode in parameters) {
             if (mode == 2026) {
                 set_sync(is_on);
+            } else if (mode == 7) {
+                if (!is_autowrap_locked) {
+                    is_autowrap = is_on;
+                }
             } else if (mode == 25) {
                 is_cursor_visible = is_on;
             } else if (mode == 1004) {
@@ -415,7 +758,82 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
     unknown.push(name + " " + str(parameters.size()) + " parameters");
 }
 
+// SGR: the pen's colours and attributes (bit 1 bold, 2 dim, 4 italic, 8 underline, 16 blink,
+// 64 reverse, 128 strike). A parameter it does not know is listed in `unknown`.
+void Screen.apply_sgr(List<int> parameters) {
+    int i = 0;
+    while (i < parameters.size()) {
+        int code = parameters[i];
+        if (code < 0) {
+            code = 0;
+        }
+        if (code == 0) {
+            pen_foreground = "";
+            pen_background = "";
+            pen_attrs = 0;
+        } else if (code == 1 || code == 2 || code == 3 || code == 4 || code == 5 || code == 7 || code == 9) {
+            int bit = 1;
+            if (code == 2) {
+                bit = 2;
+            } else if (code == 3) {
+                bit = 4;
+            } else if (code == 4) {
+                bit = 8;
+            } else if (code == 5) {
+                bit = 16;
+            } else if (code == 7) {
+                bit = 64;
+            } else if (code == 9) {
+                bit = 128;
+            }
+            pen_attrs = pen_attrs | bit;
+        } else if (code == 22) {
+            pen_attrs = pen_attrs & ~3;
+        } else if (code == 23) {
+            pen_attrs = pen_attrs & ~4;
+        } else if (code == 24) {
+            pen_attrs = pen_attrs & ~8;
+        } else if (code == 25) {
+            pen_attrs = pen_attrs & ~16;
+        } else if (code == 27) {
+            pen_attrs = pen_attrs & ~64;
+        } else if (code == 29) {
+            pen_attrs = pen_attrs & ~128;
+        } else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) {
+            pen_foreground = str(code);
+        } else if (code == 39) {
+            pen_foreground = "";
+        } else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
+            pen_background = str(code);
+        } else if (code == 49) {
+            pen_background = "";
+        } else if (code == 38 || code == 48) {
+            str colour = "";
+            if (i + 2 < parameters.size() && parameters[i + 1] == 5) {
+                colour = "5;" + str(parameters[i + 2]);
+                i = i + 2;
+            } else if (i + 4 < parameters.size() && parameters[i + 1] == 2) {
+                colour = "2;" + str(parameters[i + 2]) + ";" + str(parameters[i + 3]) + ";" + str(parameters[i + 4]);
+                i = i + 4;
+            } else {
+                unknown.push("SGR " + str(code) + " without a colour");
+            }
+            if (code == 38) {
+                pen_foreground = colour;
+            } else {
+                pen_background = colour;
+            }
+        } else {
+            unknown.push("SGR " + str(code));
+        }
+        i = i + 1;
+    }
+}
+
 void Screen.set_sync(bool is_on) {
+    if (is_sync_ignored) {
+        return;
+    }
     if (is_on && !is_sync) {
         frozen_symbols = [];
         frozen_links = [];
@@ -536,6 +954,39 @@ pub bytes Screen.press(int code, int mods) {
     }
     out.extend(str.from_chars([code]).to_bytes());
     return out;
+}
+
+/// Width quirks: a terminal draws the cluster in this class with a width other than the library's.
+pub const int ATTR_REVERSE = 64;
+pub const int Q_VS16_IGNORED = 1;
+pub const int Q_VS16_WIDENS = 2;
+pub const int Q_AMBIGUOUS_WIDE = 4;
+pub const int Q_PRIVATE_USE_WIDE = 8;
+pub const int Q_NEW_EMOJI_NARROW = 16;
+pub const int Q_JAMO_ADD = 32;
+pub const int Q_COMBINING_OWN_CELL = 64;
+pub const int Q_ASTRAL_SYMBOL_NARROW = 128;
+pub const int Q_BOX_WIDE = 256;
+
+// East Asian Ambiguous, in the blocks text user interfaces use: arrows, box drawing, blocks,
+// shapes, symbols, Greek, Cyrillic and a few Latin-1 signs.
+bool is_ambiguous(int code) {
+    if (code >= 0x2190 && code <= 0x21FF) {
+        return true;
+    }
+    if (code >= 0x25A0 && code <= 0x25FF) {
+        return true;
+    }
+    if (code >= 0x2600 && code <= 0x266F) {
+        return true;
+    }
+    if (code >= 0x0391 && code <= 0x03C9) {
+        return true;
+    }
+    if (code >= 0x0410 && code <= 0x044F) {
+        return true;
+    }
+    return code == 0xB0 || code == 0xB1 || code == 0xD7 || code == 0xF7 || code == 0xA7 || code == 0xB7 || code == 0x2022 || code == 0x2026;
 }
 
 int parameter_at(List<int> parameters, int position, int fallback) {

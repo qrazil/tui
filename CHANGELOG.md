@@ -4,6 +4,79 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## 0.13.0
+
+Terminal corruption on real Macs (m3's fuzzy finder, mgit, tui-markdown) that every Linux test passed. The tests
+asked an emulator that agrees with the library; real terminals disagree about wrapping at the last column, about
+how wide some clusters are, and about what a write leaves behind. `tests/stress.m31` is the new harness: it draws
+random frames (a text layer, a popup with a list that grows and shrinks, a query typed and erased, resizes) through the
+real `Loop.frame_bytes`, replays the bytes on eighteen kinds of terminal and asserts, after every frame, that the
+screen equals a from-scratch repaint on the same terminal (and the buffer itself where the terminal agrees with the
+library on widths). Before the fix, 32 of the harness's checks failed; after it none do (see "Known limits" for what a renderer
+cannot know). Built and tested against m31 v0.9.0.
+
+### Fixed
+
+- **A cluster drawn narrower than the library thinks left the old character in the column after it.** A VS16 emoji
+  (`U+2764 U+FE0F`, `U+26A0 U+FE0F`), a keycap, a lone regional indicator, a new emoji the terminal's tables do not
+  have: the diff skipped the continuation cell, so on Terminal.app and others the cell kept what the previous frame
+  had there, and `full()` (Ctrl-L) had the same hole. A two-column cluster of uncertain width is now written over
+  blanks in its own style (blank, `CUP` back, cluster), except when the previous frame is known blank there.
+- **Autowrap.** `\e[?7l` is written on entry, with every `full()` frame, and undone (`\e[?7h`) on leaving. A cluster
+  drawn wider than expected at the right margin used to wrap onto the next row, which the diff never rewrote; and
+  where a terminal wraps at once, a write in the last column of the last row scrolled the screen. A narrow
+  combining cluster in the last column keeps autowrap on for that one cell (a mark after a last-column cell joins the
+  wrong cell with it off, on some terminals).
+- **A wider notion of "uncertain width".** Only printable ASCII, precomposed Latin letters (U+00C0..U+024F without x and
+  division), box drawing and blocks (U+2500..U+259F), CJK ideographs, kana, Hangul syllables and the fullwidth forms are
+  trusted. Everything else (any emoji, Nerd Font glyphs, arrows, Greek and Cyrillic, halfwidth katakana, combining
+  marks, Devanagari and Thai, jamo sequences) is a cluster whose width a terminal may measure differently.
+  `TUI_text.is_uncertain_cluster` says so; `TUI_text.is_certain_width` is the allow-list.
+- **A row with an uncertain cluster is written from that cluster to its end** whenever any cell of the row changes
+  (`Buffer.first_unsure`): what a terminal leaves behind next to such a cluster depends on what was written before,
+  and a row written whole from there is the same picture whatever the frames before it were. Rows without one are
+  diffed per cell as before. The cursor is re-anchored with an absolute move after every uncertain cell and after any
+  write that reaches the last column.
+- **`full()` clears the screen first** (`\e[2J` after the pen reset): a repaint (first frame, resize, Ctrl-L, focus-in)
+  no longer trusts what the terminal shows.
+- Every changed row of a diff starts with the pen reset, so a style a terminal did not take cannot run into the next row.
+- Invisible format characters (zero-width space, joiner or non-joiner on its own, direction marks, word joiner, BOM, bidi
+  controls, line and paragraph separators) and a variation selector with no base are dropped by `Buffer.set_str`
+  instead of being appended to the previous cell: some terminals draw them as a blank column.
+- A failed write (`flush` error) makes the next frame a full repaint (`Loop.should_repaint`) instead of a diff against a
+  screen that was never fully drawn.
+- `Loop` no longer asks Apple's Terminal for synchronized output (`TERM_PROGRAM=Apple_Terminal`; it does not know mode
+  2026 and does not answer; `TUI_app.is_apple_terminal`).
+
+### Added
+
+- `tests/stress.m31`, a `tests/test.sh` check of its own (about half a minute, run once): see above. The emulator
+  (`tests/TST_emulator.m31`) models pending and instant wrap, DECAWM, width quirks (VS16 ignored or widening,
+  ambiguous and private-use glyphs wide, new emoji narrow, jamo added up, combining marks in their own cell), erase with
+  and without background colour, relative moves unclamped, sync ignored, scroll regions (DECSTBM, IND, RI, LF) and a
+  terminal that ignores them, control characters obeyed and listed, and per-cell SGR.
+- `examples/width_probe.m31`: run it in a terminal and it prints, per cluster, the width the terminal measured (cursor
+  position report after printing it) against the library's, and whether the renderer treats the cluster as uncertain.
+- `TUI_diff.AUTOWRAP_OFF`, `TUI_diff.AUTOWRAP_ON`, `Buffer.first_unsure`, `Buffer.is_plain_blank`,
+  `TUI_text.is_certain_width`, `TUI_text.is_invisible`, `TUI_text.count_code_points`.
+
+### Known limits (not fixable without asking the terminal)
+
+- A terminal told to draw East Asian Ambiguous characters wide (an iTerm2 or Terminal.app preference) draws box-drawing
+  characters two columns wide; the layout cannot be right, and the harness lists it as "known" (`box-wide`). Turn the
+  preference off.
+- A terminal that ignores DECSTBM breaks `should_scroll` (`no-decstbm`, "known"); no real one does. m3 turns the scroll
+  optimisation off: it saved about 3 % of the bytes of a finder keystroke and cost more time than it saved.
+- m31's `term` has no SIGWINCH: a resize is noticed when the loop next wakes. A window shrunk and grown again between
+  two wake-ups is not seen. Ctrl-L repaints.
+- A terminal that draws a combining mark in a cell of its own (`no-combining`) cannot be matched by a repaint.
+
+### Cost
+
+`bench`: diff-1 and diff-0 unchanged (21 bytes, 0.11 ms); `full` 0.92 ms to 1.2 ms and 12,533 to 12,555 bytes on the
+200x50 benchmark screen (the extra work is the allow-list test of every non-ASCII cell and the clear). A diff of rows
+that hold emoji costs a few dozen bytes more per row.
+
 ## 0.12.0
 
 Found moving mgit onto `Loop.run_with`: the loop's read timeout is `min(tick_ms, time to the next tick)` and

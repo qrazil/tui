@@ -150,46 +150,101 @@ bool has_modifier(str text) {
     return false;
 }
 
-/// Is the cluster one whose width terminals disagree on: made of several code points
-/// that are joined (a zero-width joiner, a variation selector, an emoji modifier, a
-/// keycap, a tag sequence, a pair of regional indicators), a regional indicator
-/// alone, or two columns wide with more than one code point to it? Some terminals
-/// segment grapheme clusters and draw it as `width` columns; the others add up the
-/// code points and draw more (a family is 6). `width` is what the cell says.
+/// Is the cluster one whose width terminals may disagree on? Everything is, except
+/// what every terminal draws in the same columns: printable ASCII, the Latin letters of
+/// U+00C0..U+024F (not the signs x and /), box drawing and block elements, CJK
+/// ideographs, kana, Hangul syllables and the fullwidth forms (all two columns, and in
+/// none of them ambiguous). The rest is
+/// drawn differently by some terminal: a zero-width joiner, a variation selector, an
+/// emoji modifier, a keycap, a flag or a regional indicator, a combining mark, an emoji
+/// newer than the terminal's tables, a Nerd Font glyph, an East Asian Ambiguous character
+/// (box drawing, arrows, Greek, Cyrillic), a Hangul jamo, an Indic or Thai cluster. Those
+/// that segment grapheme clusters draw it in `width` columns, the others add up the code
+/// points (a family is 6, a flag 2 to 4, a Devanagari syllable one column per sign).
+/// `width` is what the cell says.
 pub bool is_uncertain_cluster(str cluster, int width) {
+    return !is_certain_width(cluster);
+}
+
+/// Does every terminal draw this cluster in `width` columns, whatever it does with
+/// emoji, combining marks and the East Asian Ambiguous class? See `is_uncertain_cluster`.
+pub bool is_certain_width(str cluster) {
     int length = cluster.size();
-    if (length <= 3) {
-        return false;
-    }
-    if (width == 2 && length > 4) {
+    if (length == 0) {
         return true;
     }
-    for (int index in 0 .. length - 2) {
-        int lead = cluster.byte_at(index);
-        int second = cluster.byte_at(index + 1);
-        int third = cluster.byte_at(index + 2);
-        if (lead == 0xE2 && ((second == 0x80 && third == 0x8D) || (second == 0x83 && third == 0xA3))) {
-            // a zero-width joiner, a combining enclosing keycap
+    int lead = cluster.byte_at(0);
+    if (length == 1) {
+        return lead >= 0x20 && lead < 0x7F;
+    }
+    if (length == 2) {
+        if (lead == 0xC3) {
+            int second = cluster.byte_at(1);
+            return second >= 0x80 && second != 0x97 && second != 0xB7;
+        }
+        if (lead >= 0xC4 && lead <= 0xC8) {
             return true;
         }
-        if (lead == 0xEF && second == 0xB8 && (third == 0x8E || third == 0x8F)) {
-            return true;
-        }
-        if (lead == 0xF3 && second == 0xA0) {
-            // a tag character, or a variation selector of the supplement
-            return true;
-        }
-        if (lead == 0xF0 && second == 0x9F && index + 3 < length) {
-            int fourth = cluster.byte_at(index + 3);
-            if (third == 0x8F && fourth >= 0xBB && fourth <= 0xBF) {
-                return true;
-            }
-            if (third == 0x87 && fourth >= 0xA6 && fourth <= 0xBF) {
-                return true;
-            }
-        }
+        return lead == 0xC9 && cluster.byte_at(1) <= 0x8F;
+    }
+    if (length != 3) {
+        return false;
+    }
+    int second = cluster.byte_at(1);
+    int third = cluster.byte_at(2);
+    if (lead == 0xE2) {
+        // U+2500..U+259F: box drawing and block elements, which every terminal but one told to
+        // draw the East Asian Ambiguous class wide draws in one column
+        return second == 0x94 || second == 0x95 || (second == 0x96 && third <= 0x9F);
+    }
+    if (lead == 0xE3) {
+        // U+3000..U+30FF (CJK punctuation, kana) and U+3400..U+3FFF (CJK extension A)
+        return (second >= 0x80 && second <= 0x83) || second >= 0x90;
+    }
+    if (lead >= 0xE4 && lead <= 0xE9) {
+        return true;
+    }
+    if (lead == 0xEA) {
+        // U+AC00.. : Hangul syllables
+        return second >= 0xB0;
+    }
+    if (lead == 0xEB || lead == 0xEC) {
+        return true;
+    }
+    if (lead == 0xED) {
+        return second <= 0x9E;
+    }
+    if (lead == 0xEF) {
+        // U+FF01..U+FF60 and U+FFE0..U+FFE6: the fullwidth forms
+        return (second == 0xBC && third >= 0x81) || (second == 0xBD && third <= 0xA0) || (second == 0xBF && third >= 0xA0 && third <= 0xA6);
     }
     return false;
+}
+
+/// Is this cluster nothing but invisible format characters: a zero-width space, joiner or
+/// non-joiner on its own, a direction mark, a word joiner, a byte order mark, a bidirectional
+/// control, a line separator, or a variation selector with no base before it (a cluster
+/// that has one keeps it)? Terminals draw some of them as a blank column and some not at
+/// all, and they mean nothing in a cell, so a buffer drops them.
+pub bool is_invisible(str cluster) {
+    for (int code in cluster.chars()) {
+        bool is_format = (code >= 0x200B && code <= 0x200F) || (code >= 0x2028 && code <= 0x202E) || (code >= 0x2060 && code <= 0x2064) || (code >= 0x2066 && code <= 0x2069) || code == 0xFEFF || code == 0x61C || code == 0x180E || code == 0xFE0E || code == 0xFE0F;
+        if (!is_format) {
+            return false;
+        }
+    }
+    return cluster.size() > 0;
+}
+
+/// How many code points `text` holds.
+pub int count_code_points(str text) {
+    int count = 0;
+    for (int index in 0 .. text.size()) {
+        if ((text.byte_at(index) & 0xC0) != 0x80) {
+            count = count + 1;
+        }
+    }
+    return count;
 }
 
 /// How many columns after a cluster of uncertain width may have been drawn over by a
