@@ -46,7 +46,8 @@ cannot know). Built and tested against m31 v0.9.0.
 - A failed write (`flush` error) makes the next frame a full repaint (`Loop.should_repaint`) instead of a diff against a
   screen that was never fully drawn.
 - `Loop` no longer asks Apple's Terminal for synchronized output (`TERM_PROGRAM=Apple_Terminal`; it does not know mode
-  2026 and does not answer; `TUI_app.is_apple_terminal`).
+  2026 and does not answer; `TUI_app.is_apple_terminal`). `Loop.should_sync_on_apple_terminal` (default false) asks anyway, for a program
+  whose user said so.
 
 ### Added
 

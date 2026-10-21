@@ -279,6 +279,9 @@ pub type Loop {
     /// for it: the screen is cleared and every cell written again, which is what repairs a terminal that
     /// something else wrote on. The key is still handed to the program. Off by default (m3 has its own).
     pub bool should_repaint_on_ctrl_l = false;
+    /// Ask Apple's Terminal for synchronized output too (`should_sync` leaves it alone there: it does not know
+    /// mode 2026 and does not answer). For a program whose user said so.
+    pub bool should_sync_on_apple_terminal = false;
     /// The program sets `cursor` (and so its shape): put the shape back on the way out.
     pub bool should_manage_cursor = false;
     /// The off switch of `copy`: false and a copy writes nothing (a setting, a
@@ -363,7 +366,7 @@ pub str Loop.enter_sequence() {
     if (should_report_focus) {
         modes = modes + "\x1b[?1004h";
     }
-    if (should_sync && !is_apple_terminal()) {
+    if (should_sync && (!is_apple_terminal() || should_sync_on_apple_terminal)) {
         // Terminal.app does not know mode 2026 and does not answer: not asked (Bubble Tea too)
         modes = modes + TUI_diff.SYNC_QUERY;
     }
