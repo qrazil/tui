@@ -998,8 +998,50 @@ void screen_test(Tally tally) {
     ok(tally, "a diff against a blank frame is smaller than a full redraw", TUI_diff.diff(after, buffer, TUI_style.Depth.Ansi256).size() < frame.size() + 200);
 }
 
+/// The cell store: glyphs as integers, clusters in a per-buffer table, runs written without per-cell checks.
+void cell_store_tests(Tally tally) {
+    TUI_style.Style plain = TUI_style.Style();
+    TUI_style.Style red = TUI_style.Style(foreground: TUI_style.Colour.Indexed(1));
+    // one cluster, two buffers: equal text in a different table order is the same cell
+    TUI_buffer.Buffer left = TUI_buffer.Buffer.sized(12, 2);
+    TUI_buffer.Buffer right = TUI_buffer.Buffer.sized(12, 2);
+    left.set_str(0, 0, "\u{1F44D}\u{1F3FD}", plain);
+    left.set_str(4, 0, "e\u{301}", plain);
+    right.set_str(4, 0, "e\u{301}", plain);
+    right.set_str(0, 0, "\u{1F44D}\u{1F3FD}", plain);
+    ok(tally, "cluster tables of two buffers are compared as text", left.is_same_row(right, 0));
+    right.set_str(4, 0, "o\u{301}", plain);
+    ok(tally, "a different cluster in the same table slot is a change", !left.is_same_row(right, 0));
+    check_int(tally, "next_change finds the cluster that differs", left.next_change(right, 0, 0, 12), 4);
+    // many overwritten clusters do not grow the table without bound (and survive compaction)
+    TUI_buffer.Buffer churn = TUI_buffer.Buffer.sized(4, 1);
+    for (int round in 0 .. 400) {
+        churn.set_str(0, 0, "e\u{301}", plain);
+        churn.set_str(1, 0, "a\u{300}", plain);
+    }
+    check(tally, "compaction keeps the clusters", churn.row_text(0), "e\u{301}a\u{300}  ");
+    // a run written over half of a wide pair leaves no orphan, at either end
+    TUI_buffer.Buffer wide = TUI_buffer.Buffer.sized(8, 1);
+    wide.set_str(0, 0, "\u{6F22}\u{5B57}\u{6F22}\u{5B57}", plain);
+    wide.fill(TUI_geometry.Rect(1, 0, 6, 1), "x", red);
+    check(tally, "fill over wide characters blanks the halves it split", wide.row_text(0), " xxxxxx ");
+    TUI_buffer.Buffer text = TUI_buffer.Buffer.sized(8, 1);
+    text.set_str(0, 0, "\u{6F22}\u{5B57}\u{6F22}\u{5B57}", plain);
+    text.set_str(1, 0, "abcdef", red);
+    check(tally, "text over wide characters blanks the halves it split", text.row_text(0), " abcdef ");
+    // the run primitives agree with the renderer's per-cell rules
+    TUI_buffer.Buffer row = TUI_buffer.Buffer.sized(10, 1);
+    row.set_str(0, 0, "ab\u{6F22}cd", red);
+    check_int(tally, "a run takes ASCII and a wide character, and stops at the style", row.plain_run_end(0, 0, 10, row.style_at(0, 0)), 6);
+    check_int(tally, "a run of another style is empty", row.plain_run_end(0, 0, 10, 0), 0);
+    bytes out = [];
+    row.append_run(out, 0, 0, 6);
+    check(tally, "append_run writes the cells' bytes", TUI_diff.show(out), "ab\u{6F22}cd");
+}
+
 Tally score = Tally();
 buffer_tests(score);
+cell_store_tests(score);
 layout_tests(score);
 property_tests(score);
 text_tests(score);

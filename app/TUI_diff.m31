@@ -99,8 +99,9 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             if (has_links) {
                 link = write_link(out, link, next.link_at(x, y));
             } else {
-                // a run of printable ASCII in the pen's style is just its bytes
-                int run_end = next.ascii_run_end(y, x, run_limit(x, tail, area.right()), pen);
+                // a run of cells in the pen's style that need nothing but their bytes (printable ASCII,
+                // or a character of certain width) is just those bytes
+                int run_end = next.plain_run_end(y, x, run_limit(x, tail, area.right()), pen);
                 if (run_end > x) {
                     next.append_run(out, y, x, run_end);
                     x = run_end;
@@ -277,8 +278,8 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             if (has_links) {
                 link = write_link(out, link, next.link_at(x, y));
             } else {
-                // a run of changed printable ASCII in the pen's style is just its bytes
-                int run_end = next.changed_ascii_run_end(previous, y, x, run_limit(x, tail, area.right()), forced_from, pen);
+                // a run of changed cells in the pen's style that need nothing but their bytes is just those bytes
+                int run_end = next.changed_plain_run_end(previous, y, x, run_limit(x, tail, area.right()), forced_from, pen);
                 if (run_end > x) {
                     next.append_run(out, y, x, run_end);
                     current_x = run_end;

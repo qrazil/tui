@@ -557,47 +557,92 @@ pub int Buffer.next_change(Buffer previous, int y, int from, int until) {
     return until;
 }
 
-/// The end (exclusive) of the run of cells in row `y` from column `x` that are printable ASCII in
-/// one column, all in the packed style `style`, stopping at `limit`: `x` itself when the first is
-/// not one. The renderer writes such a run as its bytes.
-pub int Buffer.ascii_run_end(int y, int x, int limit, int style) {
+/// Is the cell `cell` (width and glyph) one the renderer writes as its bytes without asking
+/// anything else of it: printable ASCII in one column, or a single code point the width table
+/// trusts (`table.is_uncertain` false for it at that width)? `memo` is the last answer for a
+/// glyph and width: `[cell, 1 or 0]`, so a run of one character is asked about once.
+bool Buffer.is_plain_cell(int cell, List<int> memo) {
+    int glyph = cell & GLYPH_MASK;
+    if (glyph < 0x80) {
+        return cell >= ONE_COLUMN + 32 && cell <= ONE_COLUMN + 126;
+    }
+    if (glyph >= CLUSTER_BASE) {
+        return false;
+    }
+    if (memo[0] != cell) {
+        memo[0] = cell;
+        memo[1] = 0;
+        if (!table.is_uncertain(symbol_of(glyph), cell >> WIDTH_SHIFT)) {
+            memo[1] = 1;
+        }
+    }
+    return memo[1] == 1;
+}
+
+/// The end (exclusive) of the run of cells in row `y` from column `x` that the renderer writes as
+/// their bytes (printable ASCII, or a single code point of certain width: see `is_plain_cell`),
+/// all in the packed style `style`, stopping at `limit`: `x` itself when the first is not one.
+/// The right half of a wide character belongs to the run of its left half.
+pub int Buffer.plain_run_end(int y, int x, int limit, int style) {
     if (y < box.y || y >= box.bottom() || x < box.x || limit > box.right()) {
-        trap("TUI_buffer.Buffer.ascii_run_end: outside the buffer");
+        trap("TUI_buffer.Buffer.plain_run_end: outside the buffer");
     }
     List<int> mine = cells;
     List<int> my_styles = styles;
+    List<int> memo = [-1, 0];
     int base = (y - box.y) * box.width - box.x;
     int index = base + x;
     int end = base + limit;
     while (index < end) {
         int cell = mine[index];
-        if (cell < ONE_COLUMN + 32 || cell > ONE_COLUMN + 126 || my_styles[index] != style) {
+        int width = cell >> WIDTH_SHIFT;
+        if (width == 0) {
+            index = index + 1;
+            continue;
+        }
+        if (my_styles[index] != style || index + width > end) {
             break;
+        }
+        if (cell < ONE_COLUMN + 32 || cell > ONE_COLUMN + 126) {
+            if (!is_plain_cell(cell, memo)) {
+                break;
+            }
         }
         index = index + 1;
     }
     return index - base;
 }
 
-/// `ascii_run_end` for a diff: the run also ends at the first cell that `previous` already has
+/// `plain_run_end` for a diff: the run also ends at the first cell that `previous` already has
 /// (unless the cell is at or after `forced_from`, from which the renderer writes every cell).
 /// The cell at `x` itself is taken as changed.
-pub int Buffer.changed_ascii_run_end(Buffer previous, int y, int x, int limit, int forced_from, int style) {
+pub int Buffer.changed_plain_run_end(Buffer previous, int y, int x, int limit, int forced_from, int style) {
     if (!box.eq(previous.box) || y < box.y || y >= box.bottom() || x < box.x || limit > box.right()) {
-        trap("TUI_buffer.Buffer.changed_ascii_run_end: outside the buffer");
+        trap("TUI_buffer.Buffer.changed_plain_run_end: outside the buffer");
     }
     List<int> mine = cells;
     List<int> theirs = previous.cells;
     List<int> my_styles = styles;
     List<int> their_styles = previous.styles;
+    List<int> memo = [-1, 0];
     int base = (y - box.y) * box.width - box.x;
     int index = base + x;
     int end = base + limit;
     int forced = base + forced_from;
     while (index < end) {
         int cell = mine[index];
-        if (cell < ONE_COLUMN + 32 || cell > ONE_COLUMN + 126 || my_styles[index] != style) {
+        int width = cell >> WIDTH_SHIFT;
+        if (width == 0) {
+            index = index + 1;
+            continue;
+        }
+        if (my_styles[index] != style || index + width > end) {
             break;
+        }
+        if (cell < ONE_COLUMN + 32 || cell > ONE_COLUMN + 126) {
+            if (!is_plain_cell(cell, memo)) {
+                break;
+            }
         }
         if (index > base + x && index < forced && cell == theirs[index] && my_styles[index] == their_styles[index]) {
             break;
@@ -607,8 +652,8 @@ pub int Buffer.changed_ascii_run_end(Buffer previous, int y, int x, int limit, i
     return index - base;
 }
 
-/// Append the bytes of the cells of row `y` from column `x` up to `end` -- which must be cells
-/// of printable ASCII, as `ascii_run_end` found them -- to `out`.
+/// Append the bytes of the cells of row `y` from column `x` up to `end` -- cells the renderer
+/// writes as their bytes, as `plain_run_end` found them -- to `out`.
 pub void Buffer.append_run(bytes out, int y, int x, int end) {
     if (y < box.y || y >= box.bottom() || x < box.x || end > box.right()) {
         trap("TUI_buffer.Buffer.append_run: outside the buffer");
@@ -616,7 +661,14 @@ pub void Buffer.append_run(bytes out, int y, int x, int end) {
     List<int> mine = cells;
     int base = (y - box.y) * box.width - box.x;
     for (int index in base + x .. base + end) {
-        out.push(mine[index] & GLYPH_MASK);
+        int glyph = mine[index] & GLYPH_MASK;
+        if (glyph < 0x80) {
+            if (glyph != 0) {
+                out.push(glyph);
+            }
+        } else {
+            push_glyph(out, glyph);
+        }
     }
 }
 
@@ -803,37 +855,53 @@ int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
     // A printable ASCII byte is its own glyph. Over a plain one-column cell (nearly every cell
     // there is) the write is two stores; anything else (half of a wide pair, a cell with a link)
     // goes through `put_cell` and its repairs.
+    int base = at(x, y);
+    if (byte_count < 3 || links.size() > 0) {
+        for (int i in 0 .. byte_count) {
+            put_cell(x + i, base + i, text.byte_at(i) | ONE_COLUMN, packed_style);
+        }
+        return byte_count;
+    }
+    // as in `put_run`: only the two ends of the run can orphan half of a wide pair
     List<int> mine = cells;
     List<int> my_styles = styles;
-    int base = at(x, y);
-    bool has_links = links.size() > 0;
-    for (int i in 0 .. byte_count) {
-        int index = base + i;
-        int cell = text.byte_at(i) | ONE_COLUMN;
-        if (has_links || (mine[index] >> WIDTH_SHIFT) != 1) {
-            put_cell(x + i, index, cell, packed_style);
-        } else {
-            mine[index] = cell;
-            my_styles[index] = packed_style;
-        }
+    put_cell(x, base, text.byte_at(0) | ONE_COLUMN, packed_style);
+    for (int i in 1 .. byte_count - 1) {
+        mine[base + i] = text.byte_at(i) | ONE_COLUMN;
+        my_styles[base + i] = packed_style;
     }
+    put_last(x + byte_count - 1, base + byte_count - 1, text.byte_at(byte_count - 1) | ONE_COLUMN, packed_style);
     return byte_count;
+}
+
+/// `put_cell` for the last cell of a run written left to right: the cell before it was written
+/// a moment ago, so only the right half of a wide pair can be left behind.
+void Buffer.put_last(int x, int index, int cell, int packed_style) {
+    if ((cells[index] >> WIDTH_SHIFT) == 2 && x + 1 < box.right()) {
+        cells[index + 1] = BLANK_CELL;
+    }
+    cells[index] = cell;
+    styles[index] = packed_style;
 }
 
 /// Write `cell` (one column wide) into `count` cells from list index `index`, column `x` on.
 void Buffer.put_run(int x, int index, int count, int cell, int packed_style) {
+    if (count < 3 || links.size() > 0) {
+        for (int offset in 0 .. count) {
+            put_cell(x + offset, index + offset, cell, packed_style);
+        }
+        return;
+    }
+    // Only the two ends of the run can orphan half of a wide pair: a wide character inside it
+    // is overwritten whole.
     List<int> mine = cells;
     List<int> my_styles = styles;
-    bool has_links = links.size() > 0;
-    for (int offset in 0 .. count) {
-        int target = index + offset;
-        if (has_links || (mine[target] >> WIDTH_SHIFT) != 1) {
-            put_cell(x + offset, target, cell, packed_style);
-        } else {
-            mine[target] = cell;
-            my_styles[target] = packed_style;
-        }
+    put_cell(x, index, cell, packed_style);
+    for (int target in index + 1 .. index + count - 1) {
+        mine[target] = cell;
+        my_styles[target] = packed_style;
     }
+    put_last(x + count - 1, index + count - 1, cell, packed_style);
 }
 
 /// Fill `rect` with `symbol`, in `style`. Only the part inside the buffer is
