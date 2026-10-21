@@ -284,6 +284,13 @@ ok   oracle, a terminal that segments, regional indicator 1: every cell past 12 
 ok   oracle, a terminal that segments, regional indicator 2: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
 ok   oracle, a terminal that adds up, regional indicator 2: every cell past 12 clusters is right, drawn in, drawn out, drawn in full 
 
+== colour depth from the environment ===========================
+ok   COLORTERM=truecolor
+ok   Terminal.app: 256 colours, not truecolor
+ok   iTerm2
+ok   kitty
+ok   a plain xterm
+
 == the loop's own answers redraw the view ======================
 ok   the mode 2026 answer: redraw, so a view that shows is_sync is right
 ok   and it was taken
@@ -345,4 +352,4 @@ ok   set: it is what was asked
 ok   the read timeout is the ticker's alone: a timer still shortens it
 ok   and still never under one
 
--- 322 passed, 0 failed
+-- 327 passed, 0 failed

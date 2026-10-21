@@ -5,6 +5,7 @@
 //   TUI_style.Colour           Default | Indexed(index) | Rgb(red, green, blue)
 //   TUI_style.Style            foreground, background, attrs -- constructed with named arguments
 //   TUI_style.Depth            Ansi16 | Ansi256 | TrueColour
+//   TUI_style.detect_depth()   the depth this process's terminal has (COLORTERM, TERM_PROGRAM, TERM)
 //   TUI_style.BOLD .. STRIKE   the attribute bits
 //   style.pack()              a whole style as one `int`, which is what a
 //                             `Buffer` stores and what the diff compares
@@ -34,6 +35,8 @@
 // the renderer needs.
 
 /// Bold.
+import os;
+
 pub const int BOLD = 1;
 /// Faint.
 pub const int DIM = 2;
@@ -194,6 +197,31 @@ pub enum Depth {
     Ansi256;
     /// 24-bit: SGR 38;2;r;g;b.
     TrueColour;
+}
+
+/// How many colours a terminal has, from what it says about itself: `COLORTERM` (truecolor or 24bit), the
+/// terminal program (iTerm.app, WezTerm, vscode, ghostty), a TERM that names it (truecolor, direct, xterm-kitty,
+/// alacritty), else 256 for a *256color TERM (Terminal.app before macOS 26 has no 24-bit colour: it
+/// misreads `38;2;r;g;b` as several unrelated attributes), else 16.
+pub Depth depth_of(str colour_term, str program, str term_name) {
+    if (colour_term == "truecolor" || colour_term == "24bit") {
+        return Depth.TrueColour;
+    }
+    if (program == "iTerm.app" || program == "WezTerm" || program == "vscode" || program == "ghostty") {
+        return Depth.TrueColour;
+    }
+    if (term_name.contains("truecolor") || term_name.contains("direct") || term_name == "xterm-kitty" || term_name == "alacritty") {
+        return Depth.TrueColour;
+    }
+    if (term_name.contains("256color")) {
+        return Depth.Ansi256;
+    }
+    return Depth.Ansi16;
+}
+
+/// `depth_of` for this process's environment (`COLORTERM`, `TERM_PROGRAM`, `TERM`).
+pub Depth detect_depth() {
+    return depth_of(os.env("COLORTERM").or(""), os.env("TERM_PROGRAM").or(""), os.env("TERM").or(""));
 }
 
 // --- the escape sequences ---------------------------------------------------

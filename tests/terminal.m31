@@ -801,6 +801,29 @@ str repaired(Kind kind, int model, int regional, bool is_to_cluster, bool is_dif
     return "";
 }
 
+str depth_name(TUI_style.Depth depth) {
+    match (depth) {
+        case Ansi16: {
+            return "Ansi16";
+        }
+        case Ansi256: {
+            return "Ansi256";
+        }
+        case TrueColour: {
+            return "TrueColour";
+        }
+    }
+}
+
+void depth_tests(Tally tally) {
+    head("colour depth from the environment");
+    check(tally, "COLORTERM=truecolor", depth_name(TUI_style.depth_of("truecolor", "", "xterm-256color")), "TrueColour");
+    check(tally, "Terminal.app: 256 colours, not truecolor", depth_name(TUI_style.depth_of("", "Apple_Terminal", "xterm-256color")), "Ansi256");
+    check(tally, "iTerm2", depth_name(TUI_style.depth_of("", "iTerm.app", "xterm-256color")), "TrueColour");
+    check(tally, "kitty", depth_name(TUI_style.depth_of("", "", "xterm-kitty")), "TrueColour");
+    check(tally, "a plain xterm", depth_name(TUI_style.depth_of("", "", "xterm")), "Ansi16");
+}
+
 void uncertainty_tests(Tally tally) {
     head("clusters of uncertain width");
     ok(tally, "uncertain: a family", is_uncertain("1F468 200D 1F469 200D 1F467"));
@@ -1068,6 +1091,7 @@ key_tests(score);
 focus_tests(score);
 width_table_tests(score);
 uncertainty_tests(score);
+depth_tests(score);
 reply_tests(score);
 input_tests(score);
 after_frame_tests(score);

@@ -57,6 +57,9 @@ cannot know). Built and tested against m31 v0.9.0.
   terminal that ignores them, control characters obeyed and listed, and per-cell SGR.
 - `examples/width_probe.m31`: run it in a terminal and it prints, per cluster, the width the terminal measured (cursor
   position report after printing it) against the library's, and whether the renderer treats the cluster as uncertain.
+- `TUI_style.detect_depth()` and `TUI_style.depth_of(colour_term, program, term_name)`: the colour depth from `COLORTERM`, `TERM_PROGRAM` and
+  `TERM` (m3's rule, moved here). A program that never chose a depth wrote 24-bit colours (`38;2;r;g;b`) to Terminal.app, which has none
+  before macOS 26 and misreads them as unrelated attributes (bold, underline, reverse, a background); mgit was such a program.
 - `TUI_diff.AUTOWRAP_OFF`, `TUI_diff.AUTOWRAP_ON`, `Buffer.first_unsure`, `Buffer.is_plain_blank`,
   `TUI_text.is_certain_width`, `TUI_text.is_invisible`, `TUI_text.count_code_points`.
 
