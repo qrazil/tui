@@ -4,6 +4,38 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## Unreleased
+
+Speed: the renderer and the buffer were profiled on the emitted C (`docs/FRICTION.md` §30), and the cost was calls, not
+cells -- five bounds-checked accessor calls per cell, each with a stack probe and a retain/release. The output is
+byte-for-byte what 0.14.0 wrote (checked over the stress sequences, the finder and widget frames, and 1,500 random
+frames of ASCII, CJK, emoji, combining marks, links and styles, in `full`, `diff`, `diff_scrolled` and
+`diff_scrolled_in_place`); the public API is unchanged. On the 200x50 benchmark, interleaved medians against
+0.14.0 on the same loaded machine: `full` 7-8x, one-cell and no-change diffs 1.7-1.9x, a finder keystroke (diff) 4-5.5x,
+painting a finder frame 3.5-7x, `Buffer.clear` and `Buffer.sized` 8x.
+
+### Changed
+
+- **A cell is two integers, not three lists with a string.** `core/TUI_buffer.m31` stores `cells` (the glyph in the low
+  32 bits, the width above) and `styles`. A glyph is the code point itself for a single-code-point cluster, 0 for a
+  continuation, and an index into the buffer's own cluster table for a cluster of several; so writing a cell is two
+  integer stores with no refcount traffic, and comparing two buffers is an integer compare (a string compare only for
+  a multi-code-point cluster). The table is compacted when overwritten clusters outgrow the cells.
+- **`TUI_diff.diff` and `full` pass over rows in runs.** New `Buffer` methods (`next_change`, `plain_run_end`,
+  `changed_plain_run_end`, `append_run`) skip unchanged cells, find how far printable ASCII and characters of certain
+  width run in one style, and write them as bytes in one pass. A cluster of uncertain width, a link, the erase tail and
+  the forced window of a row still go through the per-cell code unchanged.
+- **`fill`, `set_str` (printable ASCII) write the inside of a run without checking each cell** (only the ends of a run can
+  split a wide character), `clear` and `sized` build their lists with `[v; n]`, `scrolled` of zero rows and `copy`
+  copy the lists, and `set_str` measures a repeated cluster once. Strings of single non-ASCII code points that the
+  renderer asks for are cached.
+
+### Added
+
+- `examples/bench_finder.m31`: the scenarios of the renderer comparison (full, diff-1, diff-0, and the keystrokes of a
+  file finder in ASCII, CJK and emoji names, timed for diff, for paint and for both).
+- `docs/FRICTION.md` §30: what the compiler's share of a frame was, each item with the emitted C and a measured estimate.
+
 ## 0.14.0
 
 The owner of m3 draws in rio and Alacritty every day, wants Terminal.app and kitty to work, and asked for double-width

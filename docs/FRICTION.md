@@ -889,3 +889,68 @@ Nothing here stopped the work.
   the cost to watch in m31: there is no inlining across modules that the author can rely on.
 - **`os.exit(1)` from a failing test leaves `__rc_live=1`** (the live objects at exit), which reads like a leak next
   to the real failure; `test.sh` greps for it anyway.
+
+## 30. Unreleased: where the time of a frame went, and what the compiler's share of it was (m31 v0.9.0)
+
+Profiled with a sampling timer (SIGPROF at 2 kHz, instruction pointer and frame-pointer walk, symbolised with `nm`; there
+is no `perf` here, and `gprof -pg` slowed the program 7x and put the cost on `mcount`) on the emitted C, gcc -O2.
+On `TUI_diff.full` of the 200x50 widget screen, before this change: `rt_stack_check` 16%, `rc_dec` 14%, `rc_inc` 9%,
+`Rect.has_point` 12% (it only exists to bounds-check), `Buffer.at` 8%; the work itself (`rt_bytes_push`) 3%. Three
+quarters of a frame was the cost of calling small functions. Almost all of it is fixable in the library (a loop that
+reads the lists once and writes bytes, instead of five calls per cell); what is left is the compiler's, and each item
+below says where it shows in the C and what it is worth. The estimates are measured: the emitted C of the *old* renderer
+and of the new one was patched (`sed` the line away, or `#define` the helper) and rebuilt, interleaved runs, medians,
+on a machine that was loaded, so read them to within 15%.
+
+1. **`rt_stack_check()` opens every emitted function and is a real call.** `fn_..._Buffer___at`, `Rect.has_point`,
+   `Rect.right`: a three-line accessor is `call rt_stack_check` + its body. rt.h says why it is out of line (a
+   thread-local read that gcc/clang caches across a green-thread switch). With the calls deleted, the old renderer's
+   `full` went 2335 -> 1242 us (1.9x) and the finder keystroke diff 1003 -> 684 us (1.5x); on the new, loop-shaped code
+   it is worth 0-13%. Win: 1.5-1.9x for call-heavy code. Possible fixes: no probe in a leaf (a function whose body calls
+   nothing that can grow the stack or park the thread, which is every accessor above); or one probe per loop-free call
+   tree instead of one per function.
+2. **`rc_inc` and `rc_dec` are out-of-line calls in rt.c, and a field read passed as an argument is retained and
+   released around the call.** `v3 = ((T32 *)v0)->f_box; rc_inc(v3); v4 = Rect_has_point(v3, x, y); rc_dec(v3);`
+   (every `box.has_point(x, y)` in `Buffer`). The early-out for immortal objects (a str literal) is inside the call. A
+   `static inline` fast path (`if (o->rc != RC_IMMORTAL) o->rc++`; for dec, decrement when the count stays above zero
+   and the flags are clear, call out only to free) is worth 1.18x on the old `full`, 1.36x on the old paint, and 1.2x
+   on the new diff. A field read that is only borrowed for the length of a call whose callee does not store it needs
+   neither (the callee's parameter is borrowed already, as `v0` is).
+3. **User types are heap objects behind a pointer, never value structs.** `Rect` is `{Obj hdr; int64 x, y, width,
+   height}`, 48 bytes from `malloc`, and `box.y` is two dependent loads (`((T9 *)((T32 *)v0)->f_box)->f_y`).
+   `TUI_geometry.Rect(x, y, 2, 1)` in `Buffer.set` is a malloc and a free. Rust has `Rect` inline in the parent and
+   in registers. A `value type` (copied, no identity, no refcount) for small all-`int` structs would remove the
+   allocation, the retain/release and one load level. Not measured as a patch (it is a language change); every `Rect`,
+   `Style`, `Cell`, `Constraint` in the library is one.
+4. **The hoisting pass works on locals and not on fields.** `while (i < end) { if (widths[i] != other.widths[i] ...` with
+   `widths` a field re-reads `((T32 *)v0)->f_widths`, the `ty` tag, the length and the data pointer on every iteration
+   (`rt_index_get`, 6 per cell). The same loop over `List<int> mine = cells;` is emitted with `rt_seq_data_addr` and
+   `rt_len_of` once and `rt_index_get_at` in the loop (see `Buffer.ascii_run_end`'s C). The library now copies fields to
+   locals by hand, which is a rule a programmer should not need to know. The pass could hoist a field read when nothing
+   in the loop stores to that field or calls a function that might.
+5. **Checked arithmetic and bounds checks.** `rt_iadd`/`rt_isub`/`rt_imul` for every index computation and loop
+   increment (`v56 = rt_iadd(v37, 1)`), and `rt_index_get_at`'s range test on every element. With both removed, 1.16-1.19x
+   on the old code, 1.0-1.1x on the new. Range-analysis would remove most: a `for (int i in 0 .. n)` counter cannot
+   overflow, and `i` is inside `0 .. n` for the body. Already tracked; the loop form is the one place it is cheap to do.
+6. **Everything together** (1, 2, 4's checks and 5): old renderer 2335 -> 785 us on `full` (3.0x), 1003 -> 542 us on
+   the finder keystroke (1.85x), 591 -> 309 us on paint (1.9x). So against Rust, whose `Buffer` is a `Vec<Cell>` with
+   no refcounts, no probes and no overflow traps, the ceiling "gcc compiles C" is real but the C we emit is not the C
+   a person writes: it is 2-3x the instructions for call-shaped code, and the gap closes to about 10-20% once the
+   library hands the compiler loops over locals. `-O3` helped the old code (1.4x on `full`) and hurt the new
+   (0.82x), `-flto` helped both (1.14x, 1.3x on diff-0) but is excluded by the stack-probe rule in rt.h.
+7. **`[v; n]` is the fast way to fill a list and nothing else is.** `rt_list_repeat` is one C loop; a list filled by
+   `for ... push` is a call and a capacity check per element, and an indexed store loop is a mutability check and a
+   range check per element. `clear()` of 10,000 cells went from 78 us to 8 us by assigning `[BLANK; n]`. A `fill(from,
+   to, v)` and a `copy_within` on `List<int>` (a `memset` and a `memmove`) would let a buffer clear or scroll a region
+   in nanoseconds, and `a.slice(i, j)` already does the copy half.
+8. **`unicode.graphemes`, `unicode.width` and `str.chars()` allocate a list and a string per cluster.** After the
+   renderer was fixed, 20-45% of what is left in a paint is `rt_list_push`, `str_new`, `malloc`/`free` and
+   `class_of` from those (`Paragraph` wrapping, `set_str` of non-ASCII text). A cursor form (`for (int start, int end in
+   text.cluster_bounds())`, no strings) and a `unicode.width_of_code_point(int)` would let `TUI_text` measure without
+   building anything. This one is the standard library's, not the language's.
+9. **`bytes.push` of a byte is a call into rt.c** (`rt_bytes_push`: capacity check, store, length). A frame writes 12-15
+   thousand of them (9% of `full` after the rest was fixed). An inline fast path (`if (len < cap) data[len++] = v`)
+   or `bytes.extend` from a slice of a `List<int>` would remove it.
+10. **Module state would have let the buffers share one cluster table.** Two buffers compared cell by cell (previous and
+    next frame) cannot share ids for multi-code-point clusters without an object both hold; the library keeps a table
+    per buffer and compares clusters as strings, which is correct and rare. (Known, §14; not a request.)
