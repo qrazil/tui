@@ -1,0 +1,23 @@
+
+== the input decoder ===========================================
+ok   6000 random byte strings decode without a trap and yield events
+ok   no empty Unknown event
+ok   3000 concatenations of whole sequences decode as their parts
+ok   a megabyte paste is one Paste of a megabyte
+
+== the reply parsers and the pointer ===========================
+ok   6000 junk replies are parsed without a trap
+ok   cursor_report: a report
+ok   cursor_report: a report with a 7-digit number is refused
+ok   mode_reply: 2027 set
+ok   focus_report: in
+ok   4000 random mouse reports route without a trap
+
+== text that speaks to the terminal ============================
+ok   400 hostile frames: no control character reaches a cell
+ok   400 hostile frames: a link is printable ASCII only
+ok   400 hostile frames: the terminal obeys nothing it should not, and shows the buffer
+ok   hyperlink_uri of control bytes
+ok   hyperlink_open has no raw ESC but the framing
+
+fuzz: 15 passed, 0 failed

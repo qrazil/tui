@@ -2,7 +2,7 @@
 # The TUI library's gate.
 #
 #   M31_ROOT=/path/to/m31 bash tests/test.sh            tests, then the benchmark
-#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax,terminal,width,escape,width_pty,stress}.out from what the tests print
+#   M31_ROOT=/path/to/m31 bash tests/test.sh --bless    rewrite tests/{tests,widgets,syntax,terminal,width,fuzz,escape,width_pty,stress}.out from what the tests print
 #
 # Four things are checked (and, last, the pty tests of the escape wait and of the width calibration: 3b and 3d below), and the rule is the repository's own: grep for
 # FAILED, never for ok.
@@ -71,7 +71,7 @@ command -v gcc   >/dev/null && CCS+=("gcc:-O0" "gcc:-O2")
 command -v clang >/dev/null && CCS+=("clang:-O0" "clang:-O2")
 if [ ${#CCS[@]} -eq 0 ]; then echo "no C compiler" >&2; exit 1; fi
 
-for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/tests/width."$LANG_EXT" "$DIR"/tests/width_pty."$LANG_EXT" "$DIR"/tests/width_child."$LANG_EXT" "$DIR"/tests/escape."$LANG_EXT" "$DIR"/tests/escape_child."$LANG_EXT" "$DIR"/tests/stress."$LANG_EXT" "$DIR"/examples/width_probe."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
+for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR"/tests/syntax."$LANG_EXT" "$DIR"/tests/terminal."$LANG_EXT" "$DIR"/tests/width."$LANG_EXT" "$DIR"/tests/width_pty."$LANG_EXT" "$DIR"/tests/width_child."$LANG_EXT" "$DIR"/tests/escape."$LANG_EXT" "$DIR"/tests/escape_child."$LANG_EXT" "$DIR"/tests/stress."$LANG_EXT" "$DIR"/tests/fuzz."$LANG_EXT" "$DIR"/examples/width_probe."$LANG_EXT" "$DIR"/examples/bench."$LANG_EXT" "$DIR"/examples/demo."$LANG_EXT" "$DIR"/examples/browse."$LANG_EXT" "$DIR"/examples/widgets."$LANG_EXT" "$DIR"/examples/features."$LANG_EXT"; do
     base=$(basename "$src" ".$LANG_EXT")
     # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
     case "$src" in */examples/widgets.*) base=example_widgets;; esac
@@ -101,7 +101,7 @@ done
 
 # 3. and 4. the corpora, and the refcount invariant --------------------------
 #
-# Five test programs, each with its own expected output: tests/tests.m31 (the
+# Six test programs, each with its own expected output: tests/tests.m31 (the
 # library as it was), tests/widgets.m31 (v0.3.0: the input, text, tab,
 # chart, gauge, spinner and mouse widgets, with golden renders),
 # tests/syntax.m31 (TUI_syntax and the highlighted DiffView) and
@@ -109,12 +109,14 @@ done
 # protocols, focus, emoji width -- checked against tests/TST_emulator.m31, a small
 # terminal emulator that applies the bytes the library writes) and tests/width.m31
 # (v0.14.0: the width calibration against emulators of alacritty, rio, kitty, Terminal.app and
-# a terminal that draws East Asian Ambiguous wide: the probe, its failure modes, the borders).
+# a terminal that draws East Asian Ambiguous wide: the probe, its failure modes, the borders) and
+# tests/fuzz.m31 (0.16.0: hostile input and hostile text: the decoder, the reply parsers, the pointer, control
+# characters and links in text).
 #
 # Every build must agree with every other, which is run.sh's layers 1 and 2
 # applied to one program: a disagreement between gcc and clang, or between
 # -O0 and -O2, means the emitted C leans on something C leaves open.
-for corpus in tests widgets syntax terminal width; do
+for corpus in tests widgets syntax terminal width fuzz; do
     ref=""; ref_tag=""
     for entry in "${CCS[@]}"; do
         cc=${entry%%:*}; opt=${entry##*:}

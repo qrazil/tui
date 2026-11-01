@@ -1,0 +1,294 @@
+// Hostile input, in and out: the input decoder, the reply parsers, the mouse, and text that tries to
+// speak to the terminal.
+//
+//   bash tests/test.sh
+//
+// Seeded and deterministic (no clock). Four things are asked:
+//
+//   1. `term.decode` never traps on any bytes (random strings over an alphabet of escape-ish bytes, UTF-8 lead and
+//      continuation bytes, paste markers), and a byte stream cut between two whole sequences decodes to what
+//      the pieces decode to: the same events, in the same order.
+//   2. A paste of a megabyte is one `Paste` event of a megabyte.
+//   3. The reply parsers (`TUI_width.cursor_report`, `mode_reply`, `TUI_keys.reply_kind`, `modify_other_key`,
+//      `TUI_app.focus_report`, `TUI_diff.sync_reply`) and `TUI_mouse.Pointer` never trap on junk.
+//   4. Text that carries ESC, CSI, OSC, BEL, NUL, DEL, C1 controls, a newline or a URI with control characters
+//      reaches the terminal as characters and not as controls: after `set_str` and `link` the buffer holds no
+//      control character and the emulator, fed the frame, obeys nothing it should not (`controls`, `unknown`,
+//      `bad_bytes`) and shows what the buffer holds.
+//
+// Like the other corpora: a `check` line prints `ok` or `FAIL`, compared with tests/fuzz.out.
+
+import random;
+import term;
+import app.TUI_app;
+import app.TUI_diff;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_keys;
+import core.TUI_mouse;
+import core.TUI_osc;
+import core.TUI_style;
+import core.TUI_width;
+import tests.TST_emulator;
+
+type Tally {
+    int pass = 0;
+    int fail = 0;
+}
+
+void check(Tally tally, str name, str got, str want) {
+    if (got == want) {
+        tally.pass = tally.pass + 1;
+        print("ok   " + name);
+        return;
+    }
+    tally.fail = tally.fail + 1;
+    print("FAIL " + name);
+    print("     got  [" + got + "]");
+    print("     want [" + want + "]");
+}
+
+void head(str text) {
+    print("");
+    print("== " + text + " " + "=".repeat(60 - text.size()));
+}
+
+str events_text(List<term.Event> events) {
+    List<str> parts = [];
+    for (term.Event event in events) {
+        parts.push(event.to_str());
+    }
+    return parts.join("|");
+}
+
+List<str> atoms() {
+    return ["a", "Z", " ", "\u{E9}", "\u{20AC}", "\u{1F600}", "\u{65E5}", "\r", "\t", "\x7f", "\x1b[A", "\x1b[1;5C", "\x1bOP", "\x1b[15~", "\x1b[3~", "\x1b[Z", "\x1b[<0;10;5M", "\x1b[<0;10;5m", "\x1b[<64;3;3M", "\x1b[<35;7;2M", "\x1b[200~hi\x1b[201~", "\x1b[200~\u{65E5}\u{672C}\nX\x1b[201~", "\x1b[200~\x1b[201~", "\x1b[I", "\x1b[97;3u", "\x1b[27;5;105~"];
+}
+
+List<int> noise_alphabet() {
+    return [27, 27, 27, '[', '[', 'O', '0', '1', '2', '0', '0', '~', ';', ';', '<', '?', 'M', 'm', 'u', 'A', 'B', 'a', 'z', ' ', 13, 9, 127, 3, 0xC3, 0xA9, 0xE2, 0x82, 0xAC, 0xF0, 0x9F, 0x98, 0x80, 0xFF, 0x80, '5', '9', '3', 'I', 'O', 'c', 'y', '$', '>', 0, 0x9b, 0x1b, 0xC0, 0xAF];
+}
+
+void decoder(Tally tally, random.Seeded dice) {
+    head("the input decoder");
+    List<int> alphabet = noise_alphabet();
+    int events_total = 0;
+    int unknown_empty = 0;
+    for (int round in 0 .. 6000) {
+        bytes data = [];
+        int count = dice.integer(1, 28);
+        for (int i in 0 .. count) {
+            data.push(alphabet[dice.integer(0, alphabet.size() - 1)]);
+        }
+        List<term.Event> events = term.decode(data);
+        events_total = events_total + events.size();
+        for (term.Event event in events) {
+            match (event) {
+                case Unknown(bytes raw): {
+                    if (raw.size() == 0) {
+                        unknown_empty = unknown_empty + 1;
+                    }
+                }
+                case Key(term.Key key): {
+                }
+                case Mouse(term.Mouse report): {
+                }
+                case Paste(str pasted): {
+                }
+            }
+        }
+    }
+    check(tally, "6000 random byte strings decode without a trap and yield events", str(events_total > 6000), "true");
+    check(tally, "no empty Unknown event", str(unknown_empty), "0");
+    List<str> all = atoms();
+    int mismatches = 0;
+    str first = "";
+    for (int round in 0 .. 3000) {
+        int count = dice.integer(1, 7);
+        str joined = "";
+        List<str> parts = [];
+        for (int i in 0 .. count) {
+            str atom = all[dice.integer(0, all.size() - 1)];
+            joined = joined + atom;
+            parts.push(events_text(term.decode(atom.to_bytes())));
+        }
+        str whole = events_text(term.decode(joined.to_bytes()));
+        if (whole != parts.join("|")) {
+            mismatches = mismatches + 1;
+            if (first == "") {
+                first = joined.to_bytes().hex() + " whole [" + whole + "] parts [" + parts.join("|") + "]";
+            }
+        }
+    }
+    check(tally, "3000 concatenations of whole sequences decode as their parts" + first, str(mismatches), "0");
+    bytes paste = "\x1b[200~".to_bytes();
+    for (int i in 0 .. 1000000) {
+        paste.push('a' + i % 26);
+    }
+    paste.extend("\x1b[201~".to_bytes());
+    List<term.Event> pasted = term.decode(paste);
+    int paste_size = -1;
+    if (pasted.size() == 1) {
+        match (pasted[0]) {
+            case Paste(str text): {
+                paste_size = text.size();
+            }
+            case Key(term.Key key): {
+            }
+            case Mouse(term.Mouse report): {
+            }
+            case Unknown(bytes raw): {
+            }
+        }
+    }
+    check(tally, "a megabyte paste is one Paste of a megabyte", str(paste_size), "1000000");
+}
+
+void parsers(Tally tally, random.Seeded dice) {
+    head("the reply parsers and the pointer");
+    List<int> alphabet = noise_alphabet();
+    int accepted = 0;
+    for (int round in 0 .. 6000) {
+        bytes data = "\x1b[".to_bytes();
+        if (dice.integer(0, 3) == 0) {
+            data.push('?');
+        }
+        int count = dice.integer(0, 14);
+        for (int i in 0 .. count) {
+            if (dice.integer(0, 1) == 0) {
+                data.push('0' + dice.integer(0, 9));
+            } else {
+                data.push(alphabet[dice.integer(0, alphabet.size() - 1)]);
+            }
+        }
+        data.push("RucyIO~".byte_at(dice.integer(0, 6)));
+        TUI_width.Position position = TUI_width.cursor_report(data);
+        if (position.row >= 0) {
+            accepted = accepted + 1;
+        }
+        TUI_width.mode_reply(data, 2027);
+        TUI_keys.reply_kind(data);
+        TUI_keys.modify_other_key(data);
+        TUI_app.focus_report(data);
+        TUI_diff.sync_reply(data);
+    }
+    check(tally, "6000 junk replies are parsed without a trap", "ok", "ok");
+    check(tally, "cursor_report: a report", str(TUI_width.cursor_report("\x1b[12;40R".to_bytes()).column), "40");
+    check(tally, "cursor_report: a report with a 7-digit number is refused", str(TUI_width.cursor_report("\x1b[1234567;4R".to_bytes()).row), "-1");
+    check(tally, "mode_reply: 2027 set", str(TUI_width.mode_reply("\x1b[?2027;1$y".to_bytes(), 2027)), "1");
+    check(tally, "focus_report: in", str(TUI_app.focus_report("\x1b[I".to_bytes())), "1");
+    TUI_mouse.Pointer pointer = TUI_mouse.Pointer();
+    int now = 0;
+    int gestures = 0;
+    for (int round in 0 .. 4000) {
+        int kind = dice.integer(0, 3);
+        int col = dice.integer(-3, 300);
+        int row = dice.integer(-3, 100);
+        int button = dice.integer(0, 4);
+        int mods = dice.integer(0, 7);
+        term.MouseKind mouse_kind = term.MouseKind.Down(button);
+        if (kind == 1) {
+            mouse_kind = term.MouseKind.Up(button);
+        } else if (kind == 2) {
+            mouse_kind = term.MouseKind.Moved;
+        } else if (kind == 3) {
+            mouse_kind = term.MouseKind.ScrollUp;
+        }
+        now = now + dice.integer(0, 900);
+        for (TUI_mouse.Gesture gesture in pointer.feed(term.Mouse(mouse_kind, col, row, mods), now)) {
+            gestures = gestures + 1;
+            if (gesture.x < 0 || gesture.y < 0) {
+                check(tally, "a gesture has a negative coordinate", gesture.to_str(), "x,y >= 0");
+            }
+        }
+    }
+    check(tally, "4000 random mouse reports route without a trap", str(gestures > 0), "true");
+}
+
+List<str> hostile() {
+    return ["plain", "a\x1b[31mred\x1b[0mb", "\x1b]0;title\x07x", "\x1b]52;c;QUJD\x07", "bell\x07here", "nul\x00byte", "del\x7fchar", "c1\u{9b}31m\u{9d}x", "tab\there", "line\nbreak\rreturn", "\x1b", "\x1b[", "\x1bP1$r\x1b\\", "\u{202E}rtl\u{202C}", "\u{200B}\u{200D}zw", "e\u{301}\u{301}\u{301}", "\x1b[2J\x1b[H", "\x1b[?1049l", "\u{1F468}\u{200D}\u{1F469}\x1b[A\u{200D}\u{1F467}", "\x1b_Gi=1;AAAA\x1b\\", "\x08\x08\x08", "\x0b\x0c\x0e\x0f"];
+}
+
+bool has_control(str text) {
+    for (int i in 0 .. text.size()) {
+        int byte = text.byte_at(i);
+        if (byte < 32 || byte == 127) {
+            return true;
+        }
+    }
+    // C1 controls are two bytes in UTF-8: C2 80 .. C2 9F
+    for (int i in 0 .. text.size() - 1) {
+        if (text.byte_at(i) == 0xC2 && text.byte_at(i + 1) >= 0x80 && text.byte_at(i + 1) <= 0x9F) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void hostile_text(Tally tally, random.Seeded dice) {
+    head("text that speaks to the terminal");
+    List<str> texts = hostile();
+    int bad_cells = 0;
+    int bad_screens = 0;
+    int bad_links = 0;
+    str first = "";
+    for (int round in 0 .. 400) {
+        TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(40, 8);
+        int pieces = dice.integer(1, 6);
+        for (int i in 0 .. pieces) {
+            str text = texts[dice.integer(0, texts.size() - 1)];
+            TUI_style.Style style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(dice.integer(0, 255)));
+            int x = dice.integer(-2, 38);
+            int y = dice.integer(0, 7);
+            if (dice.integer(0, 2) == 0) {
+                buffer.set_link_str(x, y, text, style, texts[dice.integer(0, texts.size() - 1)]);
+            } else {
+                buffer.set_str(x, y, text, style);
+            }
+        }
+        for (int y in 0 .. 8) {
+            if (has_control(buffer.row_text(y))) {
+                bad_cells = bad_cells + 1;
+                if (first == "") {
+                    first = "row text " + buffer.row_text(y).to_bytes().hex();
+                }
+            }
+            for (int x in 0 .. 40) {
+                if (buffer.width_at(x, y) != 0) {
+                    str link = buffer.link_at(x, y);
+                    for (int k in 0 .. link.size()) {
+                        int byte = link.byte_at(k);
+                        if (byte <= 32 || byte >= 127) {
+                            bad_links = bad_links + 1;
+                        }
+                    }
+                }
+            }
+        }
+        TST_emulator.Screen screen = TST_emulator.preset("ideal", 40, 8);
+        screen.feed(TUI_diff.full(buffer, TUI_style.Depth.TrueColour));
+        TUI_buffer.Buffer second = TUI_buffer.Buffer.sized(40, 8);
+        second.set_str(dice.integer(0, 30), dice.integer(0, 7), texts[dice.integer(0, texts.size() - 1)], TUI_style.Style());
+        screen.feed(TUI_diff.diff(buffer, second, TUI_style.Depth.TrueColour));
+        str difference = screen.differs_from(second);
+        if (difference != "" || screen.controls.size() > 0 || screen.unknown.size() > 0 || screen.bad_bytes > 0) {
+            bad_screens = bad_screens + 1;
+            if (first == "") {
+                first = difference + " controls " + str(screen.controls.size()) + " unknown " + str(screen.unknown.size());
+            }
+        }
+    }
+    check(tally, "400 hostile frames: no control character reaches a cell" + first, str(bad_cells), "0");
+    check(tally, "400 hostile frames: a link is printable ASCII only", str(bad_links), "0");
+    check(tally, "400 hostile frames: the terminal obeys nothing it should not, and shows the buffer" + first, str(bad_screens), "0");
+    check(tally, "hyperlink_uri of control bytes", TUI_osc.hyperlink_uri("a\x1b\\b\x07c d"), "a%1B\\b%07c%20d");
+    check(tally, "hyperlink_open has no raw ESC but the framing", str(TUI_osc.hyperlink_open("x\x1b]8;;evil\x1b\\").to_bytes().size()), str("\x1b]8;id=".size() + str(TUI_osc.hyperlink_id(TUI_osc.hyperlink_uri("x\x1b]8;;evil\x1b\\"))).size() + 1 + TUI_osc.hyperlink_uri("x\x1b]8;;evil\x1b\\").size() + 2));
+}
+
+Tally tally = Tally();
+random.Seeded dice = random.seeded(20261101);
+decoder(tally, dice);
+parsers(tally, dice);
+hostile_text(tally, dice);
+print("");
+print("fuzz: " + str(tally.pass) + " passed, " + str(tally.fail) + " failed");
