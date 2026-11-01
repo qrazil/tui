@@ -31,4 +31,11 @@ ok   scrolled down by three in place: the link is in row 8
 ok   clear: no row may link
 ok   full: the link adds only its own bytes (open before the cell, close after the cell)
 
-fuzz: 24 passed, 0 failed
+== text written from its code points (set_str's simple path) ===
+ok   more than 30000 code points are called simple
+ok   each is drawn in the width simple_width says (library width)
+ok   each is a cluster of its own, beside itself and ASCII
+ok   a control, a combining mark, a joiner, an emoji and a selector are not simple
+ok   1500 writes: the simple path and the cluster path fill the same cells
+
+fuzz: 29 passed, 0 failed

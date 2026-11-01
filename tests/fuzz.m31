@@ -20,6 +20,7 @@
 
 import random;
 import term;
+import text.unicode;
 import app.TUI_app;
 import app.TUI_diff;
 import core.TUI_buffer;
@@ -27,6 +28,7 @@ import core.TUI_geometry;
 import core.TUI_keys;
 import core.TUI_mouse;
 import core.TUI_osc;
+import core.TUI_text;
 import core.TUI_style;
 import core.TUI_width;
 import tests.TST_emulator;
@@ -317,11 +319,82 @@ void link_rows(Tally tally) {
     check(tally, "full: the link adds only its own bytes (open before the cell, close after the cell)", str(with_link - without), str(TUI_osc.hyperlink_open("https://example.com/b").size() + TUI_osc.HYPERLINK_CLOSE.size));
 }
 
+void simple_text(Tally tally, random.Seeded dice) {
+    head("text written from its code points (set_str's simple path)");
+    List<int> starts = [0x20, 0xA0, 0x250, 0x2E80, 0x3000, 0x4E00, 0xAC00, 0xFF00];
+    List<int> ends = [0x7F, 0x250, 0x300, 0x3000, 0x4E00, 0xA000, 0xD7B0, 0xFF61];
+    int claimed = 0;
+    int wrong_width = 0;
+    int not_one_cluster = 0;
+    str first = "";
+    for (int range in 0 .. starts.size()) {
+        for (int code in starts[range] .. ends[range]) {
+            int width = TUI_buffer.simple_width(code);
+            if (width == 0) {
+                continue;
+            }
+            claimed = claimed + 1;
+            str one = str.from_chars([code]);
+            if (TUI_text.cluster_columns(one) != width) {
+                wrong_width = wrong_width + 1;
+                first = "U+" + str(code);
+            }
+            if (unicode.graphemes(one + one).size() != 2 || unicode.graphemes(one + "a").size() != 2 || unicode.graphemes("a" + one).size() != 2) {
+                not_one_cluster = not_one_cluster + 1;
+                first = "U+" + str(code);
+            }
+        }
+    }
+    check(tally, "more than 30000 code points are called simple", str(claimed > 30000), "true");
+    check(tally, "each is drawn in the width simple_width says (library width)" + first, str(wrong_width), "0");
+    check(tally, "each is a cluster of its own, beside itself and ASCII" + first, str(not_one_cluster), "0");
+    check(tally, "a control, a combining mark, a joiner, an emoji and a selector are not simple", str(TUI_buffer.simple_width(0x9) + TUI_buffer.simple_width(0x301) + TUI_buffer.simple_width(0x200D) + TUI_buffer.simple_width(0x1F600) + TUI_buffer.simple_width(0xFE0F) + TUI_buffer.simple_width(0x3099)), "0");
+    // the same text, written by the simple path and by the cluster path (a trailing zero-width space sends the
+    // text down the cluster path and is dropped), lands in the same cells: clipped at either edge, and over what was there
+    List<str> pool = ["abc", "caf\u{E9} Stra\u{DF}e", "\u{65E5}\u{672C}\u{8A9E}", "x\u{65E5}y\u{672C}", "\u{D55C}\u{AD6D}\u{C5B4}", "\u{3072}\u{30AB}\u{FF21}\u{FF22}", "mixed \u{4E2D}\u{6587} text 123"];
+    int different = 0;
+    str where = "";
+    for (int round in 0 .. 1500) {
+        str text = pool[dice.integer(0, pool.size() - 1)];
+        int x = dice.integer(0, 14);
+        int y = dice.integer(0, 2);
+        int max = dice.integer(-1, 12);
+        TUI_buffer.Buffer fast = TUI_buffer.Buffer.sized(16, 3);
+        TUI_buffer.Buffer slow = TUI_buffer.Buffer.sized(16, 3);
+        for (int k in 0 .. dice.integer(0, 3)) {
+            str under = pool[dice.integer(0, pool.size() - 1)];
+            int under_x = dice.integer(0, 12);
+            fast.set_str(under_x, y, under, TUI_style.Style(foreground: TUI_style.Colour.Indexed(3)));
+            slow.set_str(under_x, y, under, TUI_style.Style(foreground: TUI_style.Colour.Indexed(3)));
+        }
+        TUI_style.Style style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(5));
+        int taken_fast = fast.set_str(x, y, text, style, max: max);
+        int taken_slow = slow.set_str(x, y, text + "\u{200B}", style, max: max);
+        bool is_same = taken_fast == taken_slow;
+        for (int row in 0 .. 3) {
+            if (fast.row_text(row) != slow.row_text(row)) {
+                is_same = false;
+            }
+            for (int column in 0 .. 16) {
+                if (fast.width_at(column, row) != slow.width_at(column, row) || fast.style_at(column, row) != slow.style_at(column, row)) {
+                    is_same = false;
+                }
+            }
+        }
+        if (!is_same) {
+            different = different + 1;
+            where = " e.g. [" + text + "] at " + str(x) + "," + str(y) + " max " + str(max);
+        }
+    }
+    check(tally, "1500 writes: the simple path and the cluster path fill the same cells" + where, str(different), "0");
+}
+
 Tally tally = Tally();
 random.Seeded dice = random.seeded(20261101);
 decoder(tally, dice);
 parsers(tally, dice);
 hostile_text(tally, dice);
 link_rows(tally);
+simple_text(tally, dice);
 print("");
 print("fuzz: " + str(tally.pass) + " passed, " + str(tally.fail) + " failed");

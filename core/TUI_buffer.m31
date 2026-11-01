@@ -773,6 +773,15 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
     if (x >= box.x && is_ascii_run(text, limit + 1)) {
         return fast_ascii(x, y, text, packed_style, limit);
     }
+    if (x >= box.x && !table.is_ascii_lines) {
+        // text of printable ASCII, Latin letters, ideographs, kana, Hangul syllables and fullwidth forms:
+        // every character is a cluster of its own, in a width no terminal disputes, so it is written
+        // from its code points, with no cluster strings
+        int taken = set_simple(x, y, text, packed_style, limit);
+        if (taken >= 0) {
+            return taken;
+        }
+    }
     int column = x;
     int used = 0;
     int last = -1;
@@ -849,6 +858,42 @@ str Buffer.safe_symbol(str symbol) {
         return TUI_width.ascii_for(symbol);
     }
     return symbol;
+}
+
+/// `set_str` for a text of which every character is `simple_width` (a cluster of its own, in the width it answers):
+/// the columns taken, or -1 when some character is not, and nothing was written.
+int Buffer.set_simple(int x, int y, str text, int packed_style, int limit) {
+    List<int> points = text.chars();
+    int count = points.size();
+    for (int i in 0 .. count) {
+        if (simple_width(points[i]) == 0) {
+            return -1;
+        }
+    }
+    int base = at(x, y);
+    int used = 0;
+    for (int i in 0 .. count) {
+        int code = points[i];
+        int width = 1;
+        if (code >= 0x2E80) {
+            width = 2;
+        }
+        if (used + width > limit) {
+            if (limit - used == 1) {
+                put_cell(x + used, base + used, BLANK_CELL, packed_style);
+                used = used + 1;
+            }
+            break;
+        }
+        if (width == 1) {
+            put_cell(x + used, base + used, code | ONE_COLUMN, packed_style);
+        } else {
+            put_cell(x + used, base + used, code | (2 << WIDTH_SHIFT), packed_style);
+            put_cell(x + used + 1, base + used + 1, 0, packed_style);
+        }
+        used = used + width;
+    }
+    return used;
 }
 
 int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
@@ -1294,6 +1339,27 @@ str control_picture(str cluster) {
 /// the last cell written, and an ASCII byte there is a one-column cluster
 /// the slow path stops at too -- so the two agree exactly, and a long line
 /// clipped to a narrow column is no longer scanned to its end.
+/// The columns of `code` when it is a character that is a grapheme cluster of its own, drawn in that many columns
+/// by every terminal and not in any class the width calibration measures: printable ASCII and the Latin letters
+/// U+00C0..U+024F (but not U+00D7 and U+00F7, whose width some terminals dispute) are 1; the ideographs
+/// U+4E00..U+9FFF, hiragana and katakana letters, Hangul syllables and fullwidth forms are 2. 0 for any other
+/// character: a control, a combining mark, an emoji, a joiner, a selector, whatever has a rule of its own.
+pub int simple_width(int code) {
+    if (code >= 0x20 && code < 0x7F) {
+        return 1;
+    }
+    if (code >= 0xC0 && code <= 0x24F) {
+        if (code == 0xD7 || code == 0xF7) {
+            return 0;
+        }
+        return 1;
+    }
+    if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3041 && code <= 0x3096) || (code >= 0x30A1 && code <= 0x30FA) || (code >= 0xAC00 && code <= 0xD7A3) || (code >= 0xFF01 && code <= 0xFF60)) {
+        return 2;
+    }
+    return 0;
+}
+
 bool is_ascii_run(str text, int upto) {
     int index = 0;
     int byte_count = text.size();
