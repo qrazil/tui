@@ -4,6 +4,40 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## 0.16.0
+
+A review of the renderer and the input path against ratatui (frame cost, output bytes, idle behaviour, latency) with a
+reproducible suite in `bench/`; the numbers and what is compiler-bound are in `docs/BENCHMARKS.md`. On ASCII frames the
+library was already about 0.5-0.8x ratatui's time (and fewer bytes); what the suite found is below. The bytes written
+are unchanged: a hash over 4800 random frames (`full`, `diff`, `diff_scrolled`, `diff_scrolled_in_place`; ASCII, CJK,
+emoji, combining marks, links, styles, scrolls) is the same before and after each change, and `tests/*.out` did not move.
+No bug was found in the input decoder, the reply parsers, the pointer or the handling of hostile text (new
+`tests/fuzz.m31`); two exit-path and latency gaps that are the compiler's are recorded in `docs/FRICTION.md` section 31.
+
+### Changed
+
+- **A frame with one hyperlink was drawn at the speed of 0.14.0.** `has_links` was a property of the whole buffer, so one
+  link anywhere sent every row of `full` and `diff` (and every `fill` and `set_str` into that buffer) down the per-cell
+  path that 0.15.0 had replaced with runs. The buffer now keeps a flag per row (`link_rows`, moved by `scrolled`,
+  `scroll_rows` and `copy`, dropped by `clear`) and the renderer asks the row. `full` of 200x50 with one link:
+  1893 -> ~640 us; one-cell diff with a link: 579 -> ~410 us; frames without a link unchanged.
+- **`set_str` of Latin, ideograph, kana, Hangul and fullwidth text writes cells from code points** (`simple_width`), with
+  no cluster strings; anything with a control, combining mark, joiner, emoji or selector takes the old path for the whole
+  string. A finder keystroke in CJK names 375 -> 224 us; the emoji-and-CJK frame 1.2-1.3x.
+- **`TUI_osc.hyperlink_uri`** returns a printable-ASCII URI as it is (it built a list of one-character strings): 5.7 -> 0.6 us
+  per `hyperlink_open`.
+
+### Added
+
+- `Buffer.row_may_link(y)` and `TUI_buffer.simple_width(code)`.
+- `bench/` -- `bench.m31` and `ratatui/` (the same scenarios in both), `idle.m31` and `idle.py` (start-up, RSS, idle CPU,
+  key-to-frame and resize-to-frame on a pty), `run.sh`, `summarize.py`, raw results of 0.15.0 and 0.16.0 on m31 v0.9.0 and
+  v0.12.0. `docs/BENCHMARKS.md` is the method, the numbers, the ratios and the ranked list of what is left.
+- `tests/fuzz.m31`: 6000 random byte strings through `term.decode`, concatenation-of-sequences property, a 1 MB paste, the
+  reply parsers and the pointer on junk, 400 frames of hostile text against the ideal emulator, the link-row flags, and
+  `simple_width` against the library's width and grapheme clusters for all 33,000 code points it claims.
+- `docs/FRICTION.md` section 31: the compiler requests the review produced, each with its evidence.
+
 ## 0.15.0
 
 Speed: the renderer and the buffer were profiled on the emitted C (`docs/FRICTION.md` §30), and the cost was calls, not

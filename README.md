@@ -487,7 +487,7 @@ loop.run_with(view, on_event, on_tick, on_mouse);
 
 A trap, `os.exit` or a signal restores the terminal's raw mode but not these
 modes (`docs/FRICTION.md` §23), so a program killed that way leaves the mouse
-on until the shell is reset. `loop.leave_sequence()` is the exact bytes a
+on until the shell is reset (measured again in 0.16.0: SIGTERM, SIGINT and SIGHUP write nothing on the way out, `docs/BENCHMARKS.md`). `loop.leave_sequence()` is the exact bytes a
 normal exit writes, for a program that wants to write them itself.
 
 `examples/widgets.m31` uses all of it: a tab bar, a chart with a hover
@@ -672,11 +672,12 @@ python, sh or node for a file with no known extension.
     widgets/             the fourteen ready-made widgets built on core
     app/                 the diffing renderer (TUI_diff) and the application loop (TUI_app)
     examples/            demo, browse, widgets, features, bench: programs, built by scripts/build.sh
-    tests/               test.sh (the one entry point), tests.m31, widgets.m31, syntax.m31, terminal.m31 and their .out files;
+    tests/               test.sh (the one entry point), tests.m31, widgets.m31, syntax.m31, terminal.m31, fuzz.m31 and their .out files;
                          TST_emulator.m31 (a terminal emulator for the tests), emoji_sequences.txt (Unicode's table)
     CHANGELOG.md         what each version added, changed and fixed
     scripts/             build.sh
-    docs/                FRICTION.md, the notes from building this on m31
+    docs/                FRICTION.md, the notes from building this on m31; BENCHMARKS.md, the numbers against ratatui
+    bench/               the benchmark programs (m31 and ratatui), the runner and the raw results (bash bench/run.sh)
 
 Folders are for finding files. Module names stay globally unique and keep the
 `TUI_` prefix; `core/` never imports `widgets/` or `app/`, and `widgets/` never

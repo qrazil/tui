@@ -15,7 +15,9 @@ import core.TUI_buffer;
 import app.TUI_diff;
 import core.TUI_style;
 import core.TUI_geometry;
+import core.TUI_text;
 import core.TUI_widget;
+import core.TUI_width;
 
 const int W = 200;
 const int H = 50;
@@ -238,12 +240,31 @@ int Scene.step() {
     return 0;
 }
 
+/// The table of a terminal that agrees with the library about every class (what `Loop.calibrate_width` makes of
+/// the answers of Alacritty, kitty or rio): its clusters are certain, and the renderer diffs them per cell.
+TUI_width.Table agreeing_table() {
+    TUI_width.Probe probe = TUI_width.probe(true);
+    probe.did_take("\x1b[2;2R".to_bytes());
+    probe.did_take("\x1b[2;3R".to_bytes());
+    for (int class_id in 0 .. TUI_width.CLASS_COUNT) {
+        probe.did_take(("\x1b[2;" + str(TUI_text.width(TUI_width.sample(class_id)) + 1) + "R").to_bytes());
+    }
+    return probe.table();
+}
+
 void run(str pick, str name, int id, int kind) {
     if (pick != "" && pick != name) {
         return;
     }
     Scene scene = Scene();
     scene.id = id;
+    if (id >= 14) {
+        // the same frames on a terminal whose widths were measured and agree
+        scene.id = id - 7;
+        TUI_width.Table table = agreeing_table();
+        scene.shown.table = table;
+        scene.next.table = table;
+    }
     for (int k in 0 .. 8) {
         scene.lists.push(matches_of(kind, scene.queries[k]));
     }
@@ -304,3 +325,5 @@ run(pick, "paint-grid", 10, 0);
 run(pick, "paint-finder", 11, 0);
 run(pick, "links-diff-1cell", 12, 0);
 run(pick, "links-full", 13, 0);
+run(pick, "wide-full-measured", 14, 0);
+run(pick, "wide-diff-1row-measured", 15, 0);

@@ -42,6 +42,9 @@ def main():
             print("| %s | %.1f | %.1f | %.1f | %.1f | %.2fx | %d | %d |" % (name, mm, mp, rm, rp, mm / rm, mb, rb))
         else:
             print("| %s | %.1f | %.1f | n/a | n/a | | %d | |" % (name, mm, mp, mb))
+    extra = read_render(d + "/render-m31-measured.txt")
+    for name in extra:
+        print("| %s | %.1f | %.1f | (the wide frames with a measured, agreeing width table: bytes only fall, see the text) | | | %d | |" % (name, med([x[0] for x in extra[name]]), med([x[1] for x in extra[name]]), extra[name][-1][3]))
     print()
     print("(median of the per-round medians, p95 of the per-round p95s; each round is 40 samples of ~10 ms)")
     print()

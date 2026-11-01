@@ -1,0 +1,9 @@
+ROUND 1
+RESULT wide-full-measured 1888.78 2181.53 1830.03 13955
+RESULT wide-diff-1row-measured 1387.69 1459.54 1345.08 234
+ROUND 2
+RESULT wide-full-measured 1937.01 2244.15 1827.99 13955
+RESULT wide-diff-1row-measured 1453.20 1515.92 1345.67 234
+ROUND 3
+RESULT wide-full-measured 1959.64 2244.56 1831.71 13955
+RESULT wide-diff-1row-measured 1379.54 1646.69 1331.57 234

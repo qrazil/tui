@@ -954,3 +954,42 @@ on a machine that was loaded, so read them to within 15%.
 10. **Module state would have let the buffers share one cluster table.** Two buffers compared cell by cell (previous and
     next frame) cannot share ids for multi-code-point clusters without an object both hold; the library keeps a table
     per buffer and compares clusters as strings, which is correct and rare. (Known, §14; not a request.)
+
+---
+
+## 31. 0.16.0: what the benchmark against ratatui asked of the compiler (m31 v0.9.0 and v0.12.0)
+
+`bench/` runs the same scenarios in this library and in ratatui and an empty application on a pty (`docs/BENCHMARKS.md`).
+On a frame the library is now faster than ratatui on ASCII and slower on emoji and wide text; the rest of what the
+comparison found is below. The evidence is from both v0.9.0 and v0.12.0 (public release assets, checksums verified), on
+Linux x86-64, and was the same on both unless a line says otherwise. Each item is a request, with how to see it.
+
+1. **An idle program wakes about once a millisecond.** `timer.sleep_ms(3000)` alone, in a program of one statement: read
+   `voluntary_ctxt_switches` of `/proc/<pid>/status` twice, a second apart: 503 and 1443 (v0.9.0), 503 and 1439 (v0.12.0), about
+   940 a second on the main thread, with 14 other threads parked. A program waiting in `term.Reader.read(100000)`
+   (a 100 s timeout) does the same. An empty `Loop.run` therefore uses 10-20 ms of CPU per second (1-2 % of a core, measured
+   over 30 runs of one idle second each, `bench/idle.py`); the same program in ratatui (crossterm `event::poll`) uses 0. A
+   terminal application is idle nearly always, and this is battery on a laptop. The request: when every green thread is parked
+   the scheduler should sleep in one `epoll_wait`/`kevent` with the timeout of the next timer (or none), not on a
+   millisecond tick.
+2. **There is no resize event.** `runtime/sys.h` says why (no signal handler in the layer). The loop asks for the size after every
+   read; SIGWINCH to the frame in the new size is 100.4 ms median and 100.7 ms p95 over 120 resizes (ratatui: 0.6 ms), which looks
+   like a 100 ms slice inside `term.Reader.read` (`term`'s source is in the compiler). A user dragging a window edge sees
+   the frame lag by a tenth of a second per step. The request: a way to be told (a `term.Reader` event `Resize`, or a
+   `signal.notify(SIGWINCH)` that wakes a blocked `read`), and a `read` that sleeps for its whole timeout in one poll.
+3. **A signal leaves the terminal wrong.** On a pty, an app in the alternate screen with mouse reporting on, sent SIGTERM, SIGHUP or
+   SIGINT, exits (status -15, -1, -2) having written nothing: alternate screen, hidden cursor, mouse and bracketed-paste modes
+   stay on (`q` writes the leave sequence, which ends `\e[?7h\e[?25h\e[0m\e[?1049l`; the signals write nothing). `Session.on_exit`'s bytes are known before the signal;
+   the request is a handler (installed by `term.raw`, `SA_RESETHAND`) that `write(2)`s that fixed buffer, restores termios and
+   re-raises. FRICTION section 23 asked for the same; it is still the case in v0.12.0.
+4. **`unicode.graphemes`, `unicode.width`, `str.chars` allocate per cluster** (section 8, now with a profile). The 2.6-2.9x gap to
+   ratatui on emoji and CJK frames is this: in `wide-diff-1row` `class_of` 10 %, `rc_dec` 8 %, `rt_list_push` 4 %,
+   `cluster_starts` 4 %, `str.chars` 2 % and a third of the samples in libc `malloc`/`free`/`memcpy`. 0.16.0 avoids it for Latin,
+   ideographs, kana, Hangul and fullwidth text by reading `str.chars()` (one list, no strings), which is 1.67x on a CJK finder
+   keystroke. The request is the cursor form of section 8: iterate clusters as `(start, end)` byte offsets, and
+   `unicode.width_of(int code_point)`; with them the cluster path would allocate nothing.
+5. **The v0.12.0 compiler is 5-12 % faster than v0.9.0 on this library** (same C, interleaved runs: full 673 -> 591 us, diff-1cell
+   460 -> 415, wide-full 2013 -> 1768). Nothing to ask; recorded so the 0.15.0 numbers are not compared with these.
+6. **The command line moved and the old spelling warns**: `--emit-c`, `-o`, `fmt` print `deprecated, use -emit-c / --out / -fmt` on
+   v0.12.0 (and v0.9.0). `scripts/build.sh` and `tests/test.sh` still use them. Not a request; a reminder that the next release
+   may remove them.
