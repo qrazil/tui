@@ -310,6 +310,7 @@ fn main() {
     run("diff-1cell", 1, 0);
     run("diff-0", 2, 0);
     run("finder-ascii-key", 3, 0);
+    run("finder-cjk-key", 3, 1);
     run("scroll10k-diff", 4, 0);
     run("wide-full", 7, 0);
     run("wide-diff-1row", 8, 0);

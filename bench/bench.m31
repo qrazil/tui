@@ -141,7 +141,6 @@ type Scene {
     pub List<TUI_buffer.Buffer> sized_buffers = [];
 }
 
-
 /// One frame of scenario `id`; answers the bytes written.
 int Scene.step() {
     counter = counter + 1;
@@ -295,6 +294,7 @@ run(pick, "full-200x50", 0, 0);
 run(pick, "diff-1cell", 1, 0);
 run(pick, "diff-0", 2, 0);
 run(pick, "finder-ascii-key", 3, 0);
+run(pick, "finder-cjk-key", 3, 1);
 run(pick, "scroll10k-diff", 4, 0);
 run(pick, "scroll10k-diff_scrolled", 5, 0);
 run(pick, "wide-full", 7, 0);
