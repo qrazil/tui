@@ -135,6 +135,10 @@ pub type Buffer {
     /// allocate one per ask): `glyph_cache[n]` is the glyph whose string is `text_cache[n]`.
     List<int> glyph_cache = [];
     List<str> text_cache = [];
+    /// Per row: 1 when a cell of that row has had a link (`link`), and 0 when none has, so a row of 0 has
+    /// no link in any cell and the renderer takes its fast path over it. Conservative: a link that was
+    /// overwritten leaves its row at 1. Empty when `links` is.
+    List<int> link_rows = [];
 }
 
 /// A blank `width` by `height` buffer with its corner at the origin.
@@ -397,7 +401,7 @@ pub bool Buffer.is_same_row(Buffer other, int y) {
         }
         index = index + 1;
     }
-    if (links.size() > 0 || other.links.size() > 0) {
+    if (row_may_link(y) || other.row_may_link(y)) {
         int from = (y - box.y) * box.width;
         for (int cell in 0 .. box.width) {
             if (link_of(from + cell) != other.link_of(from + cell)) {
@@ -421,7 +425,7 @@ pub int Buffer.tail_start(int y) {
     List<int> my_styles = styles;
     int base = (y - box.y) * box.width;
     int column = box.width;
-    bool has_links = links.size() > 0;
+    bool has_links = row_may_link(y);
     while (column > 0) {
         int index = base + column - 1;
         if (my_styles[index] != TUI_style.RESET_STYLE || (mine[index] & GLYPH_MASK) != 32 || (has_links && links[index] != "")) {
@@ -439,7 +443,7 @@ pub bool Buffer.is_plain_blank(int x, int y, int count) {
         return false;
     }
     int base = at(x, y);
-    bool has_links = links.size() > 0;
+    bool has_links = row_may_link(y);
     for (int cell in 0 .. count) {
         int index = base + cell;
         if (styles[index] != TUI_style.RESET_STYLE || cells[index] != BLANK_CELL || (has_links && links[index] != "")) {
@@ -533,7 +537,7 @@ pub int Buffer.next_change(Buffer previous, int y, int from, int until) {
     List<int> theirs = previous.cells;
     List<int> my_styles = styles;
     List<int> their_styles = previous.styles;
-    bool has_links = links.size() > 0 || previous.links.size() > 0;
+    bool has_links = row_may_link(y) || previous.row_may_link(y);
     int base = (y - box.y) * box.width - box.x;
     int index = base + from;
     int end = base + until;
@@ -856,7 +860,7 @@ int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
     // there is) the write is two stores; anything else (half of a wide pair, a cell with a link)
     // goes through `put_cell` and its repairs.
     int base = at(x, y);
-    if (byte_count < 3 || links.size() > 0) {
+    if (byte_count < 3 || row_may_link(y)) {
         for (int i in 0 .. byte_count) {
             put_cell(x + i, base + i, text.byte_at(i) | ONE_COLUMN, packed_style);
         }
@@ -886,7 +890,7 @@ void Buffer.put_last(int x, int index, int cell, int packed_style) {
 
 /// Write `cell` (one column wide) into `count` cells from list index `index`, column `x` on.
 void Buffer.put_run(int x, int index, int count, int cell, int packed_style) {
-    if (count < 3 || links.size() > 0) {
+    if (count < 3 || index_may_link(index)) {
         for (int offset in 0 .. count) {
             put_cell(x + offset, index + offset, cell, packed_style);
         }
@@ -958,6 +962,7 @@ pub void Buffer.clear() {
     styles = [0; cell_count];
     clusters = [];
     links = [];
+    link_rows = [];
 }
 
 /// Is row `y` of this buffer cell for cell the same as row `other_y` of
@@ -975,11 +980,12 @@ pub bool Buffer.is_row_like(Buffer other, int y, int other_y) {
     int index = (y - box.y) * box.width;
     int other_index = (other_y - other.box.y) * box.width;
     int end = index + box.width;
+    bool has_links = row_may_link(y) || other.row_may_link(other_y);
     while (index < end) {
         if (is_cell_different(other, index, other_index)) {
             return false;
         }
-        if ((links.size() > 0 || other.links.size() > 0) && link_of(index) != other.link_of(other_index)) {
+        if (has_links && link_of(index) != other.link_of(other_index)) {
             return false;
         }
         index = index + 1;
@@ -1008,6 +1014,7 @@ pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
         out.cells = cells.slice(0, cells.size());
         out.styles = styles.slice(0, styles.size());
         out.links = links.slice(0, links.size());
+        out.link_rows = link_rows.slice(0, link_rows.size());
         return out;
     }
     if (links.size() > 0) {
@@ -1036,6 +1043,9 @@ pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
             if (links.size() > 0) {
                 out.links[to + column] = links[from + column];
             }
+        }
+        if (links.size() > 0) {
+            out.link_rows[row] = link_rows[source];
         }
     }
     return out;
@@ -1088,6 +1098,9 @@ void Buffer.copy_row(int from_row, int to_row) {
             links[to + column] = links[from + column];
         }
     }
+    if (links.size() > 0) {
+        link_rows[to_row] = link_rows[from_row];
+    }
 }
 
 void Buffer.blank_row(int row) {
@@ -1098,6 +1111,9 @@ void Buffer.blank_row(int row) {
         if (links.size() > 0) {
             links[to + column] = "";
         }
+    }
+    if (links.size() > 0) {
+        link_rows[row] = 0;
     }
 }
 
@@ -1111,7 +1127,25 @@ str Buffer.link_of(int index) {
 void Buffer.make_links() {
     if (links.size() == 0) {
         links = [""; cells.size()];
+        link_rows = [0; box.height];
     }
+}
+
+/// Can row `y` have a link in some cell (`link_rows`)? False for a row that has none, and for every row of a
+/// buffer that never had a link. **Traps** outside the buffer.
+pub bool Buffer.row_may_link(int y) {
+    if (links.size() == 0) {
+        return false;
+    }
+    return link_rows[y - box.y] != 0;
+}
+
+/// `row_may_link` for the row of the cell at list index `index`.
+bool Buffer.index_may_link(int index) {
+    if (links.size() == 0) {
+        return false;
+    }
+    return link_rows[index / box.width] != 0;
 }
 
 /// Does any cell of this buffer carry a hyperlink? What the renderer asks before
@@ -1143,6 +1177,9 @@ pub void Buffer.link(TUI_geometry.Rect rect, str uri) {
     }
     make_links();
     for (int y in clipped.y .. clipped.bottom()) {
+        if (safe.size() > 0) {
+            link_rows[y - box.y] = 1;
+        }
         for (int column in clipped.x .. clipped.right()) {
             links[at(column, y)] = safe;
         }

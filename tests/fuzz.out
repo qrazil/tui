@@ -20,4 +20,15 @@ ok   400 hostile frames: the terminal obeys nothing it should not, and shows the
 ok   hyperlink_uri of control bytes
 ok   hyperlink_open has no raw ESC but the framing
 
-fuzz: 15 passed, 0 failed
+== which rows have a link ======================================
+ok   a buffer that never had a link: no row may link
+ok   the linked row may link
+ok   the row above does not
+ok   the row below does not
+ok   scrolled up by two: the link is in row 3
+ok   a copy keeps it
+ok   scrolled down by three in place: the link is in row 8
+ok   clear: no row may link
+ok   full: the link adds only its own bytes (open before the cell, close after the cell)
+
+fuzz: 24 passed, 0 failed

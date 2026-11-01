@@ -285,10 +285,43 @@ void hostile_text(Tally tally, random.Seeded dice) {
     check(tally, "hyperlink_open has no raw ESC but the framing", str(TUI_osc.hyperlink_open("x\x1b]8;;evil\x1b\\").to_bytes().size()), str("\x1b]8;id=".size() + str(TUI_osc.hyperlink_id(TUI_osc.hyperlink_uri("x\x1b]8;;evil\x1b\\"))).size() + 1 + TUI_osc.hyperlink_uri("x\x1b]8;;evil\x1b\\").size() + 2));
 }
 
+void link_rows(Tally tally) {
+    head("which rows have a link");
+    TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(30, 12);
+    for (int y in 0 .. 12) {
+        buffer.set_str(0, y, "row " + str(y) + " of the frame with some text", TUI_style.Style());
+    }
+    check(tally, "a buffer that never had a link: no row may link", str(buffer.row_may_link(3)), "false");
+    buffer.link(TUI_geometry.Rect(2, 5, 6, 1), "https://example.com/a");
+    check(tally, "the linked row may link", str(buffer.row_may_link(5)), "true");
+    check(tally, "the row above does not", str(buffer.row_may_link(4)), "false");
+    check(tally, "the row below does not", str(buffer.row_may_link(6)), "false");
+    TUI_buffer.Buffer moved = buffer.scrolled(0, 11, 2);
+    check(tally, "scrolled up by two: the link is in row 3", str(moved.row_may_link(3)) + str(moved.row_may_link(5)), "truefalse");
+    TUI_buffer.Buffer copied = buffer.copy();
+    check(tally, "a copy keeps it", str(copied.row_may_link(5)) + str(copied.row_may_link(4)), "truefalse");
+    buffer.scroll_rows(0, 11, -3);
+    check(tally, "scrolled down by three in place: the link is in row 8", str(buffer.row_may_link(8)) + str(buffer.row_may_link(5)), "truefalse");
+    buffer.clear();
+    check(tally, "clear: no row may link", str(buffer.row_may_link(8)), "false");
+    // a frame with a link in one row writes the other rows as it would without it
+    TUI_buffer.Buffer plain = TUI_buffer.Buffer.sized(40, 6);
+    TUI_buffer.Buffer linked = TUI_buffer.Buffer.sized(40, 6);
+    for (int y in 0 .. 6) {
+        plain.set_str(0, y, "line " + str(y) + " has plain text in it", TUI_style.Style(foreground: TUI_style.Colour.Indexed(y + 1)));
+        linked.set_str(0, y, "line " + str(y) + " has plain text in it", TUI_style.Style(foreground: TUI_style.Colour.Indexed(y + 1)));
+    }
+    linked.link(TUI_geometry.Rect(0, 2, 4, 1), "https://example.com/b");
+    int with_link = TUI_diff.full(linked, TUI_style.Depth.Ansi256).size();
+    int without = TUI_diff.full(plain, TUI_style.Depth.Ansi256).size();
+    check(tally, "full: the link adds only its own bytes (open before the cell, close after the cell)", str(with_link - without), str(TUI_osc.hyperlink_open("https://example.com/b").size() + TUI_osc.HYPERLINK_CLOSE.size));
+}
+
 Tally tally = Tally();
 random.Seeded dice = random.seeded(20261101);
 decoder(tally, dice);
 parsers(tally, dice);
 hostile_text(tally, dice);
+link_rows(tally);
 print("");
 print("fuzz: " + str(tally.pass) + " passed, " + str(tally.fail) + " failed");

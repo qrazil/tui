@@ -76,9 +76,11 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     out.extend(AUTOWRAP_OFF.to_bytes());
     TUI_geometry.Rect area = next.area();
     int pen = TUI_style.RESET_STYLE;
-    bool has_links = next.has_links();
     str link = "";
     for (int y in area.y .. area.bottom()) {
+        // a row with no link in any cell takes the run path whatever the other rows hold (but not
+        // while a link is still open from the row before: that cell closes it, as it always did)
+        bool has_links = next.row_may_link(y);
         move_to(out, area.x, y);
         int tail = tail_start(next, y);
         int x = area.x;
@@ -96,7 +98,7 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
-            if (has_links) {
+            if (has_links || link != "") {
                 link = write_link(out, link, next.link_at(x, y));
             } else {
                 // a run of cells in the pen's style that need nothing but their bytes (printable ASCII,
@@ -215,7 +217,6 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
     }
     bytes out = [];
     int pen = TUI_style.RESET_STYLE;
-    bool has_links = previous.has_links() || next.has_links();
     str link = "";
     int current_x = -1;
     int current_y = -1;
@@ -226,6 +227,8 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
         if (previous.is_same_row(next, y)) {
             continue;
         }
+        // links are looked at in the rows that have one (in either frame), not in every row of a frame that has one anywhere
+        bool has_links = previous.row_may_link(y) || next.row_may_link(y);
         if (pen != TUI_style.RESET_STYLE) {
             // every row starts plain: a style a terminal did not take cannot run on into it
             link = write_link(out, link, "");
@@ -263,7 +266,7 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             if (current_y != y || current_x < 0 || current_x > x) {
                 move_to(out, x, y);
             } else if (current_x < x) {
-                cross(out, next, current_x, x, y, pen, link, has_links);
+                cross(out, next, current_x, x, y, pen, link, has_links || link != "");
             }
             current_y = y;
             if (x >= tail && area.right() - x >= ERASE_WORTH) {
@@ -275,7 +278,7 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
                 continue;
             }
             pen = write_style(out, pen, next.style_at(x, y), depth);
-            if (has_links) {
+            if (has_links || link != "") {
                 link = write_link(out, link, next.link_at(x, y));
             } else {
                 // a run of changed cells in the pen's style that need nothing but their bytes is just those bytes
