@@ -1,0 +1,49 @@
+// An empty application, for the start-up, memory, idle-CPU, input-latency and resize-latency measurements
+// (bench/idle.py runs it on a pty; bench/ratatui/src/bin/idle.rs is the same program in ratatui).
+//
+// It draws "READY-p-200x50" in the corner (the letter is advanced by `x`, which redraws; then the size), `q` quits.
+// The run is the library's defaults (a 250 ms tick, the width calibration on unless TUI_WIDTH_PROBE=off).
+
+import term;
+import core.TUI_buffer;
+import core.TUI_geometry;
+import core.TUI_style;
+import app.TUI_app;
+
+type Idle {
+    pub int count = 0;
+}
+
+void Idle.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
+    buffer.set_str(0, 0, "READY-" + "pstuvw".substr(count % 6, count % 6 + 1) + "-" + str(area.width) + "x" + str(area.height), TUI_style.Style());
+}
+
+TUI_app.Action Idle.handle(term.Event event) {
+    match (event) {
+        case Key(term.Key key): {
+            if (key.code.to_str() == "q") {
+                return TUI_app.Action.Quit;
+            }
+            if (key.code.to_str() == "x") {
+                count = count + 1;
+                return TUI_app.Action.Redraw;
+            }
+        }
+        case Mouse(term.Mouse report): {
+        }
+        case Paste(str pasted): {
+        }
+        case Unknown(bytes raw): {
+        }
+    }
+    return TUI_app.Action.Continue;
+}
+
+Idle idle = Idle();
+TUI_app.Loop loop = TUI_app.Loop();
+match (loop.run(idle, idle)) {
+    case Ok(int code): {
+    }
+    case Err(term.Error error): {
+    }
+}
