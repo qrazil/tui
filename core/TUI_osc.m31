@@ -105,6 +105,21 @@ pub str hyperlink_uri(str uri) {
     if (uri.size() == 0) {
         return "";
     }
+    // nearly every URI is printable ASCII throughout, and then it is its own safe form
+    bool is_plain = true;
+    for (int index in 0 .. uri.size()) {
+        int code = uri.byte_at(index);
+        if (code <= 32 || code >= 127) {
+            is_plain = false;
+            break;
+        }
+    }
+    if (is_plain) {
+        if (uri.size() > MAX_URI) {
+            return "";
+        }
+        return uri;
+    }
     List<str> parts = [];
     for (int index in 0 .. uri.size()) {
         int code = uri.byte_at(index);
