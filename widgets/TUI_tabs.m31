@@ -1,53 +1,53 @@
-// A row of tabs: one is selected, some are disabled, some can be closed, and
-// when they do not all fit the row scrolls.
-//
-// API
+/* A row of tabs: one is selected, some are disabled, some can be closed, and
+ * when they do not all fit the row scrolls.
+ *
+ * API */
 // ---
-//   TUI_tabs.Tab(title, is_disabled:, is_closable:)    one tab
-//   TUI_tabs.Tabs(items, selected:, ...)               the row
-//   tabs.did_select(i) / did_select_next() / did_select_previous() / did_select_first() / did_select_last()   -> bool, did the selection change
-//   tabs.add(tab) / close(i)                           edit the list; the selection follows
-//   tabs.current()                                     -> Option<Tab>
-//   tabs.handle(event)  -> TabOutcome                  Left/Right/Home/End, Ctrl-W, Alt-1..9
-//   tabs.hit(area, x, y) -> Hit                        what is under a cell
-//   tabs.handle_mouse(gesture, area) -> TabOutcome     click, close box, overflow marks, wheel
-//   tabs.render(buffer, area)
-//
+/*   TUI_tabs.Tab(title, is_disabled:, is_closable:)    one tab
+ *   TUI_tabs.Tabs(items, selected:, ...)               the row
+ *   tabs.did_select(i) / did_select_next() / did_select_previous() / did_select_first() / did_select_last()   -> bool, did the selection change
+ *   tabs.add(tab) / close(i)                           edit the list; the selection follows
+ *   tabs.current()                                     -> Option<Tab>
+ *   tabs.handle(event)  -> TabOutcome                  Left/Right/Home/End, Ctrl-W, Alt-1..9
+ *   tabs.hit(area, x, y) -> Hit                        what is under a cell
+ *   tabs.handle_mouse(gesture, area) -> TabOutcome     click, close box, overflow marks, wheel
+ *   tabs.render(buffer, area)
+ * */
 // --- what a tab is, and what the row does -----------------------------------
-//
-// The row is a single line: ` title ` per tab, ` title x ` when `is_closable`,
-// separated by a divider. The selected tab is drawn in `selected_style`, a
-// disabled one in `disabled_style`. A disabled tab is skipped by every way of
-// moving the selection -- keys, wheel, `next` -- and a click on it does
-// nothing; it is still drawn, because the point of disabling a tab rather than
-// removing it is that the user can see it exists.
-//
-// **Overflow.** When the tabs do not fit, the row shows a window of them
-// starting at `offset`, with `\u{2039}` at the left edge if tabs are hidden
-// before the window and `\u{203A}` at the right if after. `render` slides the
-// window just far enough to keep the selected tab fully in view (the same
-// rule `ListView` follows for its offset), so keyboard selection always shows
-// what it selected; clicking a mark slides the window one tab without
-// changing the selection (and `render` leaves it there until the selection
-// changes, see `detached_for`). A selected tab wider than the row on its own is
-// truncated with an ellipsis rather than hidden.
-//
+/*
+ * The row is a single line: ` title ` per tab, ` title x ` when `is_closable`,
+ * separated by a divider. The selected tab is drawn in `selected_style`, a
+ * disabled one in `disabled_style`. A disabled tab is skipped by every way of
+ * moving the selection -- keys, wheel, `next` -- and a click on it does
+ * nothing; it is still drawn, because the point of disabling a tab rather than
+ * removing it is that the user can see it exists.
+ *
+ * **Overflow.** When the tabs do not fit, the row shows a window of them
+ * starting at `offset`, with `\u{2039}` at the left edge if tabs are hidden
+ * before the window and `\u{203A}` at the right if after. `render` slides the
+ * window just far enough to keep the selected tab fully in view (the same
+ * rule `ListView` follows for its offset), so keyboard selection always shows
+ * what it selected; clicking a mark slides the window one tab without
+ * changing the selection (and `render` leaves it there until the selection
+ * changes, see `detached_for`). A selected tab wider than the row on its own is
+ * truncated with an ellipsis rather than hidden.
+ * */
 // --- closing is a request ---------------------------------------------------
-//
-// Tabs never removes a tab because the user clicked its close box or pressed
-// Ctrl-W: that answers `CloseRequested(i)` and the program decides, since
-// closing a tab with unsaved work wants a question first. Then `close(i)` does
-// it, and the selection follows: closing a tab before the selected one keeps
-// the same tab selected, closing the selected one selects the next enabled
-// tab to its right, or the nearest on its left.
-//
+/*
+ * Tabs never removes a tab because the user clicked its close box or pressed
+ * Ctrl-W: that answers `CloseRequested(i)` and the program decides, since
+ * closing a tab with unsaved work wants a question first. Then `close(i)` does
+ * it, and the selection follows: closing a tab before the selected one keeps
+ * the same tab selected, closing the selected one selects the next enabled
+ * tab to its right, or the nearest on its left.
+ * */
 // --- mouse ------------------------------------------------------------------
-//
-// With `TUI_mouse.Router` (see that module) the program registers the
-// rectangle the row was drawn in and passes `routed.gesture`, `routed.area`
-// to `handle_mouse`. A press on a tab selects it; a click on its close box,
-// or a middle click anywhere on a closable tab, answers `CloseRequested`; the
-// wheel moves the selection.
+/*
+ * With `TUI_mouse.Router` (see that module) the program registers the
+ * rectangle the row was drawn in and passes `routed.gesture`, `routed.area`
+ * to `handle_mouse`. A press on a tab selects it; a click on its close box,
+ * or a middle click anywhere on a closable tab, answers `CloseRequested`; the
+ * wheel moves the selection. */
 
 import term;
 import core.TUI_buffer;
@@ -122,8 +122,8 @@ pub str Hit.to_str() {
     }
 }
 
-/// Where one tab sits in the row: its index, first column (relative to the
-/// row) and width, and whether it was cut to fit.
+/** Where one tab sits in the row: its index, first column (relative to the
+ * row) and width, and whether it was cut to fit. */
 pub type Slot {
     pub int index;
     pub int x;
@@ -141,9 +141,9 @@ pub type Tabs {
     pub int selected = 0;
     /// The first tab of the visible window; `render` keeps the selection in it.
     pub int offset = 0;
-    /// The tab the window was slid away from by clicking an overflow mark: while
-    /// it is still the selected one, `render` leaves the window where the mark
-    /// put it instead of snapping back; any selection change ends that.
+    /** The tab the window was slid away from by clicking an overflow mark: while
+     * it is still the selected one, `render` leaves the window where the mark
+     * put it instead of snapping back; any selection change ends that. */
     pub int detached_for = -1;
     pub str divider = "\u{2502}";
     pub TUI_style.Style style = TUI_style.Style();
@@ -179,8 +179,8 @@ bool Tabs.can_select(int index) {
     return index >= 0 && index < items.size() && !items[index].is_disabled;
 }
 
-/// Select tab `index`. False (and no change) if there is no such tab or it is
-/// disabled or already selected.
+/** Select tab `index`. False (and no change) if there is no such tab or it is
+ * disabled or already selected. */
 pub bool Tabs.did_select(int index) {
     if (!can_select(index) || index == selected) {
         return false;
@@ -237,8 +237,8 @@ pub bool Tabs.did_select_last() {
     return false;
 }
 
-/// Append a tab. The selection stays where it is, unless nothing was
-/// selectable before and this one is.
+/** Append a tab. The selection stays where it is, unless nothing was
+ * selectable before and this one is. */
 pub void Tabs.add(Tab tab) {
     items.push(tab);
     if (items.size() == 1 && tab.is_disabled) {
@@ -296,8 +296,8 @@ int Tabs.natural_width(int index) {
     return total;
 }
 
-/// The tabs visible in a row `width` wide, from `offset`. Pure: it does not
-/// move the window (`render` does that, then calls this).
+/** The tabs visible in a row `width` wide, from `offset`. Pure: it does not
+ * move the window (`render` does that, then calls this). */
 pub List<Slot> Tabs.slots(int width) {
     List<Slot> out = [];
     int divider_width = TUI_text.width(divider);
@@ -410,8 +410,8 @@ TabOutcome Tabs.moved(bool did_move) {
     return TabOutcome.Ignored;
 }
 
-/// Keys: Left/Right/Home/End select; Ctrl-PageUp/PageDown too; Alt-1..9
-/// select the nth tab; Ctrl-W asks to close the selected tab if it can be.
+/** Keys: Left/Right/Home/End select; Ctrl-PageUp/PageDown too; Alt-1..9
+ * select the nth tab; Ctrl-W asks to close the selected tab if it can be. */
 pub TabOutcome Tabs.handle(term.Event event) {
     match (event) {
         case Key(term.Key key): {

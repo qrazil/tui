@@ -1,30 +1,30 @@
-// A diff, rendered with a cursor addressable down to the hunk and the line.
-// See `apps/git/design.md`: "cursor-addressable staging... whatever is under
-// the cursor is what gets staged" -- which means a client needs to ask,
-// precisely, "what is under the cursor right now", and this is what answers
-// that question at the granularity staging actually needs.
-//
-// API
+/* A diff, rendered with a cursor addressable down to the hunk and the line.
+ * See `apps/git/design.md`: "cursor-addressable staging... whatever is under
+ * the cursor is what gets staged" -- which means a client needs to ask,
+ * precisely, "what is under the cursor right now", and this is what answers
+ * that question at the granularity staging actually needs.
+ *
+ * API */
 // ---
-//   TUI_diff_view.Kind          Context | Add | Remove -- what one line is
-//   TUI_diff_view.Line(kind, text)     one line of a hunk's body
-//   TUI_diff_view.Hunk(header, lines)  one `@@ ... @@` block
-//   TUI_diff_view.DiffView(hunks)      the widget: cursor, scroll, render
-//   view.at()           -> Option<Row>   what the cursor is on, right now
-//   view.count()        -> int           how many rows, without building them
-//   view.move(delta), view.render(buf, area)
-//   view.handle_mouse(gesture, area)   press puts the cursor on a row, wheel moves it
-//   view.language = "rust"             syntax-colour the code of the lines (see below)
-//
+/*   TUI_diff_view.Kind          Context | Add | Remove -- what one line is
+ *   TUI_diff_view.Line(kind, text)     one line of a hunk's body
+ *   TUI_diff_view.Hunk(header, lines)  one `@@ ... @@` block
+ *   TUI_diff_view.DiffView(hunks)      the widget: cursor, scroll, render
+ *   view.at()           -> Option<Row>   what the cursor is on, right now
+ *   view.count()        -> int           how many rows, without building them
+ *   view.move(delta), view.render(buf, area)
+ *   view.handle_mouse(gesture, area)   press puts the cursor on a row, wheel moves it
+ *   view.language = "rust"             syntax-colour the code of the lines (see below)
+ * */
 // --- what a `Row` addresses ---------------------------------------------------
-//
-// The flattened view is a hunk's header, then its lines, then the next
-// hunk's header, and so on. `at()` answers which of those the cursor sits
-// on: `RowKind.Header` with the hunk's index, or `RowKind.Body` with the
-// hunk's index AND the line's index inside it -- hunk and line, exactly the
-// two numbers `apps/git/design.md` says staging depends on. A caller stages
-// the hunk when it is a `Header`, or exactly that one line when it is a
-// `Body`; deciding that is the caller's, not this widget's.
+/*
+ * The flattened view is a hunk's header, then its lines, then the next
+ * hunk's header, and so on. `at()` answers which of those the cursor sits
+ * on: `RowKind.Header` with the hunk's index, or `RowKind.Body` with the
+ * hunk's index AND the line's index inside it -- hunk and line, exactly the
+ * two numbers `apps/git/design.md` says staging depends on. A caller stages
+ * the hunk when it is a `Header`, or exactly that one line when it is a
+ * `Body`; deciding that is the caller's, not this widget's. */
 
 import core.TUI_buffer;
 import core.TUI_geometry;
@@ -41,8 +41,8 @@ pub enum Kind {
     Remove;
 }
 
-/// One line of a hunk's body, with the leading `+`/`-`/` ` already stripped --
-/// `kind` is that marker, structured.
+/** One line of a hunk's body, with the leading `+`/`-`/` ` already stripped --
+ * `kind` is that marker, structured. */
 pub type Line {
     pub Kind kind;
     pub str text;
@@ -63,13 +63,13 @@ pub static Line Line.removed(str text) {
     return Line(Kind.Remove, text);
 }
 
-/// One `@@ ... @@` block: its header text, as a diff prints it, and the
-/// lines under it.
+/** One `@@ ... @@` block: its header text, as a diff prints it, and the
+ * lines under it. */
 pub type Hunk {
     pub str header;
     pub List<Line> lines;
-    /// Folded: the header row shows, the body rows do not (they are not in
-    /// `rows()` or `count()`, and the cursor cannot land on them).
+    /** Folded: the header row shows, the body rows do not (they are not in
+     * `rows()` or `count()`, and the cursor cannot land on them). */
     pub bool is_collapsed = false;
 }
 
@@ -81,23 +81,23 @@ pub int Hunk.visible_lines() {
     return lines.size();
 }
 
-/// Which kind of row the flattened view holds: a hunk's own header line, or
-/// one line of its body.
+/** Which kind of row the flattened view holds: a hunk's own header line, or
+ * one line of its body. */
 pub enum RowKind {
     Header;
     Body;
 }
 
-/// One row of the flattened view, and the addressing `at()` answers: `hunk`
-/// is always meaningful, `line` only when `kind` is `Body`.
+/** One row of the flattened view, and the addressing `at()` answers: `hunk`
+ * is always meaningful, `line` only when `kind` is `Body`. */
 pub type Row {
     pub RowKind kind;
     pub int hunk;
     pub int line;
 }
 
-/// The widget: a list of `Hunk`s, a cursor into the flattened rows (headers
-/// and lines together), and the scroll that follows it.
+/** The widget: a list of `Hunk`s, a cursor into the flattened rows (headers
+ * and lines together), and the scroll that follows it. */
 pub type DiffView {
     pub List<Hunk> hunks;
     pub int cursor = 0;
@@ -107,16 +107,16 @@ pub type DiffView {
     pub TUI_style.Style remove_style = TUI_style.Style(foreground: TUI_style.Colour.Indexed(1));
     pub TUI_style.Style context_style = TUI_style.Style();
     pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
-    /// A `TUI_syntax` language name ("" for none, the default). When set, the
-    /// code of each line is coloured by token; the marker column and the
-    /// plain text of an added or removed line keep `add_style` / `remove_style`.
-    /// Each hunk is classified on its own, from a clean state, along its old
-    /// side and its new side separately, and only as far as it is drawn.
+    /** A `TUI_syntax` language name ("" for none, the default). When set, the
+     * code of each line is coloured by token; the marker column and the
+     * plain text of an added or removed line keep `add_style` / `remove_style`.
+     * Each hunk is classified on its own, from a clean state, along its old
+     * side and its new side separately, and only as far as it is drawn. */
     pub str language = "";
     /// Whether the terminal background is dark (see `TUI_syntax.is_dark`).
     pub bool is_dark = true;
-    /// Per-hunk token streams, built on first draw and kept: scrolling
-    /// redraws without classifying anything again.
+    /** Per-hunk token streams, built on first draw and kept: scrolling
+     * redraws without classifying anything again. */
     pub List<HunkSyntax> syntax = [];
     pub str syntax_language = "";
 }
@@ -137,12 +137,12 @@ pub List<Row> DiffView.rows() {
     return out;
 }
 
-/// How many rows `rows()` would answer, without building them: one per
-/// hunk header, plus every hunk's lines. A diff of thousands of lines is
-/// moved through, asked about and redrawn once per keystroke, and each of
-/// those used to flatten the whole thing to read one row of it -- so the
-/// three operations below walk the hunks (a few dozen) rather than the
-/// rows (a few thousand), the same way `TUI_outline` does.
+/** How many rows `rows()` would answer, without building them: one per
+ * hunk header, plus every hunk's lines. A diff of thousands of lines is
+ * moved through, asked about and redrawn once per keystroke, and each of
+ * those used to flatten the whole thing to read one row of it -- so the
+ * three operations below walk the hunks (a few dozen) rather than the
+ * rows (a few thousand), the same way `TUI_outline` does. */
 pub int DiffView.count() {
     int row_count = 0;
     for (Hunk hunk in hunks) {
@@ -151,8 +151,8 @@ pub int DiffView.count() {
     return row_count;
 }
 
-/// The row at index `index` of the flattened view, or `None` -- by walking the
-/// hunks' sizes, not by building the rows.
+/** The row at index `index` of the flattened view, or `None` -- by walking the
+ * hunks' sizes, not by building the rows. */
 Option<Row> DiffView.row_at(int index) {
     if (index < 0) {
         return Option<Row>.None;
@@ -174,14 +174,14 @@ Option<Row> DiffView.row_at(int index) {
     return Option<Row>.None;
 }
 
-/// What is under the cursor right now -- a hunk header, or a particular
-/// line of a particular hunk -- or `None` when the diff is empty.
+/** What is under the cursor right now -- a hunk header, or a particular
+ * line of a particular hunk -- or `None` when the diff is empty. */
 pub Option<Row> DiffView.at() {
     return row_at(cursor);
 }
 
-/// Move the cursor by `delta` rows of the flattened view, stopping at the
-/// ends.
+/** Move the cursor by `delta` rows of the flattened view, stopping at the
+ * ends. */
 pub void DiffView.move(int delta) {
     int row_count = count();
     if (row_count == 0) {
@@ -198,8 +198,8 @@ pub void DiffView.move(int delta) {
     cursor = target;
 }
 
-/// The index into the flattened rows of hunk `hunk_index`'s header, or -1
-/// for a hunk that does not exist. Walks the hunks, not the rows.
+/** The index into the flattened rows of hunk `hunk_index`'s header, or -1
+ * for a hunk that does not exist. Walks the hunks, not the rows. */
 pub int DiffView.header_row(int hunk_index) {
     if (hunk_index < 0 || hunk_index >= hunks.size()) {
         return -1;
@@ -211,8 +211,8 @@ pub int DiffView.header_row(int hunk_index) {
     return row_index;
 }
 
-/// The hunk the cursor is in (on its header or on one of its lines), or -1
-/// when the view is empty.
+/** The hunk the cursor is in (on its header or on one of its lines), or -1
+ * when the view is empty. */
 pub int DiffView.current_hunk() {
     match (at()) {
         case Some(Row row): {
@@ -224,8 +224,8 @@ pub int DiffView.current_hunk() {
     }
 }
 
-/// Put the cursor back on `before` after folds changed which rows exist: the
-/// same line of the same hunk, or that hunk's header when the line is gone.
+/** Put the cursor back on `before` after folds changed which rows exist: the
+ * same line of the same hunk, or that hunk's header when the line is gone. */
 void DiffView.keep_row(Option<Row> before) {
     match (before) {
         case Some(Row row): {
@@ -241,8 +241,8 @@ void DiffView.keep_row(Option<Row> before) {
     }
 }
 
-/// Fold or unfold hunk `hunk_index`. A cursor that was on one of its body
-/// rows moves to its header, so it never rests on a row that is gone.
+/** Fold or unfold hunk `hunk_index`. A cursor that was on one of its body
+ * rows moves to its header, so it never rests on a row that is gone. */
 pub void DiffView.toggle_hunk(int hunk_index) {
     if (hunk_index < 0 || hunk_index >= hunks.size()) {
         return;
@@ -252,9 +252,9 @@ pub void DiffView.toggle_hunk(int hunk_index) {
     keep_row(before);
 }
 
-/// Fold every hunk (`is_collapsed` true) or unfold every one; the cursor
-/// goes to the header of the hunk it was in when they fold, and stays on
-/// its line when they unfold.
+/** Fold every hunk (`is_collapsed` true) or unfold every one; the cursor
+ * goes to the header of the hunk it was in when they fold, and stays on
+ * its line when they unfold. */
 pub void DiffView.set_all_collapsed(bool is_collapsed) {
     Option<Row> before = at();
     for (int index in 0 .. hunks.size()) {
@@ -263,8 +263,8 @@ pub void DiffView.set_all_collapsed(bool is_collapsed) {
     keep_row(before);
 }
 
-// The token streams of hunk `hunk_index`, built the first time it is asked
-// for. A changed `language` (or a different hunk list) starts over.
+/* The token streams of hunk `hunk_index`, built the first time it is asked
+ * for. A changed `language` (or a different hunk list) starts over. */
 HunkSyntax DiffView.syntax_of(int hunk_index) {
     if (syntax_language != language || syntax.size() != hunks.size()) {
         syntax = [];
@@ -346,10 +346,10 @@ str DiffView.marker(Line line) {
     }
 }
 
-/// A mouse gesture over the diff, drawn in `area` (as last rendered): a Press
-/// puts the cursor on the row under it (header or line, so `at()` says exactly
-/// what a click selected); the wheel moves the cursor by `WHEEL_ROWS`.
-/// `Changed` when the cursor moved, else `Ignored`.
+/** A mouse gesture over the diff, drawn in `area` (as last rendered): a Press
+ * puts the cursor on the row under it (header or line, so `at()` says exactly
+ * what a click selected); the wheel moves the cursor by `WHEEL_ROWS`.
+ * `Changed` when the cursor moved, else `Ignored`. */
 pub TUI_mouse.Response DiffView.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
     int before = cursor;
     match (gesture.kind) {
@@ -401,9 +401,9 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     view.reveal(cursor, total, area.height);
     view.offset = view.clamped(total, area.height);
     int off = view.offset;
-    // Find the first row on screen once, then step through the hunks in
-    // order: `hunk_index`/`line_index` are the row's hunk and line,
-    // `line_index` of -1 being its header.
+    /* Find the first row on screen once, then step through the hunks in
+     * order: `hunk_index`/`line_index` are the row's hunk and line,
+     * `line_index` of -1 being its header. */
     int hunk_index = 0;
     int line_index = -1;
     match (row_at(off)) {
@@ -460,9 +460,9 @@ pub void DiffView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     }
 }
 
-/// The two token streams of one hunk: the old side (context and removed
-/// lines) and the new side (context and added lines), each classified lazily
-/// by a `Highlighter`, and where each line sits in them.
+/** The two token streams of one hunk: the old side (context and removed
+ * lines) and the new side (context and added lines), each classified lazily
+ * by a `Highlighter`, and where each line sits in them. */
 pub type HunkSyntax {
     pub TUI_syntax.Highlighter old_side;
     pub TUI_syntax.Highlighter new_side;

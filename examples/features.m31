@@ -1,23 +1,23 @@
-// The 0.10.0 terminal features, all opt-in, in one small program: run it in a terminal
-// and press keys.
-//
-//   M31_ROOT=... LANGC=... bash scripts/build.sh examples/features.m31 -o /tmp/tuifeatures && /tmp/tuifeatures
-//
-// What it shows, and what to try:
-//
-//   - synchronized output (DEC 2026): every frame is written between the markers when
-//     the terminal answered the question; the status line says whether it did.
-//   - the keyboard protocol: press Ctrl-i, then Tab; Escape, then Alt-Escape; Ctrl-m,
-//     then Enter. On a terminal with the kitty protocol (or xterm's modifyOtherKeys)
-//     they are different keys; elsewhere Ctrl-i and Tab are one.
-//   - a hyperlink (OSC 8): the underlined text is a link in terminals that have them
-//     (Ctrl- or Cmd-click).
-//   - the clipboard (OSC 52): y copies a line of text; c turns copying off and on.
-//   - focus reports: click away and back; the count changes, and coming back repaints.
-//   - q quits.
-//
-// Like examples/browse.m31 this needs a person and a terminal; tests/test.sh checks that
-// it compiles, and tests/terminal.m31 checks the bytes it writes.
+/* The 0.10.0 terminal features, all opt-in, in one small program: run it in a terminal
+ * and press keys.
+ *
+ *   M31_ROOT=... LANGC=... bash scripts/build.sh examples/features.m31 -o /tmp/tuifeatures && /tmp/tuifeatures
+ *
+ * What it shows, and what to try:
+ *
+ *   - synchronized output (DEC 2026): every frame is written between the markers when
+ *     the terminal answered the question; the status line says whether it did.
+ *   - the keyboard protocol: press Ctrl-i, then Tab; Escape, then Alt-Escape; Ctrl-m,
+ *     then Enter. On a terminal with the kitty protocol (or xterm's modifyOtherKeys)
+ *     they are different keys; elsewhere Ctrl-i and Tab are one.
+ *   - a hyperlink (OSC 8): the underlined text is a link in terminals that have them
+ *     (Ctrl- or Cmd-click).
+ *   - the clipboard (OSC 52): y copies a line of text; c turns copying off and on.
+ *   - focus reports: click away and back; the count changes, and coming back repaints.
+ *   - q quits.
+ *
+ * Like examples/browse.m31 this needs a person and a terminal; tests/test.sh checks that
+ * it compiles, and tests/terminal.m31 checks the bytes it writes. */
 
 import io;
 import term;

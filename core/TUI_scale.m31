@@ -1,47 +1,47 @@
-// Numbers on an axis: nice tick values, the scale that places them, and how
-// they are written.
-//
-// API
+/* Numbers on an axis: nice tick values, the scale that places them, and how
+ * they are written.
+ *
+ * API */
 // ---
-//   TUI_scale.nice_number(range, should_round)  1, 2, 5 or 10 times a power of ten
-//   TUI_scale.nice_ticks(lower, upper, target, should_expand) -> Ticks
-//   TUI_scale.Scale(lower, upper, cells, per_cell)  value <-> cell position
-//   scale.cell(value), scale.sub(value), scale.value_at_cell(cell)
-//   TUI_scale.format_fixed(value, decimals)     "-3.50"
-//   TUI_scale.format_short(value)               "3.5", "12", "0.25"
-//
+/*   TUI_scale.nice_number(range, should_round)  1, 2, 5 or 10 times a power of ten
+ *   TUI_scale.nice_ticks(lower, upper, target, should_expand) -> Ticks
+ *   TUI_scale.Scale(lower, upper, cells, per_cell)  value <-> cell position
+ *   scale.cell(value), scale.sub(value), scale.value_at_cell(cell)
+ *   TUI_scale.format_fixed(value, decimals)     "-3.50"
+ *   TUI_scale.format_short(value)               "3.5", "12", "0.25"
+ * */
 // --- one scale for marks and labels -----------------------------------------
-//
-// A chart that computes a tick's column in one place and a data point's
-// column in another is off by one somewhere, and it is the sort of error
-// nobody sees until they line a ruler against the screen. So there is one
-// `Scale` and both ask it. `sub(value)` is the position in sub-cell units
-// (a braille cell is 2 wide and 4 tall, a half block 1 by 2), and `cell(value)`
-// is `sub(value) / per_cell`: the cell that holds the mark. A label for the
-// tick at `v` is centred on `cell(v)`, the same cell the mark for `v` is
-// plotted in, by construction.
-//
-// `sub(lower)` is 0 and `sub(upper)` is the last sub-cell, `cells * per_cell
-// - 1`, so both ends of the data are on the plot and none is clipped.
-//
+/*
+ * A chart that computes a tick's column in one place and a data point's
+ * column in another is off by one somewhere, and it is the sort of error
+ * nobody sees until they line a ruler against the screen. So there is one
+ * `Scale` and both ask it. `sub(value)` is the position in sub-cell units
+ * (a braille cell is 2 wide and 4 tall, a half block 1 by 2), and `cell(value)`
+ * is `sub(value) / per_cell`: the cell that holds the mark. A label for the
+ * tick at `v` is centred on `cell(v)`, the same cell the mark for `v` is
+ * plotted in, by construction.
+ *
+ * `sub(lower)` is 0 and `sub(upper)` is the last sub-cell, `cells * per_cell
+ * - 1`, so both ends of the data are on the plot and none is clipped.
+ * */
 // --- nice numbers -----------------------------------------------------------
-//
-// Ticks are the multiples of a step that is 1, 2 or 5 times a power of ten,
-// chosen so there are about `target` of them (Heckbert's "nice numbers for
-// graph labels"). `should_expand` decides what happens to the ends of the
-// data: expanded, the axis runs from the tick at or below `lower` to the tick
-// at or above `upper`, so the first and last labels sit on the plot's edges;
-// not expanded, the axis is exactly `lower .. upper` and the ticks are the
-// multiples of the step that fall inside it.
-//
-// Everything is decided in floating point and then written through
-// `format_fixed`, which rounds the value to the tick's number of decimals
-// before it prints one, so 0.1 * 3 is "0.3" and not "0.30000000000000004".
+/*
+ * Ticks are the multiples of a step that is 1, 2 or 5 times a power of ten,
+ * chosen so there are about `target` of them (Heckbert's "nice numbers for
+ * graph labels"). `should_expand` decides what happens to the ends of the
+ * data: expanded, the axis runs from the tick at or below `lower` to the tick
+ * at or above `upper`, so the first and last labels sit on the plot's edges;
+ * not expanded, the axis is exactly `lower .. upper` and the ticks are the
+ * multiples of the step that fall inside it.
+ *
+ * Everything is decided in floating point and then written through
+ * `format_fixed`, which rounds the value to the tick's number of decimals
+ * before it prints one, so 0.1 * 3 is "0.3" and not "0.30000000000000004". */
 
 import math;
 
-/// Ten to the `exponent`, for `exponent >= 0`, exactly: every power of ten up
-/// to 1e22 is a double.
+/** Ten to the `exponent`, for `exponent >= 0`, exactly: every power of ten up
+ * to 1e22 is a double. */
 float pow10(int exponent) {
     float out = 1.0;
     for (int i in 0 .. exponent) {
@@ -50,10 +50,10 @@ float pow10(int exponent) {
     return out;
 }
 
-/// A "nice" number near `range`: 1, 2, 5 or 10 times a power of ten. With
-/// `should_round` it is the nearest of those; without, the smallest that is
-/// not less than `range`. A range of zero or less, or one that is not a
-/// number, is 1.0.
+/** A "nice" number near `range`: 1, 2, 5 or 10 times a power of ten. With
+ * `should_round` it is the nearest of those; without, the smallest that is
+ * not less than `range`. A range of zero or less, or one that is not a
+ * number, is 1.0. */
 pub float nice_number(float range, bool should_round) {
     if (math.is_nan(range) || !math.is_finite(range) || range <= 0.0) {
         return 1.0;
@@ -90,8 +90,8 @@ pub float nice_number(float range, bool should_round) {
     return nice / pow10(-exponent);
 }
 
-/// The ticks for an axis: where they are, how far apart, and how many decimals
-/// their labels need.
+/** The ticks for an axis: where they are, how far apart, and how many decimals
+ * their labels need. */
 pub type Ticks {
     /// The axis's own ends. Equal to the inputs unless they were expanded.
     pub float lower;
@@ -101,8 +101,8 @@ pub type Ticks {
     pub List<float> values;
 }
 
-/// How many decimal places a step needs to be written exactly: 0 for 5, 1 for
-/// 0.5, 2 for 0.25. At most 9.
+/** How many decimal places a step needs to be written exactly: 0 for 5, 1 for
+ * 0.5, 2 for 0.25. At most 9. */
 int decimals_of(float step) {
     for (int places in 0 .. 9) {
         float scaled = step * pow10(places);
@@ -113,12 +113,12 @@ int decimals_of(float step) {
     return 9;
 }
 
-/// Ticks for `lower .. upper`, about `target` of them (at least 2).
-///
-/// The bounds may come in either order. A range of no width (one value, no
-/// data) is widened to a range around it -- one unit either side of zero, or
-/// 10% of the value -- because an axis must have a length. NaN or infinite
-/// bounds are replaced by `0.0 .. 1.0`.
+/** Ticks for `lower .. upper`, about `target` of them (at least 2).
+ *
+ * The bounds may come in either order. A range of no width (one value, no
+ * data) is widened to a range around it -- one unit either side of zero, or
+ * 10% of the value -- because an axis must have a length. NaN or infinite
+ * bounds are replaced by `0.0 .. 1.0`. */
 pub Ticks nice_ticks(float lower, float upper, int target, bool should_expand) {
     float low = lower;
     float high = upper;
@@ -168,9 +168,9 @@ pub Ticks nice_ticks(float lower, float upper, int target, bool should_expand) {
     return Ticks(axis_lower, axis_upper, step, places, values);
 }
 
-/// `value` written with exactly `decimals` places (0 to 9), rounded half away
-/// from zero: `format_fixed(-3.5, 2)` is `-3.50`. Never `-0` or `-0.00`. A value
-/// too large to scale into an `int`, or not a number, is written by `to_str`.
+/** `value` written with exactly `decimals` places (0 to 9), rounded half away
+ * from zero: `format_fixed(-3.5, 2)` is `-3.50`. Never `-0` or `-0.00`. A value
+ * too large to scale into an `int`, or not a number, is written by `to_str`. */
 pub str format_fixed(float value, int decimals) {
     if (!math.is_finite(value)) {
         return value.to_str();
@@ -202,8 +202,8 @@ pub str format_fixed(float value, int decimals) {
     return text;
 }
 
-/// `value` written as shortly as it can be without losing up to two decimals:
-/// `12`, `3.5`, `0.25`. The label for a value that is not itself a tick.
+/** `value` written as shortly as it can be without losing up to two decimals:
+ * `12`, `3.5`, `0.25`. The label for a value that is not itself a tick. */
 pub str format_short(float value) {
     if (!math.is_finite(value)) {
         return value.to_str();
@@ -217,8 +217,8 @@ pub str format_short(float value) {
     return format_fixed(value, 2);
 }
 
-/// Where values fall along one axis of `cells` cells, `per_cell` sub-cells to a
-/// cell. See the header for why marks and labels both ask this.
+/** Where values fall along one axis of `cells` cells, `per_cell` sub-cells to a
+ * cell. See the header for why marks and labels both ask this. */
 pub type Scale {
     pub float lower;
     pub float upper;
@@ -234,9 +234,9 @@ pub int Scale.length() {
     return cells * per_cell;
 }
 
-/// The sub-cell `value` lands in, from 0 (at `lower`) to `length() - 1` (at
-/// `upper`); a value outside the axis is pulled onto its nearest end. An axis
-/// of no length, or a value that is not a number, answers 0.
+/** The sub-cell `value` lands in, from 0 (at `lower`) to `length() - 1` (at
+ * `upper`); a value outside the axis is pulled onto its nearest end. An axis
+ * of no length, or a value that is not a number, answers 0. */
 pub int Scale.sub(float value) {
     int total = length();
     if (total <= 0 || math.is_nan(value) || !(upper > lower)) {
@@ -269,8 +269,8 @@ pub bool Scale.is_inside(float value) {
     return !math.is_nan(value) && value >= lower && value <= upper;
 }
 
-/// The value at the middle of cell `cell`: the inverse of `cell`, to within
-/// the width of a cell. For finding what is under the mouse.
+/** The value at the middle of cell `cell`: the inverse of `cell`, to within
+ * the width of a cell. For finding what is under the mouse. */
 pub float Scale.value_at_cell(int cell) {
     int total = length();
     if (total <= 1) {

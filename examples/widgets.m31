@@ -1,23 +1,23 @@
-// The v0.3.0 widgets, run for real: tabs, a chart you can hover, an outline and
-// a diff you can click and scroll, a text field, a gauge, a sparkline and a
-// spinner, all through `TUI_app.Loop` with the mouse on.
-//
-//   ./build.sh examples/widgets.m31 -o /tmp/widgets && /tmp/widgets
-//
-// Keyboard first: Tab moves focus between the panels on screen, Left/Right
-// change tabs when the tab row has focus, Up/Down and Enter work the outline
-// and the diff, and typing goes to the text field when it has focus (Enter
-// submits, Escape leaves it). q quits from anywhere but the text field, and
-// Ctrl-Q from there too.
-//
-// The mouse does the same and more: click a tab, click a tab's x to close it,
-// click or wheel the outline and the diff, double click a section to fold it,
-// click in the text field to put the cursor there, and move the pointer over
-// the chart to read a value (the terminal must report motion; most do).
-//
-// Like `browse.m31` this needs a terminal and a person, so it is not in the
-// test corpus; tests/test.sh checks that it compiles clean. What it drives is
-// tested in tests/widgets.m31 against synthetic events, buffers and clocks.
+/* The v0.3.0 widgets, run for real: tabs, a chart you can hover, an outline and
+ * a diff you can click and scroll, a text field, a gauge, a sparkline and a
+ * spinner, all through `TUI_app.Loop` with the mouse on.
+ *
+ *   ./build.sh examples/widgets.m31 -o /tmp/widgets && /tmp/widgets
+ *
+ * Keyboard first: Tab moves focus between the panels on screen, Left/Right
+ * change tabs when the tab row has focus, Up/Down and Enter work the outline
+ * and the diff, and typing goes to the text field when it has focus (Enter
+ * submits, Escape leaves it). q quits from anywhere but the text field, and
+ * Ctrl-Q from there too.
+ *
+ * The mouse does the same and more: click a tab, click a tab's x to close it,
+ * click or wheel the outline and the diff, double click a section to fold it,
+ * click in the text field to put the cursor there, and move the pointer over
+ * the chart to read a value (the terminal must report motion; most do).
+ *
+ * Like `browse.m31` this needs a terminal and a person, so it is not in the
+ * test corpus; tests/test.sh checks that it compiles clean. What it drives is
+ * tested in tests/widgets.m31 against synthetic events, buffers and clocks. */
 
 import io;
 import term;
@@ -36,8 +36,8 @@ import core.TUI_style;
 import widgets.TUI_tabs;
 import core.TUI_widget;
 
-/// Everything on screen, and what the last event did. One object, reached by
-/// the lambdas below that close over it: m31 has no mutable module state.
+/** Everything on screen, and what the last event did. One object, reached by
+ * the lambdas below that close over it: m31 has no mutable module state. */
 type State {
     TUI_mouse.Router router = TUI_mouse.Router();
     TUI_tabs.Tabs tabs = TUI_tabs.Tabs([TUI_tabs.Tab("Metrics"), TUI_tabs.Tab("Files"), TUI_tabs.Tab("Input"), TUI_tabs.Tab("Locked", is_disabled: true), TUI_tabs.Tab("Scratch", is_closable: true), TUI_tabs.Tab("Notes", is_closable: true)]);
@@ -89,9 +89,9 @@ void State.place(str id, TUI_geometry.Rect area, bool is_focusable = true) {
     router.add(id, area, is_focusable: is_focusable);
 }
 
-/// The frame. The router forgets last frame's regions, and each panel drawn
-/// registers itself again, so a click is always matched against what the user
-/// was looking at.
+/** The frame. The router forgets last frame's regions, and each panel drawn
+ * registers itself again, so a click is always matched against what the user
+ * was looking at. */
 void State.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     router.begin_frame();
     List<TUI_geometry.Rect> band = TUI_geometry.rows(area, [TUI_geometry.Constraint.Length(1), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
@@ -311,9 +311,9 @@ TUI_app.Action redraw_if_changed(TUI_mouse.Response response) {
     }
 }
 
-/// What a key is, for the few the demo cares about: a character's code point
-/// (0 and up), or a negative number for Tab, Back-tab, Up, Down, Enter, Left,
-/// Right, Escape; -1 for any other key.
+/** What a key is, for the few the demo cares about: a character's code point
+ * (0 and up), or a negative number for Tab, Back-tab, Up, Down, Enter, Left,
+ * Right, Escape; -1 for any other key. */
 int classify(term.Key key) {
     match (key.code) {
         case Char(int character): {

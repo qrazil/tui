@@ -1,78 +1,78 @@
-// The mouse: gestures out of button reports, and routing them to widgets by
-// the rectangles the program laid out.
-//
-// API
+/* The mouse: gestures out of button reports, and routing them to widgets by
+ * the rectangles the program laid out.
+ *
+ * API */
 // ---
-//   TUI_mouse.Gesture            what the pointer did: Press, Drag, Release, Click, Hover, Leave, Scroll*
-//   TUI_mouse.Pointer(...)       a recogniser: reports in, gestures out (clicks, double clicks, drags)
-//   pointer.feed(mouse, now_ms)  -> List<Gesture>
-//   TUI_mouse.Router             regions + pointer + focus + hover + drag capture
-//   router.begin_frame()         forget the regions; the view registers them again as it draws
-//   router.add(id, area, ...)    a region, topmost last
-//   router.route(mouse, now_ms)  -> List<Routed>
-//   TUI_mouse.Routed             a gesture, the region it is for, and that region's rectangle
-//   TUI_mouse.Response           what a widget answers: Ignored | Changed | Activated
-//   TUI_mouse.HOVER_ON / HOVER_OFF  the terminal sequences for motion with no button down
-//
+/*   TUI_mouse.Gesture            what the pointer did: Press, Drag, Release, Click, Hover, Leave, Scroll*
+ *   TUI_mouse.Pointer(...)       a recogniser: reports in, gestures out (clicks, double clicks, drags)
+ *   pointer.feed(mouse, now_ms)  -> List<Gesture>
+ *   TUI_mouse.Router             regions + pointer + focus + hover + drag capture
+ *   router.begin_frame()         forget the regions; the view registers them again as it draws
+ *   router.add(id, area, ...)    a region, topmost last
+ *   router.route(mouse, now_ms)  -> List<Routed>
+ *   TUI_mouse.Routed             a gesture, the region it is for, and that region's rectangle
+ *   TUI_mouse.Response           what a widget answers: Ignored | Changed | Activated
+ *   TUI_mouse.HOVER_ON / HOVER_OFF  the terminal sequences for motion with no button down
+ * */
 // --- how it fits together ---------------------------------------------------
-//
-// A widget holds no position (TUI_widget.m31). So the program, which already
-// cuts the screen into rectangles to draw, tells the router what it cut:
-//
-//     router.begin_frame();                         // at the top of the view
-//     router.add("files", files_area);              // for each widget it draws
-//     router.add("detail", detail_area, is_focusable: false);
-//
-// and the router answers "which region is under this cell" from what the LAST
-// frame drew, which is what the user was looking at when they clicked. A
-// region added later is on top of one added earlier. The widgets themselves
-// take a gesture and the rectangle they were drawn in:
-//
-//     outline.handle_mouse(routed.gesture, routed.area)
-//
-// and do the arithmetic from there (which row, which column, which tab).
-// Coordinates everywhere here are 0-based cells, like `Rect`; the terminal's
-// own reports are 1-based and `Pointer.feed` converts.
-//
+/*
+ * A widget holds no position (TUI_widget.m31). So the program, which already
+ * cuts the screen into rectangles to draw, tells the router what it cut:
+ *
+ *     router.begin_frame();                         // at the top of the view
+ *     router.add("files", files_area);              // for each widget it draws
+ *     router.add("detail", detail_area, is_focusable: false);
+ *
+ * and the router answers "which region is under this cell" from what the LAST
+ * frame drew, which is what the user was looking at when they clicked. A
+ * region added later is on top of one added earlier. The widgets themselves
+ * take a gesture and the rectangle they were drawn in:
+ *
+ *     outline.handle_mouse(routed.gesture, routed.area)
+ *
+ * and do the arithmetic from there (which row, which column, which tab).
+ * Coordinates everywhere here are 0-based cells, like `Rect`; the terminal's
+ * own reports are 1-based and `Pointer.feed` converts.
+ * */
 // --- gestures ---------------------------------------------------------------
-//
-// `Pointer` turns the terminal's reports into the events a widget wants:
-//
-//   - **Press** when a button goes down, **Release** when it comes up, and
-//     **Drag** for each cell the pointer moves to in between;
-//   - **Click** when a button comes up on the cell it went down on with no
-//     drag between, with `clicks` counting 1, 2, 3: a second click on the same
-//     cell within `double_click_ms` of the first is `clicks == 2`. A double
-//     click is a Click with `clicks == 2` AFTER the Click with `clicks == 1`,
-//     so a handler that selects on click and activates on double click needs
-//     no state of its own;
-//   - **Hover** when the pointer moves with no button down, and **Leave** (from
-//     the router, not the pointer) for the region it left;
-//   - **ScrollUp/Down/Left/Right** for the wheel.
-//
-// The time is passed in, in milliseconds from any epoch that does not go
-// backwards much: the pointer never reads a clock, so a test replays a
-// sequence with exact timings. A clock that does go backwards just fails to
-// make a double click.
-//
-// Hover needs the terminal to report motion with no button down
-// (`HOVER_ON`, DEC mode 1003). `term.MOUSE_ON` does not ask for it, because
-// every motion of the mouse is then a report to decode and a redraw to
-// consider; `TUI_app.Loop(should_report_hover: true)` asks for it.
-//
+/*
+ * `Pointer` turns the terminal's reports into the events a widget wants:
+ *
+ *   - **Press** when a button goes down, **Release** when it comes up, and
+ *     **Drag** for each cell the pointer moves to in between;
+ *   - **Click** when a button comes up on the cell it went down on with no
+ *     drag between, with `clicks` counting 1, 2, 3: a second click on the same
+ *     cell within `double_click_ms` of the first is `clicks == 2`. A double
+ *     click is a Click with `clicks == 2` AFTER the Click with `clicks == 1`,
+ *     so a handler that selects on click and activates on double click needs
+ *     no state of its own;
+ *   - **Hover** when the pointer moves with no button down, and **Leave** (from
+ *     the router, not the pointer) for the region it left;
+ *   - **ScrollUp/Down/Left/Right** for the wheel.
+ *
+ * The time is passed in, in milliseconds from any epoch that does not go
+ * backwards much: the pointer never reads a clock, so a test replays a
+ * sequence with exact timings. A clock that does go backwards just fails to
+ * make a double click.
+ *
+ * Hover needs the terminal to report motion with no button down
+ * (`HOVER_ON`, DEC mode 1003). `term.MOUSE_ON` does not ask for it, because
+ * every motion of the mouse is then a report to decode and a redraw to
+ * consider; `TUI_app.Loop(should_report_hover: true)` asks for it.
+ * */
 // --- focus ------------------------------------------------------------------
-//
-// A Press on a region that `is_focusable` focuses it; the router keeps one
-// focused id, and `focus_next`/`focus_previous` cycle it over the focusable
-// regions in the order they were added, for a keyboard that wants to use the
-// same notion. The Routed that moved focus says so (`did_focus`), and a
-// Press on no region leaves focus where it was.
-//
+/*
+ * A Press on a region that `is_focusable` focuses it; the router keeps one
+ * focused id, and `focus_next`/`focus_previous` cycle it over the focusable
+ * regions in the order they were added, for a keyboard that wants to use the
+ * same notion. The Routed that moved focus says so (`did_focus`), and a
+ * Press on no region leaves focus where it was.
+ * */
 // --- drag capture -----------------------------------------------------------
-//
-// From a Press until its Release, Drag, Release and Click go to the region the
-// press was in, wherever the pointer is: a drag that leaves the rectangle
-// still scrolls the list it started on rather than whatever it crosses.
+/*
+ * From a Press until its Release, Drag, Release and Click go to the region the
+ * press was in, wherever the pointer is: a drag that leaves the rectangle
+ * still scrolls the list it started on rather than whatever it crosses. */
 
 import term;
 import core.TUI_geometry;
@@ -242,8 +242,8 @@ pub enum Response {
     Ignored;
     /// The widget's state changed: draw again.
     Changed;
-    /// The user chose something: a double click on a row, say. State may have
-    /// changed too.
+    /** The user chose something: a double click on a row, say. State may have
+     * changed too. */
     Activated;
 }
 
@@ -280,9 +280,9 @@ pub type Pointer {
     int click_count = 0;
 }
 
-/// Feed one report from the terminal, with the time it arrived at in
-/// milliseconds. Answers the gestures it makes, in order -- none, one, or two
-/// (a Release and the Click it completes).
+/** Feed one report from the terminal, with the time it arrived at in
+ * milliseconds. Answers the gestures it makes, in order -- none, one, or two
+ * (a Release and the Click it completes). */
 pub List<Gesture> Pointer.feed(term.Mouse mouse, int now_ms) {
     int x = mouse.col - 1;
     int y = mouse.row - 1;
@@ -347,9 +347,9 @@ pub List<Gesture> Pointer.feed(term.Mouse mouse, int now_ms) {
     return out;
 }
 
-// The click count for a click at `x`, `y` now: one more than the last click if
-// it was the same button, on the same cell, no longer ago than the double
-// click time (and not in the future), up to three; otherwise one.
+/* The click count for a click at `x`, `y` now: one more than the last click if
+ * it was the same button, on the same cell, no longer ago than the double
+ * click time (and not in the future), up to three; otherwise one. */
 int Pointer.count_click(int x, int y, int button, int now_ms) {
     int gap = now_ms - last_click_ms;
     if (click_count > 0 && x == last_click_x && y == last_click_y && button == last_click_button && gap >= 0 && gap <= double_click_ms) {
@@ -395,14 +395,14 @@ pub type Router {
     str capture_id = "";
 }
 
-/// Forget the regions. Call at the top of the view; it adds them again as it
-/// lays the screen out.
+/** Forget the regions. Call at the top of the view; it adds them again as it
+ * lays the screen out. */
 pub void Router.begin_frame() {
     regions.clear();
 }
 
-/// Register a region. One added later is on top of one added earlier where
-/// they overlap.
+/** Register a region. One added later is on top of one added earlier where
+ * they overlap. */
 pub void Router.add(str id, TUI_geometry.Rect area, bool is_focusable = true) {
     regions.push(Region(id, area, is_focusable: is_focusable));
 }
@@ -460,8 +460,8 @@ List<str> Router.focus_order() {
     return ids;
 }
 
-/// Move focus to the next focusable region, wrapping. With nothing focused it
-/// is the first.
+/** Move focus to the next focusable region, wrapping. With nothing focused it
+ * is the first. */
 pub void Router.focus_next() {
     step_focus(1);
 }
@@ -493,18 +493,18 @@ void Router.step_focus(int delta) {
     focus_id = ids[next];
 }
 
-/// Feed one report. Answers the gestures it makes, each addressed to the
-/// region it is for. Hover that moves from one region to another also
-/// answers a Leave for the region it left, before the Hover.
+/** Feed one report. Answers the gestures it makes, each addressed to the
+ * region it is for. Hover that moves from one region to another also
+ * answers a Leave for the region it left, before the Hover. */
 pub List<Routed> Router.route(term.Mouse mouse, int now_ms) {
     List<Routed> out = [];
     List<Gesture> gestures = pointer.feed(mouse, now_ms);
     for (Gesture gesture in gestures) {
         route_one(out, gesture);
     }
-    // The button is up (the last gesture of the report is a Release, or the
-    // Click it made): the press is over, and whatever comes next with no press
-    // of its own is for whatever is under the pointer.
+    /* The button is up (the last gesture of the report is a Release, or the
+     * Click it made): the press is over, and whatever comes next with no press
+     * of its own is for whatever is under the pointer. */
     if (gestures.size() > 0 && gestures[gestures.size() - 1].is_press_end()) {
         capture_id = "";
     }

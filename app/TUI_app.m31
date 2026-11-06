@@ -1,115 +1,115 @@
-// The application loop: raw mode in, decoded events out, a widget redrawn
-// through the diffing renderer, one write per frame. This is stage 3's
-// remaining piece -- `lib/term.m31` is already complete and tested; this
-// module is what JOINS it to `apps/tui`'s own renderer, and nothing else.
-// See `apps/git/design.md`, "the application loop joining the two".
-//
-// API
+/* The application loop: raw mode in, decoded events out, a widget redrawn
+ * through the diffing renderer, one write per frame. This is stage 3's
+ * remaining piece -- `lib/term.m31` is already complete and tested; this
+ * module is what JOINS it to `apps/tui`'s own renderer, and nothing else.
+ * See `apps/git/design.md`, "the application loop joining the two".
+ *
+ * API */
 // ---
-//   TUI_app.Action                 Continue | Redraw | Quit -- what a Handler
-//                                 answers after one event
-//   interface TUI_app.Handler { Action handle(term.Event ev); }
-//   TUI_app.Loop(...)              tick, colour depth, enter/leave sequences
-//   loop.run(view, on_event)      raw mode, then read-dispatch-render until
-//                                 `on_event` says stop
-//   loop.run_with(view, on_event, on_tick, on_mouse)
-//                                 the same, with a timer and routed mouse gestures
-//   interface TUI_app.Ticker { Action tick(int elapsed_ms); }
-//   interface TUI_app.MouseHandler { Action handle_mouse(TUI_mouse.Routed routed); }
-//   interface TUI_app.AfterFrame { bytes after_frame(TUI_buffer.Buffer frame, bool is_full); }
-//   loop.after_frame = Option.Some(hook)   bytes written in the same write as each frame (v0.11.0)
-//   loop.frame_bytes(previous, next, is_full, shown)   the bytes of one frame, hook included
-//   loop.enter_sequence() / loop.leave_sequence()   the exact bytes written in / out
-//   TUI_app.read_timeout_ms(...)  how long a read may wait; TUI_app.clamp_elapsed(...)
-//   TUI_app.has_resized(a, b)     whether two window sizes differ -- pulled
-//                                 out so it can be checked with no terminal
-//
+/*   TUI_app.Action                 Continue | Redraw | Quit -- what a Handler
+ *                                 answers after one event
+ *   interface TUI_app.Handler { Action handle(term.Event ev); }
+ *   TUI_app.Loop(...)              tick, colour depth, enter/leave sequences
+ *   loop.run(view, on_event)      raw mode, then read-dispatch-render until
+ *                                 `on_event` says stop
+ *   loop.run_with(view, on_event, on_tick, on_mouse)
+ *                                 the same, with a timer and routed mouse gestures
+ *   interface TUI_app.Ticker { Action tick(int elapsed_ms); }
+ *   interface TUI_app.MouseHandler { Action handle_mouse(TUI_mouse.Routed routed); }
+ *   interface TUI_app.AfterFrame { bytes after_frame(TUI_buffer.Buffer frame, bool is_full); }
+ *   loop.after_frame = Option.Some(hook)   bytes written in the same write as each frame (v0.11.0)
+ *   loop.frame_bytes(previous, next, is_full, shown)   the bytes of one frame, hook included
+ *   loop.enter_sequence() / loop.leave_sequence()   the exact bytes written in / out
+ *   TUI_app.read_timeout_ms(...)  how long a read may wait; TUI_app.clamp_elapsed(...)
+ *   TUI_app.has_resized(a, b)     whether two window sizes differ -- pulled
+ *                                 out so it can be checked with no terminal
+ * */
 // --- why the view is a Widget, not a new interface ---------------------------
-//
-// `apps/tui`'s widget protocol is already exactly "draw yourself into a
-// rectangle of a buffer" (`TUI_widget.Widget`), which is the whole of what a
-// frame needs from a program's state. Inventing a second drawing interface
-// here would just be that one, worse -- so `run` takes an ordinary `Widget`
-// for the view, and the ONE new interface this module adds is for input,
-// where nothing already fits: `Handler.handle`, called once per decoded
-// event, in the same one-method-interface idiom every callback in this
-// language uses (reference SS6.7) and `Widget` itself already is.
-//
+/*
+ * `apps/tui`'s widget protocol is already exactly "draw yourself into a
+ * rectangle of a buffer" (`TUI_widget.Widget`), which is the whole of what a
+ * frame needs from a program's state. Inventing a second drawing interface
+ * here would just be that one, worse -- so `run` takes an ordinary `Widget`
+ * for the view, and the ONE new interface this module adds is for input,
+ * where nothing already fits: `Handler.handle`, called once per decoded
+ * event, in the same one-method-interface idiom every callback in this
+ * language uses (reference SS6.7) and `Widget` itself already is.
+ * */
 // --- what the loop owns, and what it does not --------------------------------
-//
-// `run` opens raw mode with `term.raw()`, which hands back a `Session` --
-// see `lib/term.m31`'s own header for why its destructor is the whole safety
-// story here, trap path included; this module adds nothing on top of it and
-// is not allowed to need to. The loop reads with a timeout (`tick_ms`),
-// which is also what resolves a lone Escape (`term.Reader.read`'s own
-// comment) and what notices a resized window, since there is no resize
-// EVENT -- `term.m31` leaves that to "call `size()` again", and this is the
-// thing that calls it, once a tick.
-//
-// A `Handler` answers one `Action` per event; the loop itself decides WHEN a
-// resize also needs a redraw, and whether a redraw is a `TUI_diff.full` (a
-// resize, or the very first frame) or a `TUI_diff.diff` against the previous
-// one. None of this is specific to any one program: it is exactly the loop
-// `examples/keys.m31` hand-writes, pulled out here so nothing built on this
-// library has to write it twice.
+/*
+ * `run` opens raw mode with `term.raw()`, which hands back a `Session` --
+ * see `lib/term.m31`'s own header for why its destructor is the whole safety
+ * story here, trap path included; this module adds nothing on top of it and
+ * is not allowed to need to. The loop reads with a timeout (`tick_ms`),
+ * which is also what resolves a lone Escape (`term.Reader.read`'s own
+ * comment) and what notices a resized window, since there is no resize
+ * EVENT -- `term.m31` leaves that to "call `size()` again", and this is the
+ * thing that calls it, once a tick.
+ *
+ * A `Handler` answers one `Action` per event; the loop itself decides WHEN a
+ * resize also needs a redraw, and whether a redraw is a `TUI_diff.full` (a
+ * resize, or the very first frame) or a `TUI_diff.diff` against the previous
+ * one. None of this is specific to any one program: it is exactly the loop
+ * `examples/keys.m31` hand-writes, pulled out here so nothing built on this
+ * library has to write it twice. */
 
 // --- the timer and the mouse (v0.3.0) ------------------------------------------
-//
-// Both are opt-in, and a `Loop()` with none of them set is exactly the loop it
-// was: no mouse reporting is asked for, no timer runs, `run` is `run_with`
-// given a handler that ignores both.
-//
-// **Timer.** `animate_ms > 0` makes the loop call `on_tick.tick(elapsed_ms)`
-// about that often (a spinner's `did_advance`, a clock's seconds). It does not
-// poll: the read's timeout is the smaller of `tick_ms` and the time left until
-// the next tick, never under one millisecond (`read_timeout_ms`), so an idle
-// animated program wakes exactly when a tick is due and sleeps in the kernel
-// otherwise, and a stream of key or mouse reports cannot starve the timer,
-// because it is checked after every read, not only after a timeout. The clock
-// is the wall clock (`date.now_ns`): m31 has no monotonic one (docs/FRICTION.md
-// section 22), so an `elapsed_ms` is clamped to `MAX_ELAPSED_MS` and a clock
-// that went backwards counts as zero and the timer resynchronises, instead of
-// a clock change making an animation leap or freeze.
-//
-// **Escape (v0.12.0).** `escape_wait_ms` > 0 gives a lone Escape (and a held `ESC [`,
-// `ESC O` or OSC prefix) a wait of its own, from the last byte that arrived, whatever the
-// ticker does; 0 is the loop as it was. See the field.
-//
-// **Mouse.** `should_report_mouse` writes `term.MOUSE_ON` on entry (and
-// `MOUSE_OFF` on the way out); `should_report_hover` adds motion with no button
-// down; `should_report_paste` adds bracketed paste, so a paste arrives as one
-// `Event.Paste` instead of keystrokes. With mouse reporting on, each
-// `Event.Mouse` goes to `router` (`TUI_mouse.Router`), which turns it into
-// gestures and finds the region of the LAST frame under the pointer; each routed
-// gesture is handed to `on_mouse`, and the answers are folded (Quit wins, then
-// Redraw). `on_event` does not see mouse events then. The view registers its
-// regions on the same router, in `render`:
-//
-//     router.begin_frame(); router.add("files", files_area); ...
-//
-// **Raw mouse (v0.11.0).** `should_report_raw_mouse` asks for the same reports
-// (and `should_report_hover` adds motion) but does no routing: each report is an
-// `Event.Mouse` for `on_event`, as it came, and `on_mouse` is never called. A
-// program that does its own hit testing gets the mode bytes from the loop (written
-// on entry, taken off on the way out with the rest) instead of writing them in
-// `enter` and `leave`. With both flags on, routing wins.
-//
-// **After a frame (v0.11.0).** `after_frame` holds a hook that is asked, for every
-// frame about to be written, for bytes that are not cells: scaled text (OSC 66),
-// kitty graphics. They are appended to the frame's own bytes, after the cells and
-// before the cursor is put back, so the terminal gets them in the same write (and
-// inside the synchronized-output markers once confirmed). Nothing is set by default
-// and then the bytes of a frame are exactly what they were.
-//
-// **Leaving.** The leave sequence, mouse and paste modes off first, goes to
-// `Session.on_exit` BEFORE the enter sequence is written, so there is no window
-// in which the modes are on and nothing will turn them off. It runs from the
-// Session's destructor: a normal return, an error return, and the program
-// ending all take it. `term` restores only the termios settings if the process
-// is trapped (a panic, `os.exit`) or killed by a signal, and does not write
-// `on_exit`: the mouse and alternate screen then stay on until the shell resets
-// them. That is a gap in `term`, recorded in docs/FRICTION.md section 23, not
-// something this module can close.
+/*
+ * Both are opt-in, and a `Loop()` with none of them set is exactly the loop it
+ * was: no mouse reporting is asked for, no timer runs, `run` is `run_with`
+ * given a handler that ignores both.
+ *
+ * **Timer.** `animate_ms > 0` makes the loop call `on_tick.tick(elapsed_ms)`
+ * about that often (a spinner's `did_advance`, a clock's seconds). It does not
+ * poll: the read's timeout is the smaller of `tick_ms` and the time left until
+ * the next tick, never under one millisecond (`read_timeout_ms`), so an idle
+ * animated program wakes exactly when a tick is due and sleeps in the kernel
+ * otherwise, and a stream of key or mouse reports cannot starve the timer,
+ * because it is checked after every read, not only after a timeout. The clock
+ * is the wall clock (`date.now_ns`): m31 has no monotonic one (docs/FRICTION.md
+ * section 22), so an `elapsed_ms` is clamped to `MAX_ELAPSED_MS` and a clock
+ * that went backwards counts as zero and the timer resynchronises, instead of
+ * a clock change making an animation leap or freeze.
+ *
+ * **Escape (v0.12.0).** `escape_wait_ms` > 0 gives a lone Escape (and a held `ESC [`,
+ * `ESC O` or OSC prefix) a wait of its own, from the last byte that arrived, whatever the
+ * ticker does; 0 is the loop as it was. See the field.
+ *
+ * **Mouse.** `should_report_mouse` writes `term.MOUSE_ON` on entry (and
+ * `MOUSE_OFF` on the way out); `should_report_hover` adds motion with no button
+ * down; `should_report_paste` adds bracketed paste, so a paste arrives as one
+ * `Event.Paste` instead of keystrokes. With mouse reporting on, each
+ * `Event.Mouse` goes to `router` (`TUI_mouse.Router`), which turns it into
+ * gestures and finds the region of the LAST frame under the pointer; each routed
+ * gesture is handed to `on_mouse`, and the answers are folded (Quit wins, then
+ * Redraw). `on_event` does not see mouse events then. The view registers its
+ * regions on the same router, in `render`:
+ *
+ *     router.begin_frame(); router.add("files", files_area); ...
+ *
+ * **Raw mouse (v0.11.0).** `should_report_raw_mouse` asks for the same reports
+ * (and `should_report_hover` adds motion) but does no routing: each report is an
+ * `Event.Mouse` for `on_event`, as it came, and `on_mouse` is never called. A
+ * program that does its own hit testing gets the mode bytes from the loop (written
+ * on entry, taken off on the way out with the rest) instead of writing them in
+ * `enter` and `leave`. With both flags on, routing wins.
+ *
+ * **After a frame (v0.11.0).** `after_frame` holds a hook that is asked, for every
+ * frame about to be written, for bytes that are not cells: scaled text (OSC 66),
+ * kitty graphics. They are appended to the frame's own bytes, after the cells and
+ * before the cursor is put back, so the terminal gets them in the same write (and
+ * inside the synchronized-output markers once confirmed). Nothing is set by default
+ * and then the bytes of a frame are exactly what they were.
+ *
+ * **Leaving.** The leave sequence, mouse and paste modes off first, goes to
+ * `Session.on_exit` BEFORE the enter sequence is written, so there is no window
+ * in which the modes are on and nothing will turn them off. It runs from the
+ * Session's destructor: a normal return, an error return, and the program
+ * ending all take it. `term` restores only the termios settings if the process
+ * is trapped (a panic, `os.exit`) or killed by a signal, and does not write
+ * `on_exit`: the mouse and alternate screen then stay on until the shell resets
+ * them. That is a gap in `term`, recorded in docs/FRICTION.md section 23, not
+ * something this module can close. */
 
 import io;
 import os;
@@ -124,31 +124,31 @@ import core.TUI_style;
 import core.TUI_widget;
 import core.TUI_width;
 
-/// What a `Handler` answers after one event: whether the loop keeps going,
-/// and whether the view needs to be drawn again before the next read. Not a
-/// `bool`, or an `Option` of one, because "something changed" and "time to
-/// stop" are independent facts and a handler should not have to smuggle
-/// "stop" through a sentinel value of the other.
+/** What a `Handler` answers after one event: whether the loop keeps going,
+ * and whether the view needs to be drawn again before the next read. Not a
+ * `bool`, or an `Option` of one, because "something changed" and "time to
+ * stop" are independent facts and a handler should not have to smuggle
+ * "stop" through a sentinel value of the other. */
 pub enum Action {
-    /// Nothing worth a redraw happened: a key with no meaning here, a
-    /// modifier report on its own, and so on.
+    /** Nothing worth a redraw happened: a key with no meaning here, a
+     * modifier report on its own, and so on. */
     Continue;
     /// State changed; redraw before the next read.
     Redraw;
-    /// Stop the loop. The screen is not cleared here -- `Loop.leave`, written
-    /// through the `Session` that is already unwinding, is what does that.
+    /** Stop the loop. The screen is not cleared here -- `Loop.leave`, written
+     * through the `Session` that is already unwinding, is what does that. */
     Quit;
 }
 
-/// A caller's event handler: what one decoded `term.Event` does to the
-/// program's own state. Called once per event, never per byte -- the
-/// decoding already happened in `term.Reader`.
+/** A caller's event handler: what one decoded `term.Event` does to the
+ * program's own state. Called once per event, never per byte -- the
+ * decoding already happened in `term.Reader`. */
 pub interface Handler {
     Action handle(term.Event event);
 }
 
-/// A timer callback: called about every `Loop.animate_ms`, with the
-/// milliseconds since it was last called (clamped, see `clamp_elapsed`).
+/** A timer callback: called about every `Loop.animate_ms`, with the
+ * milliseconds since it was last called (clamped, see `clamp_elapsed`). */
 pub interface Ticker {
     Action tick(int elapsed_ms);
 }
@@ -158,17 +158,17 @@ pub interface MouseHandler {
     Action handle_mouse(TUI_mouse.Routed routed);
 }
 
-/// A hook asked for the extra bytes of a frame (`Loop.after_frame`): called once
-/// per frame, after the diff is composed and before anything is written, with the
-/// buffer the frame shows (`frame`) and whether the frame writes every cell
-/// (`is_full`: the first frame, a resize, a repaint, so whatever the program had on
-/// the screen besides cells is gone and has to be sent again). The bytes it answers
-/// are written after the cells, with the pen reset and the cursor wherever the
-/// cells left it, so a sequence should begin with its own absolute move
-/// (`TUI_diff.move_to`); the cursor is put back after them. An empty answer adds
-/// nothing, and a frame that changed no cell is still written when the hook answers
-/// bytes, so a hook that always answers writes on every drawn frame. The hook may
-/// read `frame` and must not change it.
+/** A hook asked for the extra bytes of a frame (`Loop.after_frame`): called once
+ * per frame, after the diff is composed and before anything is written, with the
+ * buffer the frame shows (`frame`) and whether the frame writes every cell
+ * (`is_full`: the first frame, a resize, a repaint, so whatever the program had on
+ * the screen besides cells is gone and has to be sent again). The bytes it answers
+ * are written after the cells, with the pen reset and the cursor wherever the
+ * cells left it, so a sequence should begin with its own absolute move
+ * (`TUI_diff.move_to`); the cursor is put back after them. An empty answer adds
+ * nothing, and a frame that changed no cell is still written when the hook answers
+ * bytes, so a hook that always answers writes on every drawn frame. The hook may
+ * read `frame` and must not change it. */
 pub interface AfterFrame {
     bytes after_frame(TUI_buffer.Buffer frame, bool is_full);
 }
@@ -191,43 +191,43 @@ pub Action NoMouse.handle_mouse(TUI_mouse.Routed routed) {
     return Action.Continue;
 }
 
-/// The longest gap `Loop` hands a `Ticker`: a suspended process or a clock set
-/// forward is not a second-long frame.
+/** The longest gap `Loop` hands a `Ticker`: a suspended process or a clock set
+ * forward is not a second-long frame. */
 pub const int MAX_ELAPSED_MS = 1000;
 
-/// The loop's own knobs. Every field has a default, so `Loop()` is a
-/// reasonable full-screen program and everything else is named.
+/** The loop's own knobs. Every field has a default, so `Loop()` is a
+ * reasonable full-screen program and everything else is named. */
 pub type Loop {
-    /// How long `Reader.read` waits for a key before coming back around to
-    /// check the window size and, with nothing to read, do nothing else.
-    /// 250ms matches `examples/keys.m31`: quick enough that a resize is
-    /// noticed with no key pressed, slow enough to cost nothing while idle.
+    /** How long `Reader.read` waits for a key before coming back around to
+     * check the window size and, with nothing to read, do nothing else.
+     * 250ms matches `examples/keys.m31`: quick enough that a resize is
+     * noticed with no key pressed, slow enough to cost nothing while idle. */
     pub int tick_ms = 250;
-    /// How long a lone Escape (or a held start of a longer sequence: `ESC [`, `ESC O`,
-    /// an OSC) waits for the rest of itself, in milliseconds, counted from the LAST byte
-    /// that arrived and not shortened by `tick_ms`, `animate_ms` or any redraw. 0, the
-    /// default, is the loop as it was: the read's own timeout (`tick_ms`, or the time to
-    /// the next tick when that is sooner) is also the escape wait, so a lone Escape comes
-    /// out 1 to `tick_ms` ms after the key under a timer, and bytes and timings are those
-    /// of 0.11.0. Above 0 the loop reads with `term.Reader.read_keys(timeout, escape_wait_ms)`
-    /// (m31 v0.9.0): the ticker still runs on time while an Escape is being waited out.
-    /// 25 to 50 is the usual choice; a slow link wants more. Negative counts as 0.
+    /** How long a lone Escape (or a held start of a longer sequence: `ESC [`, `ESC O`,
+     * an OSC) waits for the rest of itself, in milliseconds, counted from the LAST byte
+     * that arrived and not shortened by `tick_ms`, `animate_ms` or any redraw. 0, the
+     * default, is the loop as it was: the read's own timeout (`tick_ms`, or the time to
+     * the next tick when that is sooner) is also the escape wait, so a lone Escape comes
+     * out 1 to `tick_ms` ms after the key under a timer, and bytes and timings are those
+     * of 0.11.0. Above 0 the loop reads with `term.Reader.read_keys(timeout, escape_wait_ms)`
+     * (m31 v0.9.0): the ticker still runs on time while an Escape is being waited out.
+     * 25 to 50 is the usual choice; a slow link wants more. Negative counts as 0. */
     pub int escape_wait_ms = 0;
     pub TUI_style.Depth depth = TUI_style.Depth.TrueColour;
     /// Written once, entering raw mode, before the first frame.
     pub str enter = term.ALT_SCREEN_ON + term.HIDE_CURSOR;
-    /// Handed to `Session.on_exit`, so it is written on every path out of
-    /// `run` -- a clean `Quit`, the input ending, a read failing, a trap --
-    /// not only the first of those.
+    /** Handed to `Session.on_exit`, so it is written on every path out of
+     * `run` -- a clean `Quit`, the input ending, a read failing, a trap --
+     * not only the first of those. */
     pub str leave = term.SHOW_CURSOR + term.RESET + term.ALT_SCREEN_OFF;
     /// Ask the terminal for mouse reports and route them (see the header).
     pub bool should_report_mouse = false;
-    /// Ask for mouse reports (as `should_report_mouse` does) and deliver each as
-    /// an `Event.Mouse` to `on_event`, with no gesture routing and no `on_mouse`.
-    /// Ignored when `should_report_mouse` is on, which routes.
+    /** Ask for mouse reports (as `should_report_mouse` does) and deliver each as
+     * an `Event.Mouse` to `on_event`, with no gesture routing and no `on_mouse`.
+     * Ignored when `should_report_mouse` is on, which routes. */
     pub bool should_report_raw_mouse = false;
-    /// Also report motion with no button down (needs `should_report_mouse` or
-    /// `should_report_raw_mouse`).
+    /** Also report motion with no button down (needs `should_report_mouse` or
+     * `should_report_raw_mouse`). */
     pub bool should_report_hover = false;
     /// Ask for bracketed paste: a paste is one `Event.Paste`.
     pub bool should_report_paste = false;
@@ -235,18 +235,18 @@ pub type Loop {
     pub int animate_ms = 0;
     /// Where mouse reports are routed. Share it with the view.
     pub TUI_mouse.Router router = TUI_mouse.Router();
-    /// After an event, up to this many more that have ALREADY arrived are
-    /// handled before the frame is drawn, so a burst of typing, a macro's
-    /// replayed keys or a paste costs one frame, not one per event. 0 draws
-    /// after every event, as the loop did before.
+    /** After an event, up to this many more that have ALREADY arrived are
+     * handled before the frame is drawn, so a burst of typing, a macro's
+     * replayed keys or a paste costs one frame, not one per event. 0 draws
+     * after every event, as the loop did before. */
     pub int drain_events = 512;
-    /// (Off by default, like every mode here: a program asks for it.)
-    /// Ask the terminal whether it does synchronized output (DEC mode 2026,
-    /// DECRQM) and, when it says yes, wrap every frame in it so a frame is
-    /// never seen half drawn. A terminal that does not answer gets plain frames.
+    /** (Off by default, like every mode here: a program asks for it.)
+     * Ask the terminal whether it does synchronized output (DEC mode 2026,
+     * DECRQM) and, when it says yes, wrap every frame in it so a frame is
+     * never seen half drawn. A terminal that does not answer gets plain frames. */
     pub bool should_sync = false;
-    /// Let the renderer scroll a region of the terminal (`TUI_diff.diff_scrolled`)
-    /// when that is shorter than rewriting it.
+    /** Let the renderer scroll a region of the terminal (`TUI_diff.diff_scrolled`)
+     * when that is shorter than rewriting it. */
     pub bool should_scroll = false;
     /// Ask for focus reports (`\e[?1004h`); `has_focus` follows them.
     pub bool should_report_focus = false;
@@ -254,40 +254,40 @@ pub type Loop {
     pub bool is_sync = false;
     /// Read-only: the terminal has focus (always true without focus reports).
     pub bool has_focus = true;
-    /// Read-only: how many focus reports (in or out) have arrived, so a program can
-    /// tell, in any callback, that focus moved since it last looked.
+    /** Read-only: how many focus reports (in or out) have arrived, so a program can
+     * tell, in any callback, that focus moved since it last looked. */
     pub int focus_changes = 0;
-    /// A focus-in report has the next frame written in full (`should_repaint`):
-    /// whatever ran in the terminal while it was away may have drawn on the screen.
-    /// On by default, as it was; turn it off for a terminal that never does.
+    /** A focus-in report has the next frame written in full (`should_repaint`):
+     * whatever ran in the terminal while it was away may have drawn on the screen.
+     * On by default, as it was; turn it off for a terminal that never does. */
     pub bool should_repaint_on_focus = true;
-    /// Read-only: while a callback runs, whether more input is already waiting,
-    /// so an animation can be skipped rather than started against a queue.
+    /** Read-only: while a callback runs, whether more input is already waiting,
+     * so an animation can be skipped rather than started against a queue. */
     pub bool is_input_queued = false;
-    /// Read-only: frames written so far, the last frame's size in bytes, and
-    /// how long it took (microseconds, drawing to the end of the write).
+    /** Read-only: frames written so far, the last frame's size in bytes, and
+     * how long it took (microseconds, drawing to the end of the write). */
     pub int frame_count = 0;
     pub int last_frame_bytes = 0;
     pub int last_frame_us = 0;
-    /// The real terminal cursor, set by the view while it draws: `x` < 0 hides it.
-    /// Shared like `router`. Without it the cursor stays hidden, as before.
+    /** The real terminal cursor, set by the view while it draws: `x` < 0 hides it.
+     * Shared like `router`. Without it the cursor stays hidden, as before. */
     pub Cursor cursor = Cursor();
-    /// Set by the program (or by a focus-in report) to have the next frame written in
-    /// full, not as a difference: the way to repair a screen something else wrote
-    /// on. The loop clears it after that frame.
+    /** Set by the program (or by a focus-in report) to have the next frame written in
+     * full, not as a difference: the way to repair a screen something else wrote
+     * on. The loop clears it after that frame. */
     pub bool should_repaint = false;
-    /// CTRL-L writes the next frame in full (`should_repaint`), for a program that has no key of its own
-    /// for it: the screen is cleared and every cell written again, which is what repairs a terminal that
-    /// something else wrote on. The key is still handed to the program. Off by default (m3 has its own).
+    /** CTRL-L writes the next frame in full (`should_repaint`), for a program that has no key of its own
+     * for it: the screen is cleared and every cell written again, which is what repairs a terminal that
+     * something else wrote on. The key is still handed to the program. Off by default (m3 has its own). */
     pub bool should_repaint_on_ctrl_l = false;
-    /// Ask Apple's Terminal for synchronized output too (`should_sync` leaves it alone there: it does not know
-    /// mode 2026 and does not answer). For a program whose user said so.
+    /** Ask Apple's Terminal for synchronized output too (`should_sync` leaves it alone there: it does not know
+     * mode 2026 and does not answer). For a program whose user said so. */
     pub bool should_sync_on_apple_terminal = false;
     /// The program sets `cursor` (and so its shape): put the shape back on the way out.
     pub bool should_manage_cursor = false;
-    /// The off switch of `copy`: false and a copy writes nothing (a setting, a
-    /// policy, a terminal known not to take OSC 52). On by default, because a copy
-    /// is only ever written when the program calls `copy`.
+    /** The off switch of `copy`: false and a copy writes nothing (a setting, a
+     * policy, a terminal known not to take OSC 52). On by default, because a copy
+     * is only ever written when the program calls `copy`. */
     pub bool is_copy_allowed = true;
     /// The most bytes of text one `copy` puts on the clipboard (see `TUI_osc`).
     pub int copy_limit = TUI_osc.CLIPBOARD_LIMIT;
@@ -295,47 +295,47 @@ pub type Loop {
     pub Option<AfterFrame> after_frame = Option<AfterFrame>.None;
     /// Bytes to write as they are, in order, before the next frame (see `queue_output`).
     bytes outbox = [];
-    /// Ask the terminal for the kitty keyboard protocol (flag 1: Escape, Ctrl-i,
-    /// Alt-x and the like get reports of their own, see `TUI_keys`): `CSI ? u` and
-    /// `CSI c` are written on entry, and the protocol is turned on only when the
-    /// terminal answers the first. One that does not gets the keys it always got.
+    /** Ask the terminal for the kitty keyboard protocol (flag 1: Escape, Ctrl-i,
+     * Alt-x and the like get reports of their own, see `TUI_keys`): `CSI ? u` and
+     * `CSI c` are written on entry, and the protocol is turned on only when the
+     * terminal answers the first. One that does not gets the keys it always got. */
     pub bool should_disambiguate_keys = false;
-    /// Ask for xterm's modifyOtherKeys level 2: as the fallback of
-    /// `should_disambiguate_keys` when the terminal did not answer it, or by itself
-    /// (then written on entry with nothing asked first, since nothing can be).
+    /** Ask for xterm's modifyOtherKeys level 2: as the fallback of
+     * `should_disambiguate_keys` when the terminal did not answer it, or by itself
+     * (then written on entry with nothing asked first, since nothing can be). */
     pub bool should_try_modify_other_keys = false;
-    /// Read-only: which encoding the keys come in, `TUI_keys.KEYS_CLASSIC`,
-    /// `KEYS_KITTY` or `KEYS_MODIFY_OTHER`. Not known until the terminal has answered.
+    /** Read-only: which encoding the keys come in, `TUI_keys.KEYS_CLASSIC`,
+     * `KEYS_KITTY` or `KEYS_MODIFY_OTHER`. Not known until the terminal has answered. */
     pub int key_protocol = 0;
     /// The kitty question is out and neither answer has come.
     bool is_key_reply_pending = false;
-    /// Where keys are read from: 0, standard input, which must be a terminal (as it
-    /// always was); `INPUT_AUTO` (-1), standard input if it is a terminal and else
-    /// standard output if that is -- a viewer fed from a pipe (`cat x.md | viewer`) has
-    /// no terminal on standard input, and the tty that standard output is is one file
-    /// for reading and writing; or any other descriptor.
+    /** Where keys are read from: 0, standard input, which must be a terminal (as it
+     * always was); `INPUT_AUTO` (-1), standard input if it is a terminal and else
+     * standard output if that is -- a viewer fed from a pipe (`cat x.md | viewer`) has
+     * no terminal on standard input, and the tty that standard output is is one file
+     * for reading and writing; or any other descriptor. */
     pub int input_fd = 0;
-    /// Ask the terminal how wide it draws a few reference characters (box drawing, arrows, Greek, a
-    /// symbol with U+FE0F, a flag, a ZWJ family, a combining accent, a Nerd Font glyph, ...) right after
-    /// entering the alternate screen: one write, one read of the answers (cursor position reports), at most
-    /// `width_probe_ms` (a terminal that does not answer keeps the static policy of 0.13.0, and the
-    /// start-up waits that long at most). Classes the terminal drew as the library expects are then
-    /// trusted (the renderer diffs them per cell, as it does ASCII); classes it drew differently are
-    /// laid out at the measured width. Skipped when standard output is not a terminal and by the
-    /// environment variable `TUI_WIDTH_PROBE=off`. What it found is `width_table`.
+    /** Ask the terminal how wide it draws a few reference characters (box drawing, arrows, Greek, a
+     * symbol with U+FE0F, a flag, a ZWJ family, a combining accent, a Nerd Font glyph, ...) right after
+     * entering the alternate screen: one write, one read of the answers (cursor position reports), at most
+     * `width_probe_ms` (a terminal that does not answer keeps the static policy of 0.13.0, and the
+     * start-up waits that long at most). Classes the terminal drew as the library expects are then
+     * trusted (the renderer diffs them per cell, as it does ASCII); classes it drew differently are
+     * laid out at the measured width. Skipped when standard output is not a terminal and by the
+     * environment variable `TUI_WIDTH_PROBE=off`. What it found is `width_table`. */
     pub bool should_calibrate_width = true;
-    /// The whole budget of the calibration, in milliseconds. 150 is plenty for a local terminal and an
-    /// ordinary ssh link; a slow link wants more, a program that cannot wait any wants `should_calibrate_width` off.
+    /** The whole budget of the calibration, in milliseconds. 150 is plenty for a local terminal and an
+     * ordinary ssh link; a slow link wants more, a program that cannot wait any wants `should_calibrate_width` off. */
     pub int width_probe_ms = TUI_width.DEFAULT_PROBE_MS;
-    /// When the terminal can do grapheme clustering (DEC mode 2027) and has it off, switch it on (the terminal then
-    /// measures clusters as the library does) and switch it off on the way out. Only with `should_calibrate_width`.
+    /** When the terminal can do grapheme clustering (DEC mode 2027) and has it off, switch it on (the terminal then
+     * measures clusters as the library does) and switch it off on the way out. Only with `should_calibrate_width`. */
     pub bool should_set_grapheme_mode = true;
-    /// The borders a program draws: `Auto` is Unicode line drawing unless the terminal drew box drawing wider than
-    /// one column, then ASCII (`+-|`); `Ascii` and `Unicode` are always. `TUI_BORDERS=ascii|unicode|auto` in the
-    /// environment wins over this (the user knows the terminal), and `Block.charset` wins for one block.
+    /** The borders a program draws: `Auto` is Unicode line drawing unless the terminal drew box drawing wider than
+     * one column, then ASCII (`+-|`); `Ascii` and `Unicode` are always. `TUI_BORDERS=ascii|unicode|auto` in the
+     * environment wins over this (the user knows the terminal), and `Block.charset` wins for one block. */
     pub TUI_width.Borders borders = TUI_width.Borders.Auto;
-    /// Read-only: what the terminal measured (see `TUI_width.Table`); nothing measured until `run_with` has asked
-    /// (or `calibrate_width`). The buffers the loop draws into carry it as `Buffer.table`.
+    /** Read-only: what the terminal measured (see `TUI_width.Table`); nothing measured until `run_with` has asked
+     * (or `calibrate_width`). The buffers the loop draws into carry it as `Buffer.table`. */
     pub TUI_width.Table width_table = TUI_width.Table();
     /// Events read while the calibration waited for its answers, in the order they came; handed to the program first.
     List<term.Event> replay = [];
@@ -382,13 +382,13 @@ pub bool Loop.is_width_probe_off() {
     }
 }
 
-/// Ask the terminal how wide it draws the reference characters of `TUI_width` and keep the answer as
-/// `width_table`. `rows` is the height of the screen (the questions are asked on row 2; a screen of one row is
-/// not asked). One write of all the questions, then the answers are read until all have come or
-/// `width_probe_ms` have passed in all; events that are not answers (a key typed meanwhile, the replies to
-/// the loop's other questions) are kept in order and handed to the program before anything else is read. A
-/// terminal that answers nothing, or answers wrongly (the control questions `A` and an ideograph), is left
-/// unmeasured. Sets `width_table.outcome`, `answers` and `elapsed_us`, and decides the borders.
+/** Ask the terminal how wide it draws the reference characters of `TUI_width` and keep the answer as
+ * `width_table`. `rows` is the height of the screen (the questions are asked on row 2; a screen of one row is
+ * not asked). One write of all the questions, then the answers are read until all have come or
+ * `width_probe_ms` have passed in all; events that are not answers (a key typed meanwhile, the replies to
+ * the loop's other questions) are kept in order and handed to the program before anything else is read. A
+ * terminal that answers nothing, or answers wrongly (the control questions `A` and an ideograph), is left
+ * unmeasured. Sets `width_table.outcome`, `answers` and `elapsed_us`, and decides the borders. */
 pub void Loop.calibrate_width(ProbeLink link, int rows) {
     TUI_width.Borders choice = effective_borders();
     if (is_width_probe_off()) {
@@ -435,8 +435,8 @@ pub void Loop.calibrate_width(ProbeLink link, int rows) {
     width_table = table;
 }
 
-// Read events until `probe` has all its answers or the deadline passes: an answer is taken, any other
-// event is kept for the program.
+/* Read events until `probe` has all its answers or the deadline passes: an answer is taken, any other
+ * event is kept for the program. */
 void Loop.collect_answers(ProbeLink link, TUI_width.Probe probe, int deadline_ms) {
     while (!probe.is_done()) {
         int remaining_ms = deadline_ms - now_ms();
@@ -475,13 +475,13 @@ pub TUI_buffer.Buffer Loop.new_buffer(int columns, int rows) {
     return buffer;
 }
 
-/// Put `text` on the system clipboard (OSC 52, see `TUI_osc`): written before the
-/// next frame, even when nothing is redrawn, and still written when the same
-/// callback answers `Quit`. At most `copy_limit` bytes of it go, cut at a grapheme
-/// cluster. Answers how many bytes went: 0 when `is_copy_allowed` is false, when
-/// there is no text, or when `copy_limit` is not above 0, so a program can say
-/// "copied 3 lines" or "copy is off" truthfully, and compare with `text.size()` to
-/// say "truncated".
+/** Put `text` on the system clipboard (OSC 52, see `TUI_osc`): written before the
+ * next frame, even when nothing is redrawn, and still written when the same
+ * callback answers `Quit`. At most `copy_limit` bytes of it go, cut at a grapheme
+ * cluster. Answers how many bytes went: 0 when `is_copy_allowed` is false, when
+ * there is no text, or when `copy_limit` is not above 0, so a program can say
+ * "copied 3 lines" or "copy is off" truthfully, and compare with `text.size()` to
+ * say "truncated". */
 pub int Loop.copy(str text) {
     if (!is_copy_allowed) {
         return 0;
@@ -494,16 +494,16 @@ pub int Loop.copy(str text) {
     return TUI_osc.clipboard_fit(text, copy_limit);
 }
 
-/// Have `data` written to the terminal as it is, before the next frame, without
-/// going through the cell buffer: a sequence the program builds itself. The loop
-/// does not look at it; nothing here keeps it from moving the cursor or changing
-/// a mode, so it is for sequences the program means.
+/** Have `data` written to the terminal as it is, before the next frame, without
+ * going through the cell buffer: a sequence the program builds itself. The loop
+ * does not look at it; nothing here keeps it from moving the cursor or changing
+ * a mode, so it is for sequences the program means. */
 pub void Loop.queue_output(bytes data) {
     outbox.extend(data);
 }
 
-/// The queued output, which is forgotten: what the loop writes before a frame.
-/// A program with a loop of its own writes it the same way.
+/** The queued output, which is forgotten: what the loop writes before a frame.
+ * A program with a loop of its own writes it the same way. */
 pub bytes Loop.take_output() {
     bytes taken = outbox;
     outbox = [];
@@ -537,8 +537,8 @@ pub str Loop.enter_sequence() {
     return enter + modes;
 }
 
-/// The bytes written on the way out: the modes off (the reverse of entry), then
-/// `leave`.
+/** The bytes written on the way out: the modes off (the reverse of entry), then
+ * `leave`. */
 pub str Loop.leave_sequence() {
     str modes = keys_off_sequence();
     if (should_sync) {
@@ -568,9 +568,9 @@ pub str Loop.leave_sequence() {
     return modes + TUI_diff.AUTOWRAP_ON + leave;
 }
 
-/// What the loop has to say about the keys now: `run_with` calls it once the
-/// enter sequence is written, so the replies to its questions are recognised. With
-/// `should_try_modify_other_keys` alone the protocol is on from here, asked for.
+/** What the loop has to say about the keys now: `run_with` calls it once the
+ * enter sequence is written, so the replies to its questions are recognised. With
+ * `should_try_modify_other_keys` alone the protocol is on from here, asked for. */
 pub void Loop.start_keys() {
     key_protocol = TUI_keys.KEYS_CLASSIC;
     is_key_reply_pending = false;
@@ -581,10 +581,10 @@ pub void Loop.start_keys() {
     }
 }
 
-/// The bytes that put the keyboard back, which is none for a terminal that was
-/// not asked or did not agree: nothing is written to a terminal that was found
-/// not to have the protocol. The kitty flags go while the alternate screen is
-/// still on (each screen has its own stack), so `leave_sequence` has this first.
+/** The bytes that put the keyboard back, which is none for a terminal that was
+ * not asked or did not agree: nothing is written to a terminal that was found
+ * not to have the protocol. The kitty flags go while the alternate screen is
+ * still on (each screen has its own stack), so `leave_sequence` has this first. */
 pub str Loop.keys_off_sequence() {
     if (key_protocol == TUI_keys.KEYS_KITTY) {
         return TUI_keys.KITTY_POP;
@@ -595,12 +595,12 @@ pub str Loop.keys_off_sequence() {
     return "";
 }
 
-/// Take the terminal's answer to the keyboard questions, if `raw` (an
-/// `Event.Unknown`'s bytes) is one, and say so: the kitty answer turns the
-/// protocol on (queued, written before the next frame), the device attributes
-/// answer, which comes after it from a terminal that has the protocol and instead
-/// of it from one that has not, ends the wait and falls back to modifyOtherKeys
-/// when that was asked. Answers that were not asked for are not taken.
+/** Take the terminal's answer to the keyboard questions, if `raw` (an
+ * `Event.Unknown`'s bytes) is one, and say so: the kitty answer turns the
+ * protocol on (queued, written before the next frame), the device attributes
+ * answer, which comes after it from a terminal that has the protocol and instead
+ * of it from one that has not, ends the wait and falls back to modifyOtherKeys
+ * when that was asked. Answers that were not asked for are not taken. */
 pub bool Loop.did_take_key_reply(bytes raw) {
     if (!should_disambiguate_keys) {
         return false;
@@ -623,10 +623,10 @@ pub bool Loop.did_take_key_reply(bytes raw) {
     return true;
 }
 
-/// `event` as the program should see it under the keyboard protocol in use:
-/// with the classic encoding, as it is. With kitty or modifyOtherKeys, Shift-Tab is
-/// `BackTab` (see `TUI_keys.normalized`), and a modifyOtherKeys report the decoder
-/// does not know (it arrives as `Unknown`) is the `Key` it means.
+/** `event` as the program should see it under the keyboard protocol in use:
+ * with the classic encoding, as it is. With kitty or modifyOtherKeys, Shift-Tab is
+ * `BackTab` (see `TUI_keys.normalized`), and a modifyOtherKeys report the decoder
+ * does not know (it arrives as `Unknown`) is the `Key` it means. */
 pub term.Event Loop.translate(term.Event event) {
     if (key_protocol == TUI_keys.KEYS_CLASSIC) {
         return event;
@@ -656,29 +656,29 @@ pub term.Event Loop.translate(term.Event event) {
     }
 }
 
-/// Raw mode, then read-dispatch-render until `on_event` answers `Quit`, the
-/// input ends, or reading fails. Whichever ends it, the terminal is restored
-/// before this returns: `session.on_exit(leave)` runs from the `Session`'s own
-/// destructor, the one exit path this function cannot fail to take.
-///
-/// `Err(term.Error.NotATerminal)` when standard input is not a terminal, and
-/// whatever `term.raw()` itself answers otherwise. Once raw mode is entered a
-/// read or write failure ends the loop rather than being reported past this
-/// call -- `examples/keys.m31`'s own choice, because a terminal that has
-/// stopped answering has nothing left to say beyond "stopped".
+/** Raw mode, then read-dispatch-render until `on_event` answers `Quit`, the
+ * input ends, or reading fails. Whichever ends it, the terminal is restored
+ * before this returns: `session.on_exit(leave)` runs from the `Session`'s own
+ * destructor, the one exit path this function cannot fail to take.
+ *
+ * `Err(term.Error.NotATerminal)` when standard input is not a terminal, and
+ * whatever `term.raw()` itself answers otherwise. Once raw mode is entered a
+ * read or write failure ends the loop rather than being reported past this
+ * call -- `examples/keys.m31`'s own choice, because a terminal that has
+ * stopped answering has nothing left to say beyond "stopped". */
 pub Result<int, term.Error> Loop.run(TUI_widget.Widget view, Handler on_event) {
     return run_with(view, on_event, NoTicker(), NoMouse());
 }
 
-/// `run`, with a timer (`animate_ms`, `on_tick`) and routed mouse gestures
-/// (`should_report_mouse`, `on_mouse`); see the header.
-///
-/// Each pass: wait for input (or the next tick), handle everything that has
-/// already arrived (`drain_events`), give the timer its turn, and only then
-/// draw -- once. So input is always handled before the next animation frame, and
-/// a burst of keys costs one frame. `animate_ms` and `tick_ms` are read every
-/// pass, so a callback may change them (an animation asks for 16 ms while it
-/// runs and gives it back).
+/** `run`, with a timer (`animate_ms`, `on_tick`) and routed mouse gestures
+ * (`should_report_mouse`, `on_mouse`); see the header.
+ *
+ * Each pass: wait for input (or the next tick), handle everything that has
+ * already arrived (`drain_events`), give the timer its turn, and only then
+ * draw -- once. So input is always handled before the next animation frame, and
+ * a burst of keys costs one frame. `animate_ms` and `tick_ms` are read every
+ * pass, so a callback may change them (an animation asks for 16 ms while it
+ * runs and gives it back). */
 pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_event, Ticker on_tick, MouseHandler on_mouse) {
     int in_fd = pick_input_fd(input_fd, term.is_terminal(0), term.is_terminal(1));
     if (in_fd < 0 || !term.is_terminal(in_fd)) {
@@ -704,11 +704,11 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
             if (width_table.is_grapheme_set) {
                 session.on_exit(TUI_width.GRAPHEME_OFF);
             }
-            // Two buffers for the whole run, swapped each frame: the one
-            // just shown and the one being drawn. A fresh buffer per frame
-            // is three lists grown a cell at a time -- twice the cost of
-            // clearing one that already exists -- and nothing about a
-            // frame needs the last one's memory gone.
+            /* Two buffers for the whole run, swapped each frame: the one
+             * just shown and the one being drawn. A fresh buffer per frame
+             * is three lists grown a cell at a time -- twice the cost of
+             * clearing one that already exists -- and nothing about a
+             * frame needs the last one's memory gone. */
             TUI_buffer.Buffer previous = new_buffer(window_size.columns, window_size.rows);
             TUI_buffer.Buffer next = new_buffer(window_size.columns, window_size.rows);
             Shown shown = Shown();
@@ -723,10 +723,10 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     case Ok(term.Input inp): {
                         match (inp) {
                             case Got(term.Event event): {
-                                // This event and every one already waiting, up to a
-                                // budget, before anything is drawn. One event of
-                                // look-ahead says whether input is queued behind
-                                // the one being handled.
+                                /* This event and every one already waiting, up to a
+                                 * budget, before anything is drawn. One event of
+                                 * look-ahead says whether input is queued behind
+                                 * the one being handled. */
                                 term.Event current = event;
                                 int batch_start_ms = now_ms();
                                 int handled = 0;
@@ -796,8 +796,8 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     }
                 }
                 if (outbox.size() > 0) {
-                    // a copy, or other queued output, goes out even if the same
-                    // callback asked to quit
+                    /* a copy, or other queued output, goes out even if the same
+                     * callback asked to quit */
                     writer.put_bytes(take_output());
                     flush(writer);
                 }
@@ -808,16 +808,16 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     if (should_redraw || did_resize || should_repaint) {
                         int started_ns = timer.monotonic_ns();
                         if (did_resize) {
-                            // A resize is the one time the buffers are
-                            // replaced: the old pair is the wrong shape.
+                            /* A resize is the one time the buffers are
+                             * replaced: the old pair is the wrong shape. */
                             next = new_buffer(window_size.columns, window_size.rows);
                             previous = new_buffer(window_size.columns, window_size.rows);
                         } else {
                             next.clear();
                         }
                         view.render(next, next.area());
-                        // a write that failed leaves the terminal showing an unknown part of
-                        // the frame: the next one is written in full
+                        /* a write that failed leaves the terminal showing an unknown part of
+                         * the frame: the next one is written in full */
                         should_repaint = !present(writer, previous, next, did_resize || should_repaint, shown);
                         last_frame_us = (timer.monotonic_ns() - started_ns) / 1000;
                         TUI_buffer.Buffer shown_buffer = previous;
@@ -826,8 +826,8 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
                     }
                 }
             }
-            // the keyboard goes back while the alternate screen is still on (the
-            // session's own leave sequence, which follows, turns it off)
+            /* the keyboard goes back while the alternate screen is still on (the
+             * session's own leave sequence, which follows, turns it off) */
             str keys_off = keys_off_sequence();
             if (keys_off.size() > 0) {
                 writer.put(keys_off);
@@ -838,9 +838,9 @@ pub Result<int, term.Error> Loop.run_with(TUI_widget.Widget view, Handler on_eve
     return Result<int, term.Error>.Ok(0);
 }
 
-// Draw one frame: `next` against `previous` (or all of it), the cursor, and
-// the synchronized-output markers, as ONE write. Nothing is written for a frame
-// that changes nothing.
+/* Draw one frame: `next` against `previous` (or all of it), the cursor, and
+ * the synchronized-output markers, as ONE write. Nothing is written for a frame
+ * that changes nothing. */
 bool Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
     bytes out = frame_bytes(previous, next, is_full, shown);
     if (out.size() == 0) {
@@ -853,10 +853,10 @@ bool Loop.present(term.Writer writer, TUI_buffer.Buffer previous, TUI_buffer.Buf
     return flush(writer);
 }
 
-/// The bytes of one frame, ready to write: `next` against `previous` (or all of it),
-/// then what `after_frame` adds, composed by `compose_frame_with`. Empty when nothing
-/// changed. Public so a test, or a loop of your own, can see exactly what `run_with`
-/// writes.
+/** The bytes of one frame, ready to write: `next` against `previous` (or all of it),
+ * then what `after_frame` adds, composed by `compose_frame_with`. Empty when nothing
+ * changed. Public so a test, or a loop of your own, can see exactly what `run_with`
+ * writes. */
 pub bytes Loop.frame_bytes(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, bool is_full, Shown shown) {
     bytes body = [];
     if (is_full) {
@@ -877,22 +877,22 @@ pub bytes Loop.frame_bytes(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, b
     return compose_frame_with(body, extra, shown);
 }
 
-/// The bytes of one frame around `body` (what the renderer produced): the cursor
-/// hidden while it is drawn and put where the view wants it afterwards, all of it
-/// between the synchronized-output markers when the terminal confirmed mode 2026
-/// (`is_sync`). Empty when nothing changed, the cursor included. `shown` is what
-/// the terminal has been told about the cursor so far; it is updated.
-///
-/// Public so that a program with a loop of its own can write exactly the frames
-/// `Loop` writes, and so a test can look at them without a terminal.
+/** The bytes of one frame around `body` (what the renderer produced): the cursor
+ * hidden while it is drawn and put where the view wants it afterwards, all of it
+ * between the synchronized-output markers when the terminal confirmed mode 2026
+ * (`is_sync`). Empty when nothing changed, the cursor included. `shown` is what
+ * the terminal has been told about the cursor so far; it is updated.
+ *
+ * Public so that a program with a loop of its own can write exactly the frames
+ * `Loop` writes, and so a test can look at them without a terminal. */
 pub bytes Loop.compose_frame(bytes body, Shown shown) {
     return compose_frame_with(body, [], shown);
 }
 
-/// `compose_frame` with `extra` (what an `AfterFrame` hook answered) written after
-/// `body` and before the cursor is put back, inside the same synchronized update. With
-/// `extra` empty it is `compose_frame`, byte for byte. A frame whose `body` is empty is
-/// still written when `extra` is not.
+/** `compose_frame` with `extra` (what an `AfterFrame` hook answered) written after
+ * `body` and before the cursor is put back, inside the same synchronized update. With
+ * `extra` empty it is `compose_frame`, byte for byte. A frame whose `body` is empty is
+ * still written when `extra` is not. */
 pub bytes Loop.compose_frame_with(bytes body, bytes extra, Shown shown) {
     bool is_cursor_wanted = cursor.x >= 0 && cursor.y >= 0;
     bool did_cursor_change = is_cursor_wanted != shown.is_visible || (is_cursor_wanted && (cursor.x != shown.x || cursor.y != shown.y || cursor.shape != shown.shape));
@@ -932,8 +932,8 @@ pub bytes Loop.compose_frame_with(bytes body, bytes extra, Shown shown) {
     return out;
 }
 
-// One decoded event to the right callback: a mouse report to the router (when
-// mouse reporting is on), everything else to `on_event`.
+/* One decoded event to the right callback: a mouse report to the router (when
+ * mouse reporting is on), everything else to `on_event`. */
 pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_mouse) {
     term.Event event = translate(incoming);
     match (event) {
@@ -971,8 +971,8 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
         }
         case Unknown(bytes raw): {
             if (did_take_key_reply(raw)) {
-                // the answer to the keyboard questions: the loop's own business, and the
-                // view may show what it came to (`key_protocol`), so it is drawn again
+                /* the answer to the keyboard questions: the loop's own business, and the
+                 * view may show what it came to (`key_protocol`), so it is drawn again */
                 return Action.Redraw;
             }
             if (late_reports > 0 && TUI_width.is_cursor_report(raw)) {
@@ -985,8 +985,8 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
             }
             int reply = TUI_diff.sync_reply(raw);
             if (reply >= 0) {
-                // the answer to the mode 2026 question: the loop's own business, and the
-                // view may show what it came to (`is_sync`), so it is drawn again
+                /* the answer to the mode 2026 question: the loop's own business, and the
+                 * view may show what it came to (`is_sync`), so it is drawn again */
                 is_sync = reply == 1 && should_sync;
                 return Action.Redraw;
             }
@@ -1005,9 +1005,9 @@ pub Action Loop.dispatch(term.Event incoming, Handler on_event, MouseHandler on_
     }
 }
 
-/// One read for the loop: `reader.read(timeout_ms)` as it always was when `escape_wait_ms`
-/// is 0 (or less), `reader.read_keys(timeout_ms, escape_wait_ms)` above 0, so that the
-/// timeout is only how long to wait for a first byte and the escape wait is its own.
+/** One read for the loop: `reader.read(timeout_ms)` as it always was when `escape_wait_ms`
+ * is 0 (or less), `reader.read_keys(timeout_ms, escape_wait_ms)` above 0, so that the
+ * timeout is only how long to wait for a first byte and the escape wait is its own. */
 Result<term.Input, term.Error> Loop.read_next(term.Reader reader, int timeout_ms) {
     match (take_replayed()) {
         case Some(term.Event held): {
@@ -1059,8 +1059,8 @@ Option<term.Event> Loop.read_ahead(term.Reader reader) {
     return Option<term.Event>.None;
 }
 
-/// What the calibration talks to the terminal through: bytes out, events in. `TermLink` is the real one
-/// (a `term.Writer` and `term.Reader`); a test supplies its own and needs no terminal.
+/** What the calibration talks to the terminal through: bytes out, events in. `TermLink` is the real one
+ * (a `term.Writer` and `term.Reader`); a test supplies its own and needs no terminal. */
 pub interface ProbeLink {
     /// Write `data` (and flush: the terminal must have it before anything is waited for).
     void send(bytes data);
@@ -1164,9 +1164,9 @@ pub bool is_apple_terminal() {
 /// `Loop.input_fd` for "standard input if it is a terminal, else standard output".
 pub const int INPUT_AUTO = -1;
 
-/// The descriptor keys are read from, given `Loop.input_fd` and whether standard
-/// input and standard output are terminals: -1 when there is none to read from.
-/// Pulled out so it can be checked without a terminal.
+/** The descriptor keys are read from, given `Loop.input_fd` and whether standard
+ * input and standard output are terminals: -1 when there is none to read from.
+ * Pulled out so it can be checked without a terminal. */
 pub int pick_input_fd(int configured, bool is_input_terminal, bool is_output_terminal) {
     if (configured != INPUT_AUTO) {
         return configured;
@@ -1180,9 +1180,9 @@ pub int pick_input_fd(int configured, bool is_input_terminal, bool is_output_ter
     return -1;
 }
 
-/// What a focus report says: 1 the terminal gained focus (`CSI I`), 0 it lost it
-/// (`CSI O`), -1 these bytes are not one. Reports are sent after `CSI ? 1004 h`, which
-/// `should_report_focus` writes; a program with a loop of its own reads them with this.
+/** What a focus report says: 1 the terminal gained focus (`CSI I`), 0 it lost it
+ * (`CSI O`), -1 these bytes are not one. Reports are sent after `CSI ? 1004 h`, which
+ * `should_report_focus` writes; a program with a loop of its own reads them with this. */
 pub int focus_report(bytes raw) {
     if (raw.size() == 3 && raw[0] == 27 && raw[1] == '[') {
         if (raw[2] == 'I') {
@@ -1195,9 +1195,9 @@ pub int focus_report(bytes raw) {
     return -1;
 }
 
-/// Where the terminal's own cursor should be after a frame, and its shape:
-/// 0 the terminal's default, 1 / 2 block (blinking / steady), 3 / 4 underline,
-/// 5 / 6 bar (DECSCUSR). `x` < 0 means hidden.
+/** Where the terminal's own cursor should be after a frame, and its shape:
+ * 0 the terminal's default, 1 / 2 block (blinking / steady), 3 / 4 underline,
+ * 5 / 6 bar (DECSCUSR). `x` < 0 means hidden. */
 pub type Cursor {
     pub int x = -1;
     pub int y = -1;
@@ -1212,13 +1212,13 @@ pub type Shown {
     pub bool is_visible = false;
 }
 
-/// How long one pass may keep handling already-arrived events before it
-/// draws, whatever `drain_events` allows: a storm of input still gets frames.
+/** How long one pass may keep handling already-arrived events before it
+ * draws, whatever `drain_events` allows: a storm of input still gets frames. */
 const int BATCH_MS = 8;
 
-/// How long a read may wait, in milliseconds: `tick_ms`, or less when a timer
-/// tick is due sooner (`animate_ms` > 0, `since_tick_ms` since the last one),
-/// and never under 1, so a tick that is already late is a poll, not a hang.
+/** How long a read may wait, in milliseconds: `tick_ms`, or less when a timer
+ * tick is due sooner (`animate_ms` > 0, `since_tick_ms` since the last one),
+ * and never under 1, so a tick that is already late is a poll, not a hang. */
 pub int read_timeout_ms(int tick_ms, int animate_ms, int since_tick_ms) {
     int wait = tick_ms;
     if (animate_ms > 0) {
@@ -1233,14 +1233,14 @@ pub int read_timeout_ms(int tick_ms, int animate_ms, int since_tick_ms) {
     return wait;
 }
 
-/// Whether the loop may take one more already-arrived event before drawing:
-/// fewer than `limit` so far, and a limit above 0.
+/** Whether the loop may take one more already-arrived event before drawing:
+ * fewer than `limit` so far, and a limit above 0. */
 pub bool should_keep_draining(int drained, int limit) {
     return limit > 0 && drained < limit;
 }
 
-/// An elapsed time made safe to hand on: a clock that went backwards is 0, and
-/// a jump forward is cut to `MAX_ELAPSED_MS`.
+/** An elapsed time made safe to hand on: a clock that went backwards is 0, and
+ * a jump forward is cut to `MAX_ELAPSED_MS`. */
 pub int clamp_elapsed(int elapsed_ms) {
     if (elapsed_ms < 0) {
         return 0;
@@ -1280,10 +1280,10 @@ pub Action fold(Action first, Action second) {
     }
 }
 
-/// The window's size, falling back to 80x24 when the terminal does not know
-/// its own -- `examples/keys.m31`'s own fallback, for the same reason:
-/// `term.size` answering 0x0 is not an error, and a frame has to be built
-/// from SOME size.
+/** The window's size, falling back to 80x24 when the terminal does not know
+ * its own -- `examples/keys.m31`'s own fallback, for the same reason:
+ * `term.size` answering 0x0 is not an error, and a frame has to be built
+ * from SOME size. */
 pub term.Size screen_size() {
     match (term.size()) {
         case Ok(term.Size window_size): {
@@ -1297,17 +1297,17 @@ pub term.Size screen_size() {
     return term.Size(24, 80);
 }
 
-/// Whether two readings of the window's size differ -- the loop's own resize
-/// test, pulled out so it can be checked without a terminal at all.
+/** Whether two readings of the window's size differ -- the loop's own resize
+ * test, pulled out so it can be checked without a terminal at all. */
 pub bool has_resized(term.Size previous, term.Size current) {
     return previous.rows != current.rows || previous.columns != current.columns;
 }
 
 bool flush(term.Writer writer) {
-    // A `Writer`'s error is `io.Error`, not `term.Error`, and turning one
-    // into the other would invent a mapping nobody asked for. Same answer
-    // `Loop.run`'s own header gives for a failed read: there is nothing left
-    // to do with a terminal that has stopped taking writes but stop.
+    /* A `Writer`'s error is `io.Error`, not `term.Error`, and turning one
+     * into the other would invent a mapping nobody asked for. Same answer
+     * `Loop.run`'s own header gives for a failed read: there is nothing left
+     * to do with a terminal that has stopped taking writes but stop. */
     match (writer.flush()) {
         case Ok(int count): {
             return true;

@@ -1,46 +1,46 @@
-// Bars, grouped, standing up or lying down, with labels and value text.
-//
-// API
+/* Bars, grouped, standing up or lying down, with labels and value text.
+ *
+ * API */
 // ---
-//   TUI_barchart.Bar(value, label:, text:, style:)         one bar
-//   TUI_barchart.BarGroup(label, bars)                     bars that belong together
-//   TUI_barchart.BarChart(groups, direction:, bar_width:, ...)   a Widget
-//   TUI_barchart.BarChart.of_bars(bars)                    one unlabelled group
-//   chart.bounds()                                         the range the bars are scaled against
-//
-// Every bar is scaled against ONE range (`min_value` .. `max_value`, pinned
-// or taken from all the data -- TUI_eighths.bounds_of has the rule), so bars
-// in different groups are comparable. Bars are exact to an eighth of a cell.
-// A bar whose value is above the bottom of the range is at least one eighth
-// long, so a small value does not disappear; its value text still says what it
-// is.
-//
+/*   TUI_barchart.Bar(value, label:, text:, style:)         one bar
+ *   TUI_barchart.BarGroup(label, bars)                     bars that belong together
+ *   TUI_barchart.BarChart(groups, direction:, bar_width:, ...)   a Widget
+ *   TUI_barchart.BarChart.of_bars(bars)                    one unlabelled group
+ *   chart.bounds()                                         the range the bars are scaled against
+ *
+ * Every bar is scaled against ONE range (`min_value` .. `max_value`, pinned
+ * or taken from all the data -- TUI_eighths.bounds_of has the rule), so bars
+ * in different groups are comparable. Bars are exact to an eighth of a cell.
+ * A bar whose value is above the bottom of the range is at least one eighth
+ * long, so a small value does not disappear; its value text still says what it
+ * is.
+ * */
 // --- vertical (the default) --------------------------------------------------
-//
-//     value text      one row, directly above each bar (if `should_show_values`)
-//     the bars        grow from the bottom of the plot
-//     bar labels      one row under the bars, if any bar has a label
-//     group labels    one row under that, centred under the group, if any has one
-//
-//   groups are `group_gap` columns apart and bars within one `bar_gap` apart,
-//   each bar `bar_width` columns wide. Bars that do not fit on the right are cut
-//   off, not squeezed: the chart never changes a size it was told.
-//
+/*
+ *     value text      one row, directly above each bar (if `should_show_values`)
+ *     the bars        grow from the bottom of the plot
+ *     bar labels      one row under the bars, if any bar has a label
+ *     group labels    one row under that, centred under the group, if any has one
+ *
+ *   groups are `group_gap` columns apart and bars within one `bar_gap` apart,
+ *   each bar `bar_width` columns wide. Bars that do not fit on the right are cut
+ *   off, not squeezed: the chart never changes a size it was told.
+ * */
 // --- horizontal ----------------------------------------------------------------
-//
-//   Each bar is `bar_height` rows, drawn left to right from the label column.
-//   A group with a label gets a row of its own above its bars. The bar labels
-//   are right-aligned to the axis in a column as wide as the longest of them
-//   (at most a third of the width, the rest truncated with an ellipsis), and
-//   the value text follows the end of each bar.
-//
-// Value text is `Bar.text` if given, else the value written as shortly as it
-// can be (TUI_scale.format_short). Text that is wider than a vertical bar is
-// truncated with an ellipsis rather than overlapping its neighbour.
-//
-// Nothing here draws outside the rectangle it was given, and a rectangle too
-// small for a plot (no rows left after the labels, or no columns) draws
-// nothing.
+/*
+ *   Each bar is `bar_height` rows, drawn left to right from the label column.
+ *   A group with a label gets a row of its own above its bars. The bar labels
+ *   are right-aligned to the axis in a column as wide as the longest of them
+ *   (at most a third of the width, the rest truncated with an ellipsis), and
+ *   the value text follows the end of each bar.
+ *
+ * Value text is `Bar.text` if given, else the value written as shortly as it
+ * can be (TUI_scale.format_short). Text that is wider than a vertical bar is
+ * truncated with an ellipsis rather than overlapping its neighbour.
+ *
+ * Nothing here draws outside the rectangle it was given, and a rectangle too
+ * small for a plot (no rows left after the labels, or no columns) draws
+ * nothing. */
 
 import core.TUI_buffer;
 import core.TUI_clip;
@@ -309,8 +309,8 @@ void BarChart.render_lying(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, TUI
     }
 }
 
-// How many eighths of `total` a bar of this value fills: never zero for a
-// value above the bottom of the range.
+/* How many eighths of `total` a bar of this value fills: never zero for a
+ * value above the bottom of the range. */
 int eighths_for(float value, TUI_eighths.Bounds range, int total) {
     int eighths = TUI_eighths.scaled(value, range.lower, range.upper, total);
     if (eighths == 0 && total > 0 && value > range.lower && value == value) {

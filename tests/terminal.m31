@@ -1,14 +1,14 @@
-// The 0.10.0 terminal features: synchronized output, the clipboard, hyperlinks,
-// the keyboard protocols, focus reports and the width of emoji.
-//
-//   bash tests/test.sh
-//
-// Nothing here needs a terminal. The bytes the library writes are applied to
-// `TST_emulator.Screen`, a small terminal emulator, and the screen is what is
-// checked: the terminal is the oracle, not the encoder's own idea of what it
-// meant. Where a feature is a pure encoder or decoder it is also checked byte
-// for byte. Like the other corpora: a `check` line prints `ok` or `FAIL`, and
-// what is printed is compared against tests/terminal.out.
+/* The 0.10.0 terminal features: synchronized output, the clipboard, hyperlinks,
+ * the keyboard protocols, focus reports and the width of emoji.
+ *
+ *   bash tests/test.sh
+ *
+ * Nothing here needs a terminal. The bytes the library writes are applied to
+ * `TST_emulator.Screen`, a small terminal emulator, and the screen is what is
+ * checked: the terminal is the oracle, not the encoder's own idea of what it
+ * meant. Where a feature is a pure encoder or decoder it is also checked byte
+ * for byte. Like the other corpora: a `check` line prints `ok` or `FAIL`, and
+ * what is printed is compared against tests/terminal.out. */
 
 import encoding.base64;
 import io;
@@ -219,8 +219,8 @@ void clipboard_tests(Tally tally) {
 
 // --- 3. hyperlinks (OSC 8) in the cell model ---------------------------------------
 
-/// Apply `diff(before, after)` to a screen that shows `before`; what differs from
-/// `after` afterwards ("" when nothing does, links included).
+/** Apply `diff(before, after)` to a screen that shows `before`; what differs from
+ * `after` afterwards ("" when nothing does, links included). */
 str replayed(TUI_buffer.Buffer before, TUI_buffer.Buffer after) {
     TST_emulator.Screen screen = TST_emulator.Screen.sized(before.area().width, before.area().height);
     screen.show(before);
@@ -790,8 +790,8 @@ List<Kind> kinds() {
     return [Kind("family", "1F468 200D 1F469 200D 1F467"), Kind("flag", "1F1E9 1F1EA"), Kind("keycap", "31 FE0F 20E3"), Kind("skin tone on a text base", "261D 1F3FD"), Kind("skin tone", "1F44D 1F3FD"), Kind("lone regional indicator", "1F1E9"), Kind("letter with a variation selector", "61 FE0F"), Kind("ZWJ sequence that is not an emoji", "2764 200D 1F525"), Kind("England", "1F3F4 E0067 E0062 E0065 E006E E0067 E007F"), Kind("text selector on a wide emoji", "231A FE0E"), Kind("couple with heart", "1F469 200D 2764 FE0F 200D 1F468"), Kind("hands of two skin tones", "1F9D1 1F3FB 200D 1F91D 200D 1F9D1 1F3FF")];
 }
 
-/// How the cells after `kind` look on a terminal of `model` (see `TST_emulator.Screen.width_model`)
-/// after the frame is drawn, before and after it changed: "" when every cell past the cluster is right.
+/** How the cells after `kind` look on a terminal of `model` (see `TST_emulator.Screen.width_model`)
+ * after the frame is drawn, before and after it changed: "" when every cell past the cluster is right. */
 str repaired(Kind kind, int model, int regional, bool is_to_cluster, bool is_diff) {
     str suffix = "CDEFGHIJKLMNOP";
     TUI_buffer.Buffer with_cluster = TUI_buffer.Buffer.sized(20, 1);

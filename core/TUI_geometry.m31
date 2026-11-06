@@ -1,87 +1,87 @@
-// Rectangles, and the constraint solver that cuts them up.
-//
-// API
+/* Rectangles, and the constraint solver that cuts them up.
+ *
+ * API */
 // ---
-//   TUI_geometry.Point(x, y)                     a cell: where a cursor is
-//   TUI_geometry.Rect(x, y, width, height)      a rectangle in terminal cells
-//   r.right(), r.bottom()           one past the last column / row
-//   r.is_empty(), r.has_point(point_x, point_y), r.intersect(other)
-//   r.inset(margin), r.inset_xy(margin_x, margin_y)  a margin taken off every side
-//   TUI_geometry.Constraint              Length | Percentage | Ratio | Min | Max | Fill
-//   TUI_geometry.rows(area, constraints) cut top to bottom
-//   TUI_geometry.columns(area, constraints) cut left to right
-//   TUI_geometry.Layout(direction, parts, ...) the same with margins and spacing
-//   TUI_geometry.resolve(total, constraints)      the solver alone, on one dimension
-//
+/*   TUI_geometry.Point(x, y)                     a cell: where a cursor is
+ *   TUI_geometry.Rect(x, y, width, height)      a rectangle in terminal cells
+ *   r.right(), r.bottom()           one past the last column / row
+ *   r.is_empty(), r.has_point(point_x, point_y), r.intersect(other)
+ *   r.inset(margin), r.inset_xy(margin_x, margin_y)  a margin taken off every side
+ *   TUI_geometry.Constraint              Length | Percentage | Ratio | Min | Max | Fill
+ *   TUI_geometry.rows(area, constraints) cut top to bottom
+ *   TUI_geometry.columns(area, constraints) cut left to right
+ *   TUI_geometry.Layout(direction, parts, ...) the same with margins and spacing
+ *   TUI_geometry.resolve(total, constraints)      the solver alone, on one dimension
+ * */
 // --- the resolution rules ---------------------------------------------------
-//
-// `resolve(total, constraints)` answers one size per constraint. **The sizes always
-// sum to exactly `total`, and none is negative** -- that is the invariant the
-// property test checks, and it is what makes the parts tile the whole with no
-// overlap and no gap.
-//
-// Each constraint first states a **preferred** size, clamped into `0..total`:
-//
-//   | `Length(cells)`                | `cells`                           | rigid                |
-//   | `Percentage(percent)`          | `total * percent / 100`           | rigid                |
-//   | `Ratio(numerator, denominator)`| `total * numerator / denominator` | rigid                |
-//   | `Min(cells)`                   | `cells`                           | may grow             |
-//   | `Max(cells)`                   | `cells`                           | may shrink           |
-//   | `Fill(weight)`                 | `0`                               | grows, by `weight`   |
-//
-// Division truncates, as it does everywhere in this language: `Percentage(33)`
-// of 10 is 3, not 3.3 rounded.
-//
-// If the preferred sizes come to **less** than `total`, the surplus is shared
-// out in this order, and the first rule that applies takes all of it:
-//
-//   1. the `Fill` constraints, in proportion to their weights -- or equally
-//      if every one of them has weight zero, since a layout whose fills are
-//      all `Fill(0)` still means "the rest goes here";
-//   2. otherwise the `Min` constraints, equally;
-//   3. otherwise the **last** constraint.
-//
-// Rule 3 is what keeps the promise that the parts tile the whole. A layout
-// of nothing but `Length`s that does not add up has to put the difference
-// somewhere, and the end is the least surprising place. It is also the one
-// place a constraint is overrun rather than underrun: `[Max(30), Max(30)]`
-// in 100 cells gives 30 and 70, because there is no honest home for the
-// other 40. A program that cares says where with a `Fill`.
-//
-// If the preferred sizes come to **more** than `total`, the deficit is taken
-// back in five rounds, each stopping as soon as the books balance:
-//
-//   1. `Fill`, down to 0;
-//   2. `Max`, down to 0;
-//   3. `Percentage` and `Ratio`, down to 0;
-//   4. `Min`, down to 0;
-//   5. `Length`, down to 0.
-//
-// So the flexible ones give way first and `Length` is the last promise
-// broken. **Within a round the loss is shared in proportion to what each
-// segment has to give**, so two equal columns lose equally rather than the
-// rightmost losing everything.
-//
-// Both the sharing and the taking use the largest-remainder method: whole
-// cells, summing exactly, and where two segments have an equal claim on the
-// last cell the earlier one gets it. Nothing here is floating point -- a
-// terminal has no half columns, and a rule that rounds twice tiles wrongly.
+/*
+ * `resolve(total, constraints)` answers one size per constraint. **The sizes always
+ * sum to exactly `total`, and none is negative** -- that is the invariant the
+ * property test checks, and it is what makes the parts tile the whole with no
+ * overlap and no gap.
+ *
+ * Each constraint first states a **preferred** size, clamped into `0..total`:
+ *
+ *   | `Length(cells)`                | `cells`                           | rigid                |
+ *   | `Percentage(percent)`          | `total * percent / 100`           | rigid                |
+ *   | `Ratio(numerator, denominator)`| `total * numerator / denominator` | rigid                |
+ *   | `Min(cells)`                   | `cells`                           | may grow             |
+ *   | `Max(cells)`                   | `cells`                           | may shrink           |
+ *   | `Fill(weight)`                 | `0`                               | grows, by `weight`   |
+ *
+ * Division truncates, as it does everywhere in this language: `Percentage(33)`
+ * of 10 is 3, not 3.3 rounded.
+ *
+ * If the preferred sizes come to **less** than `total`, the surplus is shared
+ * out in this order, and the first rule that applies takes all of it:
+ *
+ *   1. the `Fill` constraints, in proportion to their weights -- or equally
+ *      if every one of them has weight zero, since a layout whose fills are
+ *      all `Fill(0)` still means "the rest goes here";
+ *   2. otherwise the `Min` constraints, equally;
+ *   3. otherwise the **last** constraint.
+ *
+ * Rule 3 is what keeps the promise that the parts tile the whole. A layout
+ * of nothing but `Length`s that does not add up has to put the difference
+ * somewhere, and the end is the least surprising place. It is also the one
+ * place a constraint is overrun rather than underrun: `[Max(30), Max(30)]`
+ * in 100 cells gives 30 and 70, because there is no honest home for the
+ * other 40. A program that cares says where with a `Fill`.
+ *
+ * If the preferred sizes come to **more** than `total`, the deficit is taken
+ * back in five rounds, each stopping as soon as the books balance:
+ *
+ *   1. `Fill`, down to 0;
+ *   2. `Max`, down to 0;
+ *   3. `Percentage` and `Ratio`, down to 0;
+ *   4. `Min`, down to 0;
+ *   5. `Length`, down to 0.
+ *
+ * So the flexible ones give way first and `Length` is the last promise
+ * broken. **Within a round the loss is shared in proportion to what each
+ * segment has to give**, so two equal columns lose equally rather than the
+ * rightmost losing everything.
+ *
+ * Both the sharing and the taking use the largest-remainder method: whole
+ * cells, summing exactly, and where two segments have an equal claim on the
+ * last cell the earlier one gets it. Nothing here is floating point -- a
+ * terminal has no half columns, and a rule that rounds twice tiles wrongly. */
 
-/// A cell of the screen: a column and a row, 0-based, in the same absolute
-/// coordinates a `Rect` uses. What a widget answers when asked where its
-/// cursor is.
+/** A cell of the screen: a column and a row, 0-based, in the same absolute
+ * coordinates a `Rect` uses. What a widget answers when asked where its
+ * cursor is. */
 pub type Point {
     pub int x;
     pub int y;
 }
 
-/// A rectangle of terminal cells: `width` columns and `height` rows, with its
-/// top-left corner at `x`, `y`. Coordinates are absolute in the buffer, so a
-/// widget handed a sub-rectangle writes at the coordinates it was given.
-///
-/// A negative `width` or `height` is meaningless; every function here treats one as
-/// zero rather than trapping, so a layout that runs out of room degrades
-/// into empty rectangles instead of stopping the program.
+/** A rectangle of terminal cells: `width` columns and `height` rows, with its
+ * top-left corner at `x`, `y`. Coordinates are absolute in the buffer, so a
+ * widget handed a sub-rectangle writes at the coordinates it was given.
+ *
+ * A negative `width` or `height` is meaningless; every function here treats one as
+ * zero rather than trapping, so a layout that runs out of room degrades
+ * into empty rectangles instead of stopping the program. */
 pub type Rect {
     pub int x;
     pub int y;
@@ -144,8 +144,8 @@ pub Rect Rect.intersect(Rect other) {
     return Rect(new_left, new_top, new_right - new_left, new_bottom - new_top);
 }
 
-/// The same rectangle with `margin` cells taken off every side. A margin bigger
-/// than the rectangle leaves it empty, in the middle of where it was.
+/** The same rectangle with `margin` cells taken off every side. A margin bigger
+ * than the rectangle leaves it empty, in the middle of where it was. */
 pub Rect Rect.inset(int margin) {
     return inset_xy(margin, margin);
 }
@@ -191,8 +191,8 @@ pub enum Direction {
     Vertical;
 }
 
-/// How much of a dimension one part asks for. See the rules at the top of
-/// this file for what happens when the asks do not add up.
+/** How much of a dimension one part asks for. See the rules at the top of
+ * this file for what happens when the asks do not add up. */
 pub enum Constraint {
     /// Exactly this many cells.
     Length(int);
@@ -204,8 +204,8 @@ pub enum Constraint {
     Min(int);
     /// At most this many, and fewer if there is not enough room.
     Max(int);
-    /// Whatever is left, shared with the other `Fill`s in proportion to the
-    /// weights. `Fill(0)` asks for nothing.
+    /** Whatever is left, shared with the other `Fill`s in proportion to the
+     * weights. `Fill(0)` asks for nothing. */
     Fill(int);
 }
 
@@ -340,8 +340,8 @@ int scaled(int total, int numerator, int denominator) {
     return total / denominator * numerator + total % denominator * numerator / denominator;
 }
 
-/// One size per constraint, summing to exactly `total`. See the rules at the
-/// top of this file.
+/** One size per constraint, summing to exactly `total`. See the rules at the
+ * top of this file. */
 pub List<int> resolve(int total, List<Constraint> constraints) {
     List<int> size = [];
     int count = constraints.size();
@@ -367,8 +367,8 @@ pub List<int> resolve(int total, List<Constraint> constraints) {
     return size;
 }
 
-/// Hand out `extra` cells: to the weighted `Fill`s, else to the `Min`s, else
-/// to the last constraint.
+/** Hand out `extra` cells: to the weighted `Fill`s, else to the `Min`s, else
+ * to the last constraint. */
 void grow(List<int> size, List<Constraint> constraints, int extra) {
     int count = constraints.size();
     List<int> target_indexes = [];
@@ -384,9 +384,9 @@ void grow(List<int> size, List<Constraint> constraints, int extra) {
         }
         index = index + 1;
     }
-    // `Fill(0)` asks for no share of a contested surplus, but a layout whose
-    // fills are ALL zero still means "the rest goes here", so they share it
-    // equally rather than nobody taking it.
+    /* `Fill(0)` asks for no share of a contested surplus, but a layout whose
+     * fills are ALL zero still means "the rest goes here", so they share it
+     * equally rather than nobody taking it. */
     if (target_indexes.size() > 0 && weighed == 0) {
         index = 0;
         while (index < target_weights.size()) {
@@ -427,8 +427,8 @@ void shrink(List<int> size, List<Constraint> constraints, int deficit) {
     left = take(size, constraints, left, C_LENGTH);
 }
 
-/// Take up to `need` cells from the segments of one kind, in proportion to
-/// what each has to give. Answers what is still owed.
+/** Take up to `need` cells from the segments of one kind, in proportion to
+ * what each has to give. Answers what is still owed. */
 int take(List<int> size, List<Constraint> constraints, int need, int kind) {
     if (need <= 0) {
         return 0;
@@ -465,11 +465,11 @@ int take(List<int> size, List<Constraint> constraints, int need, int kind) {
     return 0;
 }
 
-/// Split `amount` in proportion to `weights`, in whole cells, summing to exactly
-/// `amount`. Largest remainder; a tie goes to the earlier entry.
-///
-/// `amount` must not exceed the sum of `weights` when the weights are capacities,
-/// which is how `take` uses it; no share then exceeds its weight.
+/** Split `amount` in proportion to `weights`, in whole cells, summing to exactly
+ * `amount`. Largest remainder; a tie goes to the earlier entry.
+ *
+ * `amount` must not exceed the sum of `weights` when the weights are capacities,
+ * which is how `take` uses it; no share then exceeds its weight. */
 pub List<int> apportion(int amount, List<int> weights) {
     List<int> out = [];
     int count = weights.size();
@@ -521,15 +521,15 @@ pub List<int> apportion(int amount, List<int> weights) {
     return out;
 }
 
-/// A cut of a rectangle: which way, into what, with what margins and what
-/// gap between the parts.
-///
-/// `direction` and `parts` are mandatory and positional; the rest are named:
-///
-/// ```
-/// TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Length(3),
-///     TUI_geometry.Constraint.Fill(1)], margin_y: 1)
-/// ```
+/** A cut of a rectangle: which way, into what, with what margins and what
+ * gap between the parts.
+ *
+ * `direction` and `parts` are mandatory and positional; the rest are named:
+ *
+ * ```
+ * TUI_geometry.Layout(TUI_geometry.Direction.Vertical, [TUI_geometry.Constraint.Length(3),
+ *     TUI_geometry.Constraint.Fill(1)], margin_y: 1)
+ * ``` */
 pub type Layout {
     pub Direction direction;
     pub List<Constraint> parts;
@@ -541,9 +541,9 @@ pub type Layout {
     pub int spacing = 0;
 }
 
-/// The parts, in order, one per constraint. With `spacing` at zero they tile
-/// `area` exactly; with a gap they tile what is left of it. A part is never
-/// outside `area`, however large the margins or the gap.
+/** The parts, in order, one per constraint. With `spacing` at zero they tile
+ * `area` exactly; with a gap they tile what is left of it. A part is never
+ * outside `area`, however large the margins or the gap. */
 pub List<Rect> Layout.split(Rect area) {
     Rect box = area.inset_xy(margin_x, margin_y);
     List<Rect> out = [];
@@ -580,8 +580,8 @@ pub List<Rect> Layout.split(Rect area) {
         }
     }
     for (int i in 0 .. part_count) {
-        // A gap wide enough to push a part past the end of the area puts it
-        // at the end instead, empty: every part is inside `area`, always.
+        /* A gap wide enough to push a part past the end of the area puts it
+         * at the end instead, empty: every part is inside `area`, always. */
         if (position > edge) {
             position = edge;
         }

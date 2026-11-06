@@ -1,84 +1,84 @@
-// A one-line text field: cursor, scrolling, readline keys, undo, history.
-//
-// API
+/* A one-line text field: cursor, scrolling, readline keys, undo, history.
+ *
+ * API */
 // ---
-//   TUI_input.TextInput(...)            the field; every argument has a default
-//   TUI_input.TextInput.of(text)        a field that starts with `text`
-//   input.handle(event)  -> Outcome     one terminal event in, what happened out
-//   input.handle_mouse(gesture, area)   a click or drag sets the cursor
-//   input.render(buffer, area)          draw (the cursor is a reversed cell)
-//   input.cursor_position(area)         where the terminal's own cursor belongs
-//   input.text() / set_text(t) / clear() / take()
-//   TUI_input.Outcome                   Changed | Submitted | Cancelled | Ignored | Rejected(why)
-//   interface TUI_input.Validator { Option<str> check(str text); }
-//
+/*   TUI_input.TextInput(...)            the field; every argument has a default
+ *   TUI_input.TextInput.of(text)        a field that starts with `text`
+ *   input.handle(event)  -> Outcome     one terminal event in, what happened out
+ *   input.handle_mouse(gesture, area)   a click or drag sets the cursor
+ *   input.render(buffer, area)          draw (the cursor is a reversed cell)
+ *   input.cursor_position(area)         where the terminal's own cursor belongs
+ *   input.text() / set_text(t) / clear() / take()
+ *   TUI_input.Outcome                   Changed | Submitted | Cancelled | Ignored | Rejected(why)
+ *   interface TUI_input.Validator { Option<str> check(str text); }
+ * */
 // --- the contract: handle(event) is pure state, answers an Outcome -----------
-//
-// `handle` never draws and never reads a clock. It takes a `term.Event` and
-// answers what became of it:
-//
-//   Changed       the text or the cursor moved: draw again
-//   Submitted     Enter, and the validator accepted the text
-//   Rejected(why) Enter, and the validator refused: the text stays, `why` is
-//                 in `input.error` and the field draws in `error_style`
-//   Cancelled     Escape or Ctrl-C
-//   Ignored       **nothing changed**: the key is not one this field uses, or
-//                 it would do nothing here (Left at the start, Up with no
-//                 history). The caller is free to use the event itself, so a
-//                 form can move to the previous field on the Up the input
-//                 declined.
-//
-// Because Ignored means "no state change" exactly, a caller can draw only
-// when the answer is not Ignored.
-//
-// The field is a list of **grapheme clusters**, and the cursor is a position
-// between two of them: an emoji with a skin tone, `e` + U+0301, a flag, a
-// Hangul syllable made of jamo are one cursor step and one Backspace each.
-// Typed text arrives a code point at a time, so every insertion re-clusters
-// the line: typing U+0301 after `e` makes `é` one cluster, not two.
-//
+/*
+ * `handle` never draws and never reads a clock. It takes a `term.Event` and
+ * answers what became of it:
+ *
+ *   Changed       the text or the cursor moved: draw again
+ *   Submitted     Enter, and the validator accepted the text
+ *   Rejected(why) Enter, and the validator refused: the text stays, `why` is
+ *                 in `input.error` and the field draws in `error_style`
+ *   Cancelled     Escape or Ctrl-C
+ *   Ignored       **nothing changed**: the key is not one this field uses, or
+ *                 it would do nothing here (Left at the start, Up with no
+ *                 history). The caller is free to use the event itself, so a
+ *                 form can move to the previous field on the Up the input
+ *                 declined.
+ *
+ * Because Ignored means "no state change" exactly, a caller can draw only
+ * when the answer is not Ignored.
+ *
+ * The field is a list of **grapheme clusters**, and the cursor is a position
+ * between two of them: an emoji with a skin tone, `e` + U+0301, a flag, a
+ * Hangul syllable made of jamo are one cursor step and one Backspace each.
+ * Typed text arrives a code point at a time, so every insertion re-clusters
+ * the line: typing U+0301 after `e` makes `é` one cluster, not two.
+ * */
 // --- keys -------------------------------------------------------------------
-//
-//   Left/Right, Ctrl-B/Ctrl-F       a cluster       Home/Ctrl-A, End/Ctrl-E   the ends
-//   Ctrl-Left/Right, Alt-B/Alt-F    a word          (letters, digits, `_`, and anything beyond ASCII)
-//   Backspace, Delete, Ctrl-D       delete a cluster
-//   Alt-Backspace, Ctrl-Backspace   kill the word before the cursor
-//   Alt-D, Ctrl-Delete              kill the word after it
-//   Ctrl-W                          kill the blank-delimited word before it
-//   Ctrl-K, Ctrl-U                  kill to the end / to the start
-//   Ctrl-Y, Alt-Y                   yank the last kill; right after, cycle older ones
-//   Ctrl-T                          transpose the clusters around the cursor
-//   Ctrl-Z, Ctrl-_ (Ctrl-/)         undo        Alt-_   redo
-//   Up/Ctrl-P, Down/Ctrl-N          history (when there is any)
-//   Enter, Ctrl-J                   submit      Escape, Ctrl-C   cancel
-//
-// Consecutive kills are one entry in the kill ring (a Ctrl-K after a Ctrl-K
-// extends the first; a backward kill puts its text in front), and one undo
-// step. Typing is one undo step per word. A paste is one step.
-//
+/*
+ *   Left/Right, Ctrl-B/Ctrl-F       a cluster       Home/Ctrl-A, End/Ctrl-E   the ends
+ *   Ctrl-Left/Right, Alt-B/Alt-F    a word          (letters, digits, `_`, and anything beyond ASCII)
+ *   Backspace, Delete, Ctrl-D       delete a cluster
+ *   Alt-Backspace, Ctrl-Backspace   kill the word before the cursor
+ *   Alt-D, Ctrl-Delete              kill the word after it
+ *   Ctrl-W                          kill the blank-delimited word before it
+ *   Ctrl-K, Ctrl-U                  kill to the end / to the start
+ *   Ctrl-Y, Alt-Y                   yank the last kill; right after, cycle older ones
+ *   Ctrl-T                          transpose the clusters around the cursor
+ *   Ctrl-Z, Ctrl-_ (Ctrl-/)         undo        Alt-_   redo
+ *   Up/Ctrl-P, Down/Ctrl-N          history (when there is any)
+ *   Enter, Ctrl-J                   submit      Escape, Ctrl-C   cancel
+ *
+ * Consecutive kills are one entry in the kill ring (a Ctrl-K after a Ctrl-K
+ * extends the first; a backward kill puts its text in front), and one undo
+ * step. Typing is one undo step per word. A paste is one step.
+ * */
 // --- paste ------------------------------------------------------------------
-//
-// With bracketed paste on (`TUI_app.Loop(should_report_paste: true)`) the
-// terminal delivers pasted text as one `Event.Paste`, and it is inserted as
-// one edit. A line break or a tab becomes a space, other control characters
-// are dropped: this is one line, and a paste must not be able to press Enter.
-//
+/*
+ * With bracketed paste on (`TUI_app.Loop(should_report_paste: true)`) the
+ * terminal delivers pasted text as one `Event.Paste`, and it is inserted as
+ * one edit. A line break or a tab becomes a space, other control characters
+ * are dropped: this is one line, and a paste must not be able to press Enter.
+ * */
 // --- password mode and history ---------------------------------------------
-//
-// With `mask` set (`"*"`, `"\u{2022}"`) every cluster is drawn as the mask,
-// one column wide however wide the cluster is, and the field records nothing
-// in `history`. The text is still `text()`.
-//
-// `history` is the caller's list, newest last. Up walks back through it, Down
-// forward to the line that was being typed (the draft). Submitting appends the
-// text unless it is empty or a repeat of the newest entry.
-//
+/*
+ * With `mask` set (`"*"`, `"\u{2022}"`) every cluster is drawn as the mask,
+ * one column wide however wide the cluster is, and the field records nothing
+ * in `history`. The text is still `text()`.
+ *
+ * `history` is the caller's list, newest last. Up walks back through it, Down
+ * forward to the line that was being typed (the draft). Submitting appends the
+ * text unless it is empty or a repeat of the newest entry.
+ * */
 // --- scrolling --------------------------------------------------------------
-//
-// `scroll` is the first visible COLUMN of the text. `render` moves it only as
-// far as keeps the cursor cell inside the area, like `ListView`'s offset. A
-// wide cluster cut by the left edge is drawn as a blank column rather than
-// half a glyph.
+/*
+ * `scroll` is the first visible COLUMN of the text. `render` moves it only as
+ * far as keeps the cursor cell inside the area, like `ListView`'s offset. A
+ * wide cluster cut by the left edge is drawn as a blank column rather than
+ * half a glyph. */
 
 import term;
 import core.TUI_buffer;
@@ -119,8 +119,8 @@ pub str Outcome.to_str() {
     }
 }
 
-/// Decides whether the text may be submitted: `None` accepts it, `Some(why)`
-/// refuses it with a reason to show. A plain function with this shape works.
+/** Decides whether the text may be submitted: `None` accepts it, `Some(why)`
+ * refuses it with a reason to show. A plain function with this shape works. */
 pub interface Validator {
     Option<str> check(str text);
 }
@@ -142,13 +142,13 @@ type Snapshot {
     int cursor;
 }
 
-/// The field. Every argument is optional: `TextInput()` is an empty,
-/// focused field with no placeholder.
+/** The field. Every argument is optional: `TextInput()` is an empty,
+ * focused field with no placeholder. */
 pub type TextInput {
     /// The clusters of the text.
     pub List<str> glyphs = [];
-    /// The cursor, as a position between clusters: 0 is before the first,
-    /// `glyphs.size()` is after the last.
+    /** The cursor, as a position between clusters: 0 is before the first,
+     * `glyphs.size()` is after the last. */
     pub int cursor = 0;
     /// The first visible column. `render` keeps the cursor in view.
     pub int scroll = 0;
@@ -161,11 +161,11 @@ pub type TextInput {
     /// The most clusters the field takes; 0 for no limit.
     pub int max_glyphs = 0;
     pub Validator validator = accept_any;
-    /// The validator's reason from the last refused submit; "" when none. Any
-    /// edit clears it.
+    /** The validator's reason from the last refused submit; "" when none. Any
+     * edit clears it. */
     pub str error = "";
-    /// Counts every change to the text (not the cursor): a caller that
-    /// filters a list as the user types compares it to the last one it saw.
+    /** Counts every change to the text (not the cursor): a caller that
+     * filters a list as the user types compares it to the last one it saw. */
     pub int revision = 0;
     /// Submitted lines, oldest first.
     pub List<str> history = [];
@@ -209,8 +209,8 @@ pub bool TextInput.is_empty() {
     return glyphs.size() == 0;
 }
 
-/// Replace the text from outside: cursor to the end, undo history and error
-/// forgotten (this is not an edit the user made). `history` is kept.
+/** Replace the text from outside: cursor to the end, undo history and error
+ * forgotten (this is not an edit the user made). `history` is kept. */
 pub void TextInput.set_text(str text) {
     glyphs = TUI_text.clusters(text);
     cursor = glyphs.size();
@@ -238,9 +238,9 @@ str TextInput.join_range(int from, int stop) {
     return glyphs.slice(from, stop).join("");
 }
 
-// Replace clusters [from, stop) with `insert` and put the cursor after it. THE
-// one place the text changes: it re-clusters, so a combining mark typed after
-// `e` joins it.
+/* Replace clusters [from, stop) with `insert` and put the cursor after it. THE
+ * one place the text changes: it re-clusters, so a combining mark typed after
+ * `e` joins it. */
 void TextInput.splice(int from, int stop, str insert) {
     str before = join_range(0, from) + insert;
     str after = join_range(stop, glyphs.size());
@@ -299,8 +299,8 @@ pub Outcome TextInput.redo() {
 
 // --- editing ----------------------------------------------------------------
 
-// Insert `raw` at the cursor. `kind` is LAST_TYPING for a typed character
-// (undo steps are per word) and LAST_OTHER for a paste (one step).
+/* Insert `raw` at the cursor. `kind` is LAST_TYPING for a typed character
+ * (undo steps are per word) and LAST_OTHER for a paste (one step). */
 Outcome TextInput.insert_text(str raw, int kind) {
     List<str> pieces = TUI_text.clusters(raw);
     if (max_glyphs > 0) {
@@ -500,8 +500,8 @@ pub Outcome TextInput.handle(term.Event event) {
     }
 }
 
-/// Insert pasted text as one edit: line breaks and tabs become spaces, other
-/// control characters are dropped.
+/** Insert pasted text as one edit: line breaks and tabs become spaces, other
+ * control characters are dropped. */
 pub Outcome TextInput.paste(str pasted) {
     List<int> kept = [];
     int previous = 0;
@@ -700,9 +700,9 @@ Outcome TextInput.handle_alt(int raw_code) {
 
 // --- mouse ------------------------------------------------------------------
 
-/// A press or drag inside `area` (the rectangle the field was drawn in) puts
-/// the cursor on the cluster under the pointer, or at the end when the
-/// pointer is past the text. Anything else is `Ignored`.
+/** A press or drag inside `area` (the rectangle the field was drawn in) puts
+ * the cursor on the cluster under the pointer, or at the end when the
+ * pointer is past the text. Anything else is `Ignored`. */
 pub TUI_mouse.Response TextInput.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
     if (area.is_empty() || !gesture.is_primary()) {
         return TUI_mouse.Response.Ignored;
@@ -748,8 +748,8 @@ pub TUI_mouse.Response TextInput.handle_mouse(TUI_mouse.Gesture gesture, TUI_geo
     return TUI_mouse.Response.Changed;
 }
 
-/// The cluster index whose cells hold text column `column`; the end of the
-/// text when it is past it.
+/** The cluster index whose cells hold text column `column`; the end of the
+ * text when it is past it. */
 pub int TextInput.index_at_column(int column) {
     int start = 0;
     int index = 0;
@@ -824,9 +824,9 @@ void TextInput.reveal_cursor(int room) {
     }
 }
 
-/// Where the terminal's own cursor belongs for a field drawn in `area`,
-/// for a program that shows it instead of (or as well as) the reversed cell.
-/// Call after `render`, which settles the scroll.
+/** Where the terminal's own cursor belongs for a field drawn in `area`,
+ * for a program that shows it instead of (or as well as) the reversed cell.
+ * Call after `render`, which settles the scroll. */
 pub TUI_geometry.Point TextInput.cursor_position(TUI_geometry.Rect area) {
     reveal_cursor(area.width);
     int offset = cursor_column() - scroll;

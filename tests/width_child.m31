@@ -1,12 +1,12 @@
-// The program tests/width_pty.m31 runs on a pseudo-terminal: a real `Loop.run_with` with the width calibration
-// on, which writes down, to a log file, when it started, what the calibration found when the first frame was
-// drawn, and every event it is handed (the monotonic clock, in milliseconds, which the test reads too).
-//
-//   width_child <log> <width_probe_ms>
-//
-// One line per fact: `<ms> start`, `<ms> ready <what the calibration found>`, then `<ms> <Event.to_str()>`.
-// It draws a six by three `Block` in the top left corner. A `q` key quits. The environment variables
-// `TUI_WIDTH_PROBE` and `TUI_BORDERS` are the loop's own to read.
+/* The program tests/width_pty.m31 runs on a pseudo-terminal: a real `Loop.run_with` with the width calibration
+ * on, which writes down, to a log file, when it started, what the calibration found when the first frame was
+ * drawn, and every event it is handed (the monotonic clock, in milliseconds, which the test reads too).
+ *
+ *   width_child <log> <width_probe_ms>
+ *
+ * One line per fact: `<ms> start`, `<ms> ready <what the calibration found>`, then `<ms> <Event.to_str()>`.
+ * It draws a six by three `Block` in the top left corner. A `q` key quits. The environment variables
+ * `TUI_WIDTH_PROBE` and `TUI_BORDERS` are the loop's own to read. */
 
 import io;
 import os;

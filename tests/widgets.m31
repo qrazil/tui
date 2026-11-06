@@ -1,12 +1,12 @@
-// The test corpus for the v0.3.0 widgets: the text input and area, tabs, the
-// gauge, sparkline, bar chart, chart and spinner, the mouse router, and the
-// timer and mouse parts of the app loop.
-//
-// Like tests/tests.m31, everything runs against an in-memory `Buffer`; nothing
-// needs a terminal. A `check` line prints `ok` or `FAIL`; the pictures printed
-// below them are compared against tests/widgets.out, which is how a golden
-// render is tested. Each widget is drawn at several sizes: wide, narrow, one
-// cell, zero, and with wide, combining and emoji text where text is involved.
+/* The test corpus for the v0.3.0 widgets: the text input and area, tabs, the
+ * gauge, sparkline, bar chart, chart and spinner, the mouse router, and the
+ * timer and mouse parts of the app loop.
+ *
+ * Like tests/tests.m31, everything runs against an in-memory `Buffer`; nothing
+ * needs a terminal. A `check` line prints `ok` or `FAIL`; the pictures printed
+ * below them are compared against tests/widgets.out, which is how a golden
+ * render is tested. Each widget is drawn at several sizes: wide, narrow, one
+ * cell, zero, and with wide, combining and emoji text where text is involved. */
 
 import os;
 import term;
@@ -227,8 +227,8 @@ void barchart_tests(Tally tally) {
     check_int(tally, "values are listed in order", chart.values().size(), 4);
 }
 
-// A picture with a second grid under it: `^` where a cell is reversed (the
-// cursor), `_` where it is underlined (a selection, in these tests), `d` where dim, `.` elsewhere, so a cursor is visible in a golden.
+/* A picture with a second grid under it: `^` where a cell is reversed (the
+ * cursor), `_` where it is underlined (a selection, in these tests), `d` where dim, `.` elsewhere, so a cursor is visible in a golden. */
 str reverse_map(TUI_buffer.Buffer buffer) {
     List<str> rows = [];
     for (int y in 0 .. buffer.area().height) {

@@ -1,7 +1,7 @@
-// The test corpus for TUI_syntax: the language of a file, the class of every
-// byte of a line with the state carried between lines, the styles and the
-// spans, the cached `Highlighter`, drawing into a buffer, and a highlighted
-// `DiffView`. Everything runs against an in-memory `Buffer`.
+/* The test corpus for TUI_syntax: the language of a file, the class of every
+ * byte of a line with the state carried between lines, the styles and the
+ * spans, the cached `Highlighter`, drawing into a buffer, and a highlighted
+ * `DiffView`. Everything runs against an in-memory `Buffer`. */
 
 import os;
 import core.TUI_buffer;

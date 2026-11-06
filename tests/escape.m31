@@ -1,17 +1,17 @@
-// The escape wait (0.12.0), on a pseudo-terminal.
-//
-//   TUI_ESCAPE_CHILD=/path/to/escape_child  escape      (tests/test.sh builds both)
-//
-// `escape_child` is a real `Loop.run_with` with a ticker; this program starts it
-// on a pty, types at it, and reads what it logged (an event, and when, on the
-// monotonic clock both processes share). What is printed is only `ok` or `FAIL`
-// lines, so the output can be compared with tests/escape.out; the times are not.
-//
-// Timing is asserted so a slow machine cannot fail it: a LOWER bound is strict (an
-// Escape may not come out before `escape_wait_ms` of silence, which no delay can
-// make false), an UPPER bound is loose (a second or more of margin: CI runners
-// start late and deliver late). Writes are one byte at a time and never block
-// (a closed pty is ignored), and the pty is drained while waiting.
+/* The escape wait (0.12.0), on a pseudo-terminal.
+ *
+ *   TUI_ESCAPE_CHILD=/path/to/escape_child  escape      (tests/test.sh builds both)
+ *
+ * `escape_child` is a real `Loop.run_with` with a ticker; this program starts it
+ * on a pty, types at it, and reads what it logged (an event, and when, on the
+ * monotonic clock both processes share). What is printed is only `ok` or `FAIL`
+ * lines, so the output can be compared with tests/escape.out; the times are not.
+ *
+ * Timing is asserted so a slow machine cannot fail it: a LOWER bound is strict (an
+ * Escape may not come out before `escape_wait_ms` of silence, which no delay can
+ * make false), an UPPER bound is loose (a second or more of margin: CI runners
+ * start late and deliver late). Writes are one byte at a time and never block
+ * (a closed pty is ignored), and the pty is drained while waiting. */
 
 import io;
 import os;
@@ -47,8 +47,8 @@ void ok(Tally tally, str name, bool is_condition_true, str detail) {
     print("     " + detail);
 }
 
-/// The escape wait every timed run uses, and the time to let a scenario settle in:
-/// the wait, plus more than the loose upper bound.
+/** The escape wait every timed run uses, and the time to let a scenario settle in:
+ * the wait, plus more than the loose upper bound. */
 const int WAIT_MS = 700;
 const int SETTLE_MS = 900;
 /// A gap well beyond the wait.
@@ -67,8 +67,8 @@ type Session {
     int seen = 0;
 }
 
-/// Wait `milliseconds`, reading (and dropping) what the child draws, so a full pty
-/// can never stop it.
+/** Wait `milliseconds`, reading (and dropping) what the child draws, so a full pty
+ * can never stop it. */
 void Session.pause(int milliseconds) {
     int until_ms = now_ms() + milliseconds;
     bool is_open = true;
@@ -180,8 +180,8 @@ type Seen {
     int first_ms = -1;
 }
 
-/// A child started with the given escape wait and animation period, on a fresh log,
-/// and waited for until it has drawn its first frame. None if it never did.
+/** A child started with the given escape wait and animation period, on a fresh log,
+ * and waited for until it has drawn its first frame. None if it never did. */
 Option<Session> start(str child, str log, int escape_wait_ms, int animate_ms) {
     Result<int, io.Error> cleared = io.write(log, "");
     match (proc.start_pty([child, log, str(escape_wait_ms), str(animate_ms)])) {
@@ -206,8 +206,8 @@ Option<Session> start(str child, str log, int escape_wait_ms, int animate_ms) {
     }
 }
 
-/// Type `pieces` with `gaps` (milliseconds) after each, then let things settle.
-/// Answers the events and when the last byte was written.
+/** Type `pieces` with `gaps` (milliseconds) after each, then let things settle.
+ * Answers the events and when the last byte was written. */
 type Outcome {
     Seen seen = Seen();
     int last_write_ms = 0;

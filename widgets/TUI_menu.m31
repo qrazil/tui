@@ -1,27 +1,27 @@
-// A popup keyed by "what does the next keypress do" -- the which-key
-// overlay -- and its sibling, the transient menu, built on the SAME
-// underlying primitive rather than as two unrelated components. See
-// `apps/git/design.md`: "a follow-up with flags opens the transient... built
-// on top of the same overlay primitive".
-//
-// API
+/* A popup keyed by "what does the next keypress do" -- the which-key
+ * overlay -- and its sibling, the transient menu, built on the SAME
+ * underlying primitive rather than as two unrelated components. See
+ * `apps/git/design.md`: "a follow-up with flags opens the transient... built
+ * on top of the same overlay primitive".
+ *
+ * API */
 // ---
-//   TUI_menu.Item(key, label)                  one (key, label) pair
-//   TUI_menu.WhichKey(title, items)             the popup alone
-//   TUI_menu.Switch(key, label, flag)           one togglable flag
-//   TUI_menu.Transient(title, base, switches)   WhichKey's sibling: switches
-//                                              plus a live command preview
-//   transient.toggle(key)                      flip the switch bound to `key`
-//   transient.preview()          -> str        the literal command line, as
-//                                              it would run right now
-//
+/*   TUI_menu.Item(key, label)                  one (key, label) pair
+ *   TUI_menu.WhichKey(title, items)             the popup alone
+ *   TUI_menu.Switch(key, label, flag)           one togglable flag
+ *   TUI_menu.Transient(title, base, switches)   WhichKey's sibling: switches
+ *                                              plus a live command preview
+ *   transient.toggle(key)                      flip the switch bound to `key`
+ *   transient.preview()          -> str        the literal command line, as
+ *                                              it would run right now
+ * */
 // --- the shared base ---------------------------------------------------------
-//
-// Both are a `Popup`: a titled box, sized to its content and centred in
-// whatever area it is given, drawn as plain text rows. `WhichKey` fills it
-// with `key  label` rows; `Transient` fills it with `[x] key  label` rows for
-// each switch, a blank line, and the rendered command -- but the box, the
-// title, the centring and the border are one piece of code, not two.
+/*
+ * Both are a `Popup`: a titled box, sized to its content and centred in
+ * whatever area it is given, drawn as plain text rows. `WhichKey` fills it
+ * with `key  label` rows; `Transient` fills it with `[x] key  label` rows for
+ * each switch, a blank line, and the rendered command -- but the box, the
+ * title, the centring and the border are one piece of code, not two. */
 
 import core.TUI_buffer;
 import core.TUI_geometry;
@@ -35,8 +35,8 @@ pub type Item {
     pub str label;
 }
 
-/// The shared base: a titled box, sized to its widest row and its title,
-/// drawn centred in whatever area it is handed.
+/** The shared base: a titled box, sized to its widest row and its title,
+ * drawn centred in whatever area it is handed. */
 type Popup {
     str title;
     List<str> rows;
@@ -45,9 +45,9 @@ type Popup {
     TUI_widget.Borders borders = TUI_widget.Borders.Rounded;
 }
 
-/// The box this popup needs, centred in `area` and never larger than it: as
-/// wide as the title or the widest row plus the border and a column of
-/// padding either side, as tall as the rows plus the border.
+/** The box this popup needs, centred in `area` and never larger than it: as
+ * wide as the title or the widest row plus the border and a column of
+ * padding either side, as tall as the rows plus the border. */
 TUI_geometry.Rect Popup.sized(TUI_geometry.Rect area) {
     int box_width = TUI_text.width(title);
     for (str row in rows) {
@@ -84,8 +84,8 @@ void Popup.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     }
 }
 
-/// `key`, padded to `key_width` columns, two spaces, then `label` -- the row
-/// layout both overlays use.
+/** `key`, padded to `key_width` columns, two spaces, then `label` -- the row
+ * layout both overlays use. */
 str keyed_row(str key, str label, int key_width) {
     return TUI_text.pad(key, key_width, TUI_text.Align.Left) + "  " + label;
 }
@@ -101,13 +101,13 @@ int widest(List<str> keys) {
     return longest;
 }
 
-/// A popup of "what does the next keypress do" -- a list of `(key, label)`
-/// pairs, sized and centred by the shared `Popup`.
-///
-/// ```
-/// TUI_menu.WhichKey("commit", [TUI_menu.Item("c", "commit"),
-///     TUI_menu.Item("a", "amend"), TUI_menu.Item("f", "fixup")])
-/// ```
+/** A popup of "what does the next keypress do" -- a list of `(key, label)`
+ * pairs, sized and centred by the shared `Popup`.
+ *
+ * ```
+ * TUI_menu.WhichKey("commit", [TUI_menu.Item("c", "commit"),
+ *     TUI_menu.Item("a", "amend"), TUI_menu.Item("f", "fixup")])
+ * ``` */
 pub type WhichKey {
     pub str title;
     pub List<Item> items;
@@ -132,8 +132,8 @@ pub void WhichKey.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     popup().render(buffer, area);
 }
 
-/// One togglable flag of a `Transient`: a key, a label to show for it, and
-/// the literal command-line flag it contributes when it is on.
+/** One togglable flag of a `Transient`: a key, a label to show for it, and
+ * the literal command-line flag it contributes when it is on. */
 pub type Switch {
     pub str key;
     pub str label;
@@ -141,15 +141,15 @@ pub type Switch {
     pub bool is_on = false;
 }
 
-/// The which-key overlay's sibling: the same `Popup`, filled with togglable
-/// switches instead of plain rows, plus a line showing the command exactly as
-/// it would run right now.
-///
-/// `base` is the command with no flags -- `"commit"`, `"push"` -- and
-/// `preview()` is `base` followed by the flag of every switch currently on,
-/// in the order given. That string is both what is shown and what is meant
-/// to actually run; there is deliberately no second copy of the logic that
-/// decides which flags are active.
+/** The which-key overlay's sibling: the same `Popup`, filled with togglable
+ * switches instead of plain rows, plus a line showing the command exactly as
+ * it would run right now.
+ *
+ * `base` is the command with no flags -- `"commit"`, `"push"` -- and
+ * `preview()` is `base` followed by the flag of every switch currently on,
+ * in the order given. That string is both what is shown and what is meant
+ * to actually run; there is deliberately no second copy of the logic that
+ * decides which flags are active. */
 pub type Transient {
     pub str title;
     pub str base;

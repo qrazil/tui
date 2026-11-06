@@ -1,16 +1,16 @@
-// A small terminal emulator, the oracle the 0.10.0 tests ask what the bytes DO.
-//
-// It reads the bytes a renderer or a loop writes and keeps what a terminal would
-// show: the text of every cell, the hyperlink (OSC 8) of every cell, the cursor,
-// whether synchronized output (mode 2026) is holding the screen, the last OSC 52
-// clipboard write, and the keyboard modes asked for. It understands exactly what
-// this library writes -- cursor moves, erase, the private modes, OSC 8 and OSC 52,
-// SGR (read and ignored) -- and nothing else; a sequence it does not know is
-// counted in `unknown`, so a test can say that the library wrote none.
-//
-// It is not a second renderer: it never decides anything, it only applies bytes.
-// So "apply the diff to a screen showing `previous`, and the screen equals what
-// `next` says" is a real check of the diff, from outside it.
+/* A small terminal emulator, the oracle the 0.10.0 tests ask what the bytes DO.
+ *
+ * It reads the bytes a renderer or a loop writes and keeps what a terminal would
+ * show: the text of every cell, the hyperlink (OSC 8) of every cell, the cursor,
+ * whether synchronized output (mode 2026) is holding the screen, the last OSC 52
+ * clipboard write, and the keyboard modes asked for. It understands exactly what
+ * this library writes -- cursor moves, erase, the private modes, OSC 8 and OSC 52,
+ * SGR (read and ignored) -- and nothing else; a sequence it does not know is
+ * counted in `unknown`, so a test can say that the library wrote none.
+ *
+ * It is not a second renderer: it never decides anything, it only applies bytes.
+ * So "apply the diff to a screen showing `previous`, and the screen equals what
+ * `next` says" is a real check of the diff, from outside it. */
 
 import text.unicode;
 import core.TUI_buffer;
@@ -43,42 +43,42 @@ pub type Screen {
     /// The last modifyOtherKeys level set (`CSI > 4 ; n m`); 0 when reset.
     pub int modify_other_keys = 0;
     pub bool is_focus_reporting = false;
-    /// What kind of terminal it is, for the questions it is asked: whether it has
-    /// the kitty keyboard protocol and modifyOtherKeys (else it ignores what asks for
-    /// them, and the sequence is listed in `ignored`), and what it answers about mode
-    /// 2026 (-1: nothing at all, 0 not recognised, 2 supported). Every terminal
-    /// answers the device attributes question.
+    /** What kind of terminal it is, for the questions it is asked: whether it has
+     * the kitty keyboard protocol and modifyOtherKeys (else it ignores what asks for
+     * them, and the sequence is listed in `ignored`), and what it answers about mode
+     * 2026 (-1: nothing at all, 0 not recognised, 2 supported). Every terminal
+     * answers the device attributes question. */
     pub bool has_kitty = false;
     pub bool has_modify_other = false;
     pub int sync_status = -1;
     /// Whether it answers a cursor position request (`CSI 6 n`) with `CSI row ; column R`.
     pub bool has_cursor_report = true;
-    /// What it answers about grapheme clustering (mode 2027): -1 nothing, 0 not recognised, 2 supported and off,
-    /// 3 always on (1 is on, after a `CSI ? 2027 h`). With it on, text is measured by grapheme cluster.
+    /** What it answers about grapheme clustering (mode 2027): -1 nothing, 0 not recognised, 2 supported and off,
+     * 3 always on (1 is on, after a `CSI ? 2027 h`). With it on, text is measured by grapheme cluster. */
     pub int grapheme_status = -1;
     /// The bytes the terminal has said back, not yet read by the program.
     pub bytes replies = [];
     /// Sequences it was sent and did not act on, because it lacks the feature.
     pub List<str> ignored = [];
     pub int queries = 0;
-    /// How it measures text it draws. 0: it adds up code points (what xterm and Terminal.app
-    /// do: a family of three is 2 + 2 + 2 = 6 columns, a skin tone takes its own 2).
-    /// 1: it segments grapheme clusters and draws each in `TUI_text.cluster_columns`.
+    /** How it measures text it draws. 0: it adds up code points (what xterm and Terminal.app
+     * do: a family of three is 2 + 2 + 2 = 6 columns, a skin tone takes its own 2).
+     * 1: it segments grapheme clusters and draws each in `TUI_text.cluster_columns`. */
     pub int width_model = 0;
-    /// What a regional indicator on its own takes: 1 (its East Asian Width is neutral)
-    /// or 2 (it has emoji presentation, and kitty and WezTerm draw it so).
+    /** What a regional indicator on its own takes: 1 (its East Asian Width is neutral)
+     * or 2 (it has emoji presentation, and kitty and WezTerm draw it so). */
     pub int regional_width = 1;
     List<int> pending = [];
-    /// --- the ways real terminals differ (the stress harness runs them all) ---
-    /// What happens at the last column. 0: nothing wraps and text past the edge is dropped (the
-    /// original oracle). 1: xterm's pending wrap -- the cursor stays on the last column and wraps
-    /// only when the next printable arrives (a cursor move, CR or CUP clears it). 2: the cursor
-    /// wraps at once, as soon as the last column is written. 3: autowrap is off, the last column
-    /// is overwritten again and again.
+    /** --- the ways real terminals differ (the stress harness runs them all) ---
+     * What happens at the last column. 0: nothing wraps and text past the edge is dropped (the
+     * original oracle). 1: xterm's pending wrap -- the cursor stays on the last column and wraps
+     * only when the next printable arrives (a cursor move, CR or CUP clears it). 2: the cursor
+     * wraps at once, as soon as the last column is written. 3: autowrap is off, the last column
+     * is overwritten again and again. */
     pub int wrap_mode = 0;
     pub bool is_wrap_pending = false;
-    /// DECAWM (`CSI ? 7 h` / `l`): autowrap is on. A terminal that ignores `l` has
-    /// `is_autowrap_locked`.
+    /** DECAWM (`CSI ? 7 h` / `l`): autowrap is on. A terminal that ignores `l` has
+     * `is_autowrap_locked`. */
     pub bool is_autowrap = true;
     pub bool is_autowrap_locked = false;
     /// Width disagreements, as bits (`Q_*`): what this terminal draws differently from the library.
@@ -159,8 +159,8 @@ pub str Screen.differs_from_screen(Screen other) {
     return "";
 }
 
-/// The screen a person looks at: while a synchronized update is open that is the
-/// screen as it was when the update began.
+/** The screen a person looks at: while a synchronized update is open that is the
+ * screen as it was when the update began. */
 pub str Screen.row_text(int y) {
     List<str> parts = [];
     for (int x in 0 .. columns) {
@@ -197,9 +197,9 @@ pub str Screen.link_at(int x, int y) {
     return links[y * columns + x];
 }
 
-/// Does this screen show exactly what `buffer` holds: the same text in every
-/// row, and the same link on every cell? Returns "" when it does, else what
-/// differs first.
+/** Does this screen show exactly what `buffer` holds: the same text in every
+ * row, and the same link on every cell? Returns "" when it does, else what
+ * differs first. */
 pub str Screen.differs_from(TUI_buffer.Buffer buffer) {
     TUI_geometry.Rect area = buffer.area();
     for (int y in 0 .. rows) {
@@ -362,8 +362,8 @@ int Screen.quirk_width(int code, int width) {
     return width;
 }
 
-// What a code point takes when it is added up: nothing for a joiner, a variation selector, an
-// enclosing keycap or a tag, what `unicode.width` says for the rest.
+/* What a code point takes when it is added up: nothing for a joiner, a variation selector, an
+ * enclosing keycap or a tag, what `unicode.width` says for the rest. */
 int Screen.code_width(int code) {
     if (code == 0x200D || code == 0x20E3 || (code >= 0xFE00 && code <= 0xFE0F) || (code >= 0xE0020 && code <= 0xE007F)) {
         return 0;
@@ -790,8 +790,8 @@ void Screen.apply_csi(int marker, List<int> parameters, str intermediates, int f
     unknown.push(name + " " + str(parameters.size()) + " parameters");
 }
 
-// SGR: the pen's colours and attributes (bit 1 bold, 2 dim, 4 italic, 8 underline, 16 blink,
-// 64 reverse, 128 strike). A parameter it does not know is listed in `unknown`.
+/* SGR: the pen's colours and attributes (bit 1 bold, 2 dim, 4 italic, 8 underline, 16 blink,
+ * 64 reverse, 128 strike). A parameter it does not know is listed in `unknown`. */
 void Screen.apply_sgr(List<int> parameters) {
     int i = 0;
     while (i < parameters.size()) {
@@ -926,16 +926,16 @@ void Screen.say(str text) {
     replies.extend(text.to_bytes());
 }
 
-/// The bytes the program reads after the terminal said something: what has been
-/// said since the last call, which is forgotten.
+/** The bytes the program reads after the terminal said something: what has been
+ * said since the last call, which is forgotten. */
 pub bytes Screen.take_replies() {
     bytes taken = replies;
     replies = [];
     return taken;
 }
 
-/// What the terminal says when its window gains or loses focus: nothing unless
-/// focus reporting (mode 1004) is on.
+/** What the terminal says when its window gains or loses focus: nothing unless
+ * focus reporting (mode 1004) is on. */
 pub bytes Screen.focus(bool is_gained) {
     bytes out = [];
     if (!is_focus_reporting) {
@@ -948,10 +948,10 @@ pub bytes Screen.focus(bool is_gained) {
     return out;
 }
 
-/// The bytes this terminal sends when a key is pressed, under the keyboard mode
-/// it is in. `code` is a code point (9 Tab, 13 Enter, 27 Escape, 127 Backspace, or
-/// a character as it is typed) and `mods` the bits Shift 1, Alt 2, Ctrl 4. Written
-/// from the protocols' own descriptions, not from the library's decoder.
+/** The bytes this terminal sends when a key is pressed, under the keyboard mode
+ * it is in. `code` is a code point (9 Tab, 13 Enter, 27 Escape, 127 Backspace, or
+ * a character as it is typed) and `mods` the bits Shift 1, Alt 2, Ctrl 4. Written
+ * from the protocols' own descriptions, not from the library's decoder. */
 pub bytes Screen.press(int code, int mods) {
     bool is_special = code == 9 || code == 13 || code == 27 || code == 127;
     bool has_chord = (mods & 6) != 0;
@@ -1000,8 +1000,8 @@ pub const int Q_COMBINING_OWN_CELL = 64;
 pub const int Q_ASTRAL_SYMBOL_NARROW = 128;
 pub const int Q_BOX_WIDE = 256;
 
-// East Asian Ambiguous, in the blocks text user interfaces use: arrows, box drawing, blocks,
-// shapes, symbols, Greek, Cyrillic and a few Latin-1 signs.
+/* East Asian Ambiguous, in the blocks text user interfaces use: arrows, box drawing, blocks,
+ * shapes, symbols, Greek, Cyrillic and a few Latin-1 signs. */
 bool is_ambiguous(int code) {
     if (code >= 0x2190 && code <= 0x21FF) {
         return true;
@@ -1038,10 +1038,10 @@ int clamp(int value, int limit) {
     return value;
 }
 
-/// A `TUI_app.ProbeLink` on a screen, for the calibration tests: what is sent is applied to the screen, and what the screen
-/// says back is decoded by `term`'s own decoder into events, as the loop's reader would. The test can
-/// have the user type between two answers (`type_after`), before them (`type_first`), cut the answers
-/// short (`stop_after`, `is_cut_last`) or hold them back to be read later (`is_held`).
+/** A `TUI_app.ProbeLink` on a screen, for the calibration tests: what is sent is applied to the screen, and what the screen
+ * says back is decoded by `term`'s own decoder into events, as the loop's reader would. The test can
+ * have the user type between two answers (`type_after`), before them (`type_first`), cut the answers
+ * short (`stop_after`, `is_cut_last`) or hold them back to be read later (`is_held`). */
 pub type Link {
     pub Screen screen;
     pub term.Decoder decoder = term.decoder();
@@ -1065,8 +1065,8 @@ pub type Link {
     /// The times the reader was asked for an event, and for how long in all (what it was told to wait).
     pub int reads = 0;
     pub List<int> waits = [];
-    /// Everything said toward the program, in the pieces it was said in (typing included): what a test on a pty writes to
-    /// the terminal's master side. `take_stream` empties it.
+    /** Everything said toward the program, in the pieces it was said in (typing included): what a test on a pty writes to
+     * the terminal's master side. `take_stream` empties it. */
     pub List<bytes> stream = [];
 }
 
@@ -1090,8 +1090,8 @@ pub void Link.send(bytes data) {
     deliver(screen.take_replies());
 }
 
-// Split what the screen said into its sequences and hand them to the decoder one by one, with
-// the user's typing between them where the test says.
+/* Split what the screen said into its sequences and hand them to the decoder one by one, with
+ * the user's typing between them where the test says. */
 void Link.deliver(bytes said) {
     if (typed_first.size() > 0) {
         say(typed_first);
@@ -1150,18 +1150,18 @@ pub Option<term.Event> Link.next(int wait_ms) {
     }
 }
 
-/// The terminals the width calibration is tried on, by name (`TST_emulator.Screen` knobs set the way each one behaves):
-///   ideal          grapheme clusters, no quirks, no mode 2027, no synchronized output
-///   alacritty      what the Rust `alacritty_terminal` grid does (rio is built on it): code points added up with
-///                  `unicode-width` (ambiguous narrow, U+FE0F zero width and appended to the cell before it, a family
-///                  is 2+2+2), pending wrap, synchronized output, no mode 2027
-///   rio            the same, as far as is known
-///   kitty          grapheme clusters, U+FE0F widens, a regional indicator is 2, mode 2027 always on, synchronized output
-///   terminal-app   code points added up, pending wrap, no synchronized output (ignored), erase without the
-///                  background colour; answers cursor reports and nothing about the modes
-///   box-wide       East Asian Ambiguous drawn wide (a locale, a profile): box drawing, blocks, arrows, shapes, Greek
-///   mode-2027      code points added up until mode 2027 is switched on (WezTerm, foot, iTerm2, Ghostty ...)
-///   mute           answers nothing at all (no cursor report, no mode report)
+/** The terminals the width calibration is tried on, by name (`TST_emulator.Screen` knobs set the way each one behaves):
+ *   ideal          grapheme clusters, no quirks, no mode 2027, no synchronized output
+ *   alacritty      what the Rust `alacritty_terminal` grid does (rio is built on it): code points added up with
+ *                  `unicode-width` (ambiguous narrow, U+FE0F zero width and appended to the cell before it, a family
+ *                  is 2+2+2), pending wrap, synchronized output, no mode 2027
+ *   rio            the same, as far as is known
+ *   kitty          grapheme clusters, U+FE0F widens, a regional indicator is 2, mode 2027 always on, synchronized output
+ *   terminal-app   code points added up, pending wrap, no synchronized output (ignored), erase without the
+ *                  background colour; answers cursor reports and nothing about the modes
+ *   box-wide       East Asian Ambiguous drawn wide (a locale, a profile): box drawing, blocks, arrows, shapes, Greek
+ *   mode-2027      code points added up until mode 2027 is switched on (WezTerm, foot, iTerm2, Ghostty ...)
+ *   mute           answers nothing at all (no cursor report, no mode report) */
 pub Screen preset(str name, int columns, int rows) {
     Screen screen = Screen.sized(columns, rows);
     screen.wrap_mode = 1;

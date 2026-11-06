@@ -1,12 +1,12 @@
-// The same scenarios as the Rust and Go renderers' comparison benchmark: a 200x50 grid of coloured
-// text (full / diff-1 / diff-0), and the keystrokes of a file finder (a ruled box, a query row, forty
-// list rows with the selected one filled) in ASCII, CJK and emoji names.
-//
-//   bash scripts/build.sh examples/bench_finder.m31 -o /tmp/bench_finder && /tmp/bench_finder
-//
-// "diff" lines time the renderer alone on prebuilt frames; "paint" lines time laying the frame into
-// a cleared buffer (`set_str` of the rows, `fill`), and "key" lines are what a keystroke costs a
-// program: clear, paint the next frame, diff it against the last.
+/* The same scenarios as the Rust and Go renderers' comparison benchmark: a 200x50 grid of coloured
+ * text (full / diff-1 / diff-0), and the keystrokes of a file finder (a ruled box, a query row, forty
+ * list rows with the selected one filled) in ASCII, CJK and emoji names.
+ *
+ *   bash scripts/build.sh examples/bench_finder.m31 -o /tmp/bench_finder && /tmp/bench_finder
+ *
+ * "diff" lines time the renderer alone on prebuilt frames; "paint" lines time laying the frame into
+ * a cleared buffer (`set_str` of the rows, `fill`), and "key" lines are what a keystroke costs a
+ * program: clear, paint the next frame, diff it against the last. */
 
 import date;
 import core.TUI_buffer;

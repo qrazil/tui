@@ -1,42 +1,42 @@
-// Colours, attributes, and the bytes a terminal wants for them.
-//
-// API
+/* Colours, attributes, and the bytes a terminal wants for them.
+ *
+ * API */
 // ---
-//   TUI_style.Colour           Default | Indexed(index) | Rgb(red, green, blue)
-//   TUI_style.Style            foreground, background, attrs -- constructed with named arguments
-//   TUI_style.Depth            Ansi16 | Ansi256 | TrueColour
-//   TUI_style.detect_depth()   the depth this process's terminal has (COLORTERM, TERM_PROGRAM, TERM)
-//   TUI_style.BOLD .. STRIKE   the attribute bits
-//   style.pack()              a whole style as one `int`, which is what a
-//                             `Buffer` stores and what the diff compares
-//   TUI_style.sgr(out, from, to, depth)   the escape that turns one packed
-//                             style into another, appended to `out`
-//   TUI_style.Theme            a named palette of `Style`s, by role
-//
-// **A style is one `int`.** A buffer of 200x50 holds ten thousand cells, and
-// a `Style` object per cell would be thirty thousand refcounted allocations
-// per frame: one for the style and one for each of its two colours. So the
-// public type is a struct, the stored form is a packed integer, and `pack`
-// and `unpack` are the door between them. The packing is:
-//
-//     bits  0..24   foreground colour code
-//     bits 25..49   background colour code
-//     bits 50..55   attribute bits
-//
-// and a colour code is
-//
-//     0                      the terminal's default
-//     1 + n                  palette entry n, 0..255
-//     0x1000000 | 0xRRGGBB   a 24-bit colour
-//
-// Twenty-five bits each, six for the attributes, fifty-six in all: it fits
-// in an `int` with room left, and the sign bit is never reached, so a packed
-// style is always positive and `==` on two of them is the whole comparison
-// the renderer needs.
+/*   TUI_style.Colour           Default | Indexed(index) | Rgb(red, green, blue)
+ *   TUI_style.Style            foreground, background, attrs -- constructed with named arguments
+ *   TUI_style.Depth            Ansi16 | Ansi256 | TrueColour
+ *   TUI_style.detect_depth()   the depth this process's terminal has (COLORTERM, TERM_PROGRAM, TERM)
+ *   TUI_style.BOLD .. STRIKE   the attribute bits
+ *   style.pack()              a whole style as one `int`, which is what a
+ *                             `Buffer` stores and what the diff compares
+ *   TUI_style.sgr(out, from, to, depth)   the escape that turns one packed
+ *                             style into another, appended to `out`
+ *   TUI_style.Theme            a named palette of `Style`s, by role
+ *
+ * **A style is one `int`.** A buffer of 200x50 holds ten thousand cells, and
+ * a `Style` object per cell would be thirty thousand refcounted allocations
+ * per frame: one for the style and one for each of its two colours. So the
+ * public type is a struct, the stored form is a packed integer, and `pack`
+ * and `unpack` are the door between them. The packing is:
+ *
+ *     bits  0..24   foreground colour code
+ *     bits 25..49   background colour code
+ *     bits 50..55   attribute bits
+ *
+ * and a colour code is
+ *
+ *     0                      the terminal's default
+ *     1 + n                  palette entry n, 0..255
+ *     0x1000000 | 0xRRGGBB   a 24-bit colour
+ *
+ * Twenty-five bits each, six for the attributes, fifty-six in all: it fits
+ * in an `int` with room left, and the sign bit is never reached, so a packed
+ * style is always positive and `==` on two of them is the whole comparison
+ * the renderer needs. */
 
-/// Bold.
 import os;
 
+/// Bold.
 pub const int BOLD = 1;
 /// Faint.
 pub const int DIM = 2;
@@ -55,22 +55,22 @@ const int COL_MASK = 0x1FF_FFFF;
 const int COL_RGB = 0x100_0000;
 const int ATTR_SHIFT = 50;
 
-/// A colour, in the three forms a terminal understands.
-///
-/// `Indexed` is the 256-entry xterm palette, whose first sixteen entries are
-/// the colours a 16-colour terminal has. `Rgb` is 24-bit. Either is written
-/// out in whatever the `Depth` allows, converting down to the nearest entry
-/// of the smaller palette -- so a program picks the colour it means and the
-/// terminal decides what it gets.
+/** A colour, in the three forms a terminal understands.
+ *
+ * `Indexed` is the 256-entry xterm palette, whose first sixteen entries are
+ * the colours a 16-colour terminal has. `Rgb` is 24-bit. Either is written
+ * out in whatever the `Depth` allows, converting down to the nearest entry
+ * of the smaller palette -- so a program picks the colour it means and the
+ * terminal decides what it gets. */
 pub enum Colour {
     Default;
     Indexed(int);
     Rgb(int, int, int);
 }
 
-/// The colour as its packed code. **Traps** on an index outside 0..255 or a
-/// component outside 0..255: a palette entry the terminal has no name for is
-/// the program's mistake, not the user's.
+/** The colour as its packed code. **Traps** on an index outside 0..255 or a
+ * component outside 0..255: a palette entry the terminal has no name for is
+ * the program's mistake, not the user's. */
 pub int Colour.code() {
     match (this) {
         case Default: {
@@ -121,14 +121,14 @@ pub str Colour.to_str() {
     }
 }
 
-/// How a cell is drawn: two colours and a set of attribute bits.
-///
-/// Every field has a default, so every field is named at construction and
-/// `Style()` is the terminal's own idea of plain text:
-///
-/// ```
-/// TUI_style.Style(foreground: TUI_style.Colour.Indexed(3), attrs: TUI_style.BOLD)
-/// ```
+/** How a cell is drawn: two colours and a set of attribute bits.
+ *
+ * Every field has a default, so every field is named at construction and
+ * `Style()` is the terminal's own idea of plain text:
+ *
+ * ```
+ * TUI_style.Style(foreground: TUI_style.Colour.Indexed(3), attrs: TUI_style.BOLD)
+ * ``` */
 pub type Style {
     pub Colour foreground = Colour.Default;
     pub Colour background = Colour.Default;
@@ -169,9 +169,9 @@ pub Style Style.with_attrs(int bits) {
     return Style(foreground: foreground, background: background, attrs: attrs | bits & ATTR_ALL);
 }
 
-/// `over` laid on top of this one: each of `over`'s colours wins unless it
-/// is `Default`, and their attributes are combined. This is what a widget
-/// does with a highlight style.
+/** `over` laid on top of this one: each of `over`'s colours wins unless it
+ * is `Default`, and their attributes are combined. This is what a widget
+ * does with a highlight style. */
 pub Style Style.merged(Style over) {
     Colour merged_foreground = foreground;
     Colour merged_background = background;
@@ -188,8 +188,8 @@ pub str Style.to_str() {
     return "fg " + foreground.to_str() + ", bg " + background.to_str() + ", attrs " + str(attrs);
 }
 
-/// How many colours the terminal has. Stage 3 detects this; until then a
-/// program says which it wants and the diff writes accordingly.
+/** How many colours the terminal has. Stage 3 detects this; until then a
+ * program says which it wants and the diff writes accordingly. */
 pub enum Depth {
     /// The original eight, and their bright forms: SGR 30-37 and 90-97.
     Ansi16;
@@ -199,10 +199,10 @@ pub enum Depth {
     TrueColour;
 }
 
-/// How many colours a terminal has, from what it says about itself: `COLORTERM` (truecolor or 24bit), the
-/// terminal program (iTerm.app, WezTerm, vscode, ghostty), a TERM that names it (truecolor, direct, xterm-kitty,
-/// alacritty), else 256 for a *256color TERM (Terminal.app before macOS 26 has no 24-bit colour: it
-/// misreads `38;2;r;g;b` as several unrelated attributes), else 16.
+/** How many colours a terminal has, from what it says about itself: `COLORTERM` (truecolor or 24bit), the
+ * terminal program (iTerm.app, WezTerm, vscode, ghostty), a TERM that names it (truecolor, direct, xterm-kitty,
+ * alacritty), else 256 for a *256color TERM (Terminal.app before macOS 26 has no 24-bit colour: it
+ * misreads `38;2;r;g;b` as several unrelated attributes), else 16. */
 pub Depth depth_of(str colour_term, str program, str term_name) {
     if (colour_term == "truecolor" || colour_term == "24bit") {
         return Depth.TrueColour;
@@ -226,10 +226,10 @@ pub Depth detect_depth() {
 
 // --- the escape sequences ---------------------------------------------------
 
-/// Append the decimal digits of `value` to `out`, without building a `str`.
-///
-/// `str(v).to_bytes()` is two allocations per number, and a frame writes a
-/// few thousand numbers. This writes into the frame's own buffer.
+/** Append the decimal digits of `value` to `out`, without building a `str`.
+ *
+ * `str(v).to_bytes()` is two allocations per number, and a frame writes a
+ * few thousand numbers. This writes into the frame's own buffer. */
 pub void push_int(bytes out, int value) {
     if (value < 0) {
         out.push('-');
@@ -248,13 +248,13 @@ pub void push_csi(bytes out) {
     out.push('[');
 }
 
-/// The escape sequence that turns a terminal showing style `from` into one
-/// showing style `to`, appended to `out`. Nothing at all when they are equal.
-///
-/// Only what changed is written: attributes that went away as their own
-/// "off" codes rather than a reset, and a colour only when it is a different
-/// colour. `from` is the pen the terminal is holding; at the start of a frame
-/// that is `RESET_STYLE`, which is what `\x1b[0m` leaves behind.
+/** The escape sequence that turns a terminal showing style `from` into one
+ * showing style `to`, appended to `out`. Nothing at all when they are equal.
+ *
+ * Only what changed is written: attributes that went away as their own
+ * "off" codes rather than a reset, and a colour only when it is a different
+ * colour. `from` is the pen the terminal is holding; at the start of a frame
+ * that is `RESET_STYLE`, which is what `\x1b[0m` leaves behind. */
 pub void sgr(bytes out, int from, int target, Depth depth) {
     if (from == target) {
         return;
@@ -267,19 +267,19 @@ pub void sgr(bytes out, int from, int target, Depth depth) {
     int new_foreground = target & COL_MASK;
     int old_background = from >> COL_BITS & COL_MASK;
     int new_background = target >> COL_BITS & COL_MASK;
-    // Every difference below writes at least one parameter, so this is
-    // exactly "would there be any": nothing is written for two styles that
-    // differ only in bits `pack` never sets.
+    /* Every difference below writes at least one parameter, so this is
+     * exactly "would there be any": nothing is written for two styles that
+     * differ only in bits `pack` never sets. */
     if (turned_off == 0 && turned_on == 0 && old_foreground == new_foreground && old_background == new_background) {
         return;
     }
-    // The parameters go straight into the frame's own bytes, `;`-separated
-    // as they come, rather than into a list that is then copied out: a
-    // frame with colour in it changes the pen hundreds of times.
+    /* The parameters go straight into the frame's own bytes, `;`-separated
+     * as they come, rather than into a list that is then copied out: a
+     * frame with colour in it changes the pen hundreds of times. */
     Sgr codes = Sgr(out);
     push_csi(out);
-    // SGR 22 turns off bold AND dim together, so whichever of the two
-    // survives has to be written again after it.
+    /* SGR 22 turns off bold AND dim together, so whichever of the two
+     * survives has to be written again after it. */
     if ((turned_off & (BOLD | DIM)) != 0) {
         codes.code(22);
         if ((new_attrs & BOLD) != 0) {
@@ -329,8 +329,8 @@ pub void sgr(bytes out, int from, int target, Depth depth) {
     out.push('m');
 }
 
-/// The parameters of one SGR sequence, written as they are decided: the
-/// first bare, every later one after a `;`.
+/** The parameters of one SGR sequence, written as they are decided: the
+ * first bare, every later one after a `;`. */
 type Sgr {
     bytes out;
     bool is_first = true;
@@ -351,12 +351,12 @@ pub void push_reset(bytes out) {
     out.push('m');
 }
 
-/// The packed style a terminal is in after `\x1b[0m`: both colours its own,
-/// no attributes. A full redraw starts from here.
+/** The packed style a terminal is in after `\x1b[0m`: both colours its own,
+ * no attributes. A full redraw starts from here. */
 pub const int RESET_STYLE = 0;
 
-/// The SGR parameters for colour code `colour_code`, at this depth, on the foreground
-/// or on the background.
+/** The SGR parameters for colour code `colour_code`, at this depth, on the foreground
+ * or on the background. */
 void colour_codes(Sgr codes, int colour_code, Depth depth, bool is_background) {
     int base = 30;
     if (is_background) {
@@ -426,9 +426,9 @@ void push_basic(Sgr codes, int basic_index, int base) {
     }
 }
 
-// The xterm palette. Sixteen named colours, then a 6x6x6 cube on the levels
-// below, then twenty-four greys. Every terminal emulator agrees on these
-// numbers; they are the ones xterm's `256colres.pl` generates.
+/* The xterm palette. Sixteen named colours, then a 6x6x6 cube on the levels
+ * below, then twenty-four greys. Every terminal emulator agrees on these
+ * numbers; they are the ones xterm's `256colres.pl` generates. */
 const Array<int> ANSI16 = [0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xC0C0C0, 0x808080, 0xFF0000, 0x00FF00, 0xFFFF00, 0x0000FF, 0xFF00FF, 0x00FFFF, 0xFFFFFF];
 const Array<int> CUBE = [0, 95, 135, 175, 215, 255];
 
@@ -448,8 +448,8 @@ pub int palette_rgb(int palette_index) {
     return grey_level * 65536 | grey_level * 256 | grey_level;
 }
 
-/// The palette entry closest to a 24-bit colour: the nearer of the cube
-/// entry and the grey ramp entry, by squared distance in RGB.
+/** The palette entry closest to a 24-bit colour: the nearer of the cube
+ * entry and the grey ramp entry, by squared distance in RGB. */
 pub int rgb_to_256(int rgb_value) {
     int red = rgb_value / 65536;
     int green = rgb_value / 256 % 256;
@@ -518,32 +518,32 @@ int dist(int rgb_value, int red, int green, int blue) {
 }
 
 // --- the styling layer: a named palette --------------------------------------
-//
-// Stage 1 gave every widget its own `Style` fields, each with its own
-// hard-coded default -- `Block`'s border, `ListView`'s highlight. That is
-// fine for one screen; a program that wants to re-skin itself, or offer a
-// light and a dark theme, needs one place holding every role a widget might
-// draw in, so that changing the palette is changing one value rather than
-// every call site that constructed a `Style` by hand.
-//
-// `Theme` is that place: a plain struct of `Style` fields, one per role, each
-// with a sensible default so `Theme()` is a working plain theme exactly as
-// `Style()` is a working plain style. A widget that wants theming takes a
-// `Theme` (or a field of one) the same way it already takes a `Style` --
-// there is no registry and no lookup by name, because a struct field
-// reached at compile time is what this language's interfaces already give
-// for free, and a `Map<str, Style>` would only add a way to look up a role
-// that does not exist.
+/*
+ * Stage 1 gave every widget its own `Style` fields, each with its own
+ * hard-coded default -- `Block`'s border, `ListView`'s highlight. That is
+ * fine for one screen; a program that wants to re-skin itself, or offer a
+ * light and a dark theme, needs one place holding every role a widget might
+ * draw in, so that changing the palette is changing one value rather than
+ * every call site that constructed a `Style` by hand.
+ *
+ * `Theme` is that place: a plain struct of `Style` fields, one per role, each
+ * with a sensible default so `Theme()` is a working plain theme exactly as
+ * `Style()` is a working plain style. A widget that wants theming takes a
+ * `Theme` (or a field of one) the same way it already takes a `Style` --
+ * there is no registry and no lookup by name, because a struct field
+ * reached at compile time is what this language's interfaces already give
+ * for free, and a `Map<str, Style>` would only add a way to look up a role
+ * that does not exist. */
 
-/// A named palette of styles for a program's own UI: one role per field, so
-/// re-skinning the whole thing is replacing one `Theme` value rather than
-/// hunting down every `Style(...)` a widget was built with.
-///
-/// The roles are the ones `apps/git/design.md` names widgets needing --
-/// a title, a dimmed line, an accent, a selection, an error, and the two a
-/// diff colours its added and removed lines with -- plus `normal` and
-/// `border` for everything else. A program with roles of its own embeds this
-/// or writes a bigger struct; nothing here stops it.
+/** A named palette of styles for a program's own UI: one role per field, so
+ * re-skinning the whole thing is replacing one `Theme` value rather than
+ * hunting down every `Style(...)` a widget was built with.
+ *
+ * The roles are the ones `apps/git/design.md` names widgets needing --
+ * a title, a dimmed line, an accent, a selection, an error, and the two a
+ * diff colours its added and removed lines with -- plus `normal` and
+ * `border` for everything else. A program with roles of its own embeds this
+ * or writes a bigger struct; nothing here stops it. */
 pub type Theme {
     /// Plain text, on the terminal's own background.
     pub Style normal = Style();
@@ -567,8 +567,8 @@ pub type Theme {
     pub Style border = Style();
 }
 
-/// The plain theme: every role its own bare default, the same values a
-/// widget used before `Theme` existed.
+/** The plain theme: every role its own bare default, the same values a
+ * widget used before `Theme` existed. */
 pub static Theme Theme.plain() {
     return Theme();
 }

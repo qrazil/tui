@@ -1,11 +1,11 @@
-// The width calibration (0.14.0): the probe, the table it makes, the borders that cannot misalign.
-//
-//   bash tests/test.sh
-//
-// Everything here is in one process: `TST_emulator.Link` is the terminal the calibration talks to (an emulator that answers
-// cursor position reports by its own width model, so the probe is exercised from the bytes it writes to the
-// decisions it takes), and `TUI_app.Loop.calibrate_width` is the real one. The pty test (`width_pty.m31`)
-// runs the same loop on a real pseudo-terminal.
+/* The width calibration (0.14.0): the probe, the table it makes, the borders that cannot misalign.
+ *
+ *   bash tests/test.sh
+ *
+ * Everything here is in one process: `TST_emulator.Link` is the terminal the calibration talks to (an emulator that answers
+ * cursor position reports by its own width model, so the probe is exercised from the bytes it writes to the
+ * decisions it takes), and `TUI_app.Loop.calibrate_width` is the real one. The pty test (`width_pty.m31`)
+ * runs the same loop on a real pseudo-terminal. */
 
 import os;
 import term;

@@ -4,6 +4,17 @@ Each version is a tag of github.com/qrazil/tui. `RENAMES.md` lists what a progra
 API moves; this file says what each version added, changed and fixed. 0.9.0 and 0.9.1 were written back from
 `git log` (beed45a, fdef5fb, 0b132ce); earlier versions are in `RENAMES.md` and the git history.
 
+## 0.16.1
+
+Builds and tests against m31 v0.14.2 (CI `M31_REF`); no change to the library's behaviour or API, and `tests/*.out` did not move.
+
+### Changed
+
+- Runs of `//` comment lines are block comments (`m31c -lint --fix`), as the m31 0.14 linter requires; the stray `/// Bold.`
+  above `import os;` in `core/TUI_style.m31` (an error in 0.14: "doc comment is not attached to a declaration") now sits on `BOLD`.
+- `tests/test.sh` and `scripts/build.sh` use the 0.14 command spellings (`-emit-c ... --out`, `-fmt --check --recursive`).
+- `syntax` is pinned to syntax 0.5.1, which builds under m31 0.14.2.
+
 ## 0.16.0
 
 A review of the renderer and the input path against ratatui (frame cost, output bytes, idle behaviour, latency) with a

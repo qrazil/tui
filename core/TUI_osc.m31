@@ -1,64 +1,64 @@
-// The operating system commands (OSC) a program sends the terminal, as bytes:
-// the clipboard (OSC 52) and hyperlinks (OSC 8).
-//
-// API
+/* The operating system commands (OSC) a program sends the terminal, as bytes:
+ * the clipboard (OSC 52) and hyperlinks (OSC 8).
+ *
+ * API */
 // ---
-//   TUI_osc.clipboard_sequence(text, target, limit)   OSC 52: put `text` on the clipboard
-//   TUI_osc.clipboard_fit(text, limit)                how many bytes of `text` fit a limit
-//   TUI_osc.CLIPBOARD_LIMIT                           the default limit, 74994 bytes
-//   TUI_osc.hyperlink_uri(uri)                        a URI made safe to carry in an OSC 8
-//   TUI_osc.hyperlink_open(uri) / HYPERLINK_CLOSE     OSC 8 begin and end
-//
-// Pure encoders: nothing here touches a terminal, and nothing is ever written
-// unless a program calls it. `TUI_app.Loop.copy` is the clipboard's door in the
-// loop, `TUI_buffer.Buffer.link` the hyperlink's in the cell model.
-//
+/*   TUI_osc.clipboard_sequence(text, target, limit)   OSC 52: put `text` on the clipboard
+ *   TUI_osc.clipboard_fit(text, limit)                how many bytes of `text` fit a limit
+ *   TUI_osc.CLIPBOARD_LIMIT                           the default limit, 74994 bytes
+ *   TUI_osc.hyperlink_uri(uri)                        a URI made safe to carry in an OSC 8
+ *   TUI_osc.hyperlink_open(uri) / HYPERLINK_CLOSE     OSC 8 begin and end
+ *
+ * Pure encoders: nothing here touches a terminal, and nothing is ever written
+ * unless a program calls it. `TUI_app.Loop.copy` is the clipboard's door in the
+ * loop, `TUI_buffer.Buffer.link` the hyperlink's in the cell model.
+ * */
 // --- OSC 52, the clipboard ----------------------------------------------------
-//
-// `ESC ] 52 ; c ; <base64> BEL` asks the terminal to put the text on the system
-// clipboard. It is a WRITE only: the matching read (`?` instead of the data) would
-// let whatever is printed in the terminal ask for the clipboard, so this library
-// has no encoder for it. The text travels as base64, so no byte of it can end
-// the sequence early or smuggle another one in.
-//
-// A terminal caps the payload: xterm's default is 100000 bytes of base64, which is
-// 74994 bytes of text, and a terminal that gets more drops the whole sequence, so
-// the text is cut BEFORE it is encoded, at a grapheme cluster (never inside a
-// character or half an emoji), and `clipboard_fit` tells the caller how much that
-// was. Support is the user's terminal's business and there is no query for it
-// (tmux needs `set -g set-clipboard on`; GNU screen needs its own passthrough),
-// which is why a program asks for a copy and the library does not probe.
-//
+/*
+ * `ESC ] 52 ; c ; <base64> BEL` asks the terminal to put the text on the system
+ * clipboard. It is a WRITE only: the matching read (`?` instead of the data) would
+ * let whatever is printed in the terminal ask for the clipboard, so this library
+ * has no encoder for it. The text travels as base64, so no byte of it can end
+ * the sequence early or smuggle another one in.
+ *
+ * A terminal caps the payload: xterm's default is 100000 bytes of base64, which is
+ * 74994 bytes of text, and a terminal that gets more drops the whole sequence, so
+ * the text is cut BEFORE it is encoded, at a grapheme cluster (never inside a
+ * character or half an emoji), and `clipboard_fit` tells the caller how much that
+ * was. Support is the user's terminal's business and there is no query for it
+ * (tmux needs `set -g set-clipboard on`; GNU screen needs its own passthrough),
+ * which is why a program asks for a copy and the library does not probe.
+ * */
 // --- OSC 8, hyperlinks -----------------------------------------------------------
-//
-// `ESC ] 8 ; id=<n> ; <uri> ST` starts a link, `ESC ] 8 ; ; ST` ends it; cells
-// written between the two are the link. A terminal that does not know OSC 8 drops
-// the sequence and shows the text, so a link degrades to plain text. The URI is the
-// one thing here that comes from outside (a file's contents, a markdown link), so
-// it is made safe: a byte outside printable ASCII is percent-encoded, which keeps
-// ESC and BEL (the two bytes that end an OSC) out of it, and a URI longer than
-// `MAX_URI` (what the specification recommends terminals to accept) is no link.
-//
-// The `id` is a number worked out from the URI, so that a link wrapped over two
-// rows -- two runs of cells with the same URI -- is one link to the terminal: it
-// is underlined as one when the pointer is over it.
+/*
+ * `ESC ] 8 ; id=<n> ; <uri> ST` starts a link, `ESC ] 8 ; ; ST` ends it; cells
+ * written between the two are the link. A terminal that does not know OSC 8 drops
+ * the sequence and shows the text, so a link degrades to plain text. The URI is the
+ * one thing here that comes from outside (a file's contents, a markdown link), so
+ * it is made safe: a byte outside printable ASCII is percent-encoded, which keeps
+ * ESC and BEL (the two bytes that end an OSC) out of it, and a URI longer than
+ * `MAX_URI` (what the specification recommends terminals to accept) is no link.
+ *
+ * The `id` is a number worked out from the URI, so that a link wrapped over two
+ * rows -- two runs of cells with the same URI -- is one link to the terminal: it
+ * is underlined as one when the pointer is over it. */
 
 import encoding.base64;
 import text.unicode;
 
-/// The default size limit of a clipboard write, in bytes of text: what base64
-/// turns into at most 100000 bytes, xterm's own limit.
+/** The default size limit of a clipboard write, in bytes of text: what base64
+ * turns into at most 100000 bytes, xterm's own limit. */
 pub const int CLIPBOARD_LIMIT = 74994;
 /// The longest URI of a hyperlink, in bytes. Terminals are only asked to take 2083.
 pub const int MAX_URI = 2083;
 /// What ends a hyperlink.
 pub const str HYPERLINK_CLOSE = "\x1b]8;;\x1b\\";
-/// The clipboards a write may name: `c` clipboard, `p` primary, `q` secondary,
-/// `s` the terminal's choice, `0` to `7` its cut buffers.
+/** The clipboards a write may name: `c` clipboard, `p` primary, `q` secondary,
+ * `s` the terminal's choice, `0` to `7` its cut buffers. */
 const str TARGETS = "cpqs01234567";
 
-/// How many bytes of `text` fit in `limit`: whole grapheme clusters only, so it is
-/// the size of the longest prefix of clusters that is at most `limit` bytes.
+/** How many bytes of `text` fit in `limit`: whole grapheme clusters only, so it is
+ * the size of the longest prefix of clusters that is at most `limit` bytes. */
 pub int clipboard_fit(str text, int limit) {
     if (limit <= 0) {
         return 0;
@@ -76,10 +76,10 @@ pub int clipboard_fit(str text, int limit) {
     return used;
 }
 
-/// OSC 52: the bytes that put `text` (cut to `limit`, see `clipboard_fit`) on the
-/// clipboard `target` (one of `c p q s 0..7`, `c` by default). Empty -- nothing
-/// to write -- when there is no text, `limit` is not above 0, or `target` is not
-/// a clipboard.
+/** OSC 52: the bytes that put `text` (cut to `limit`, see `clipboard_fit`) on the
+ * clipboard `target` (one of `c p q s 0..7`, `c` by default). Empty -- nothing
+ * to write -- when there is no text, `limit` is not above 0, or `target` is not
+ * a clipboard. */
 pub bytes clipboard_sequence(str text, str target = "c", int limit = CLIPBOARD_LIMIT) {
     bytes out = [];
     if (text.size() == 0 || limit <= 0 || target.size() != 1 || !TARGETS.contains(target)) {
@@ -97,10 +97,10 @@ pub bytes clipboard_sequence(str text, str target = "c", int limit = CLIPBOARD_L
     return out;
 }
 
-/// `uri` as an OSC 8 may carry it: every byte that is not printable ASCII (a
-/// space, a control character, ESC, BEL, a multi-byte character) is written as
-/// `%XX`, and what is already `%XX` is left alone. "" -- no link -- for an empty
-/// or over-long URI.
+/** `uri` as an OSC 8 may carry it: every byte that is not printable ASCII (a
+ * space, a control character, ESC, BEL, a multi-byte character) is written as
+ * `%XX`, and what is already `%XX` is left alone. "" -- no link -- for an empty
+ * or over-long URI. */
 pub str hyperlink_uri(str uri) {
     if (uri.size() == 0) {
         return "";
@@ -149,8 +149,8 @@ pub int hyperlink_id(str uri) {
     return hash;
 }
 
-/// The bytes that start a link to `uri` (made safe first, see `hyperlink_uri`);
-/// "" when it is no link. `HYPERLINK_CLOSE` ends it.
+/** The bytes that start a link to `uri` (made safe first, see `hyperlink_uri`);
+ * "" when it is no link. `HYPERLINK_CLOSE` ends it. */
 pub str hyperlink_open(str uri) {
     str safe = hyperlink_uri(uri);
     if (safe.size() == 0) {

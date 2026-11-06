@@ -1,35 +1,35 @@
-// A row of tiny bars, one per value: the shape of a series in the room of a
-// word.
-//
-// API
+/* A row of tiny bars, one per value: the shape of a series in the room of a
+ * word.
+ *
+ * API */
 // ---
-//   TUI_sparkline.Sparkline(data, min_value:, max_value:, style:)   a Widget
-//   spark.visible(width)       the values that fit, newest last
-//   spark.bounds()             the range the bars are scaled against
-//
-// One value is one column and `height` rows are one bar's whole range, so a
-// sparkline three rows tall has 24 levels. The bar is exact to an eighth of a
-// cell (TUI_eighths.m31). Bars grow from the bottom of the rectangle.
-//
+/*   TUI_sparkline.Sparkline(data, min_value:, max_value:, style:)   a Widget
+ *   spark.visible(width)       the values that fit, newest last
+ *   spark.bounds()             the range the bars are scaled against
+ *
+ * One value is one column and `height` rows are one bar's whole range, so a
+ * sparkline three rows tall has 24 levels. The bar is exact to an eighth of a
+ * cell (TUI_eighths.m31). Bars grow from the bottom of the rectangle.
+ * */
 // --- scaling ----------------------------------------------------------------
-//
-// `min_value` and `max_value` pin the ends of the range. An end left
-// unpinned comes from the data (TUI_eighths.bounds_of): the largest finite
-// value on top, and at the bottom the smallest finite value or 0.0,
-// whichever is less. So an ordinary all-positive series is proportional to
-// its values and starts from nothing, and a series that goes negative is
-// scaled from its minimum. A value outside pinned bounds is drawn at the
-// nearest end. NaN and infinities draw nothing.
-//
-// A value that is strictly above the lower bound is drawn at least one
-// eighth tall, however small: a sparkline exists to show that something
-// happened, and a spike of 1 beside a spike of 10000 should not vanish.
-//
+/*
+ * `min_value` and `max_value` pin the ends of the range. An end left
+ * unpinned comes from the data (TUI_eighths.bounds_of): the largest finite
+ * value on top, and at the bottom the smallest finite value or 0.0,
+ * whichever is less. So an ordinary all-positive series is proportional to
+ * its values and starts from nothing, and a series that goes negative is
+ * scaled from its minimum. A value outside pinned bounds is drawn at the
+ * nearest end. NaN and infinities draw nothing.
+ *
+ * A value that is strictly above the lower bound is drawn at least one
+ * eighth tall, however small: a sparkline exists to show that something
+ * happened, and a spike of 1 beside a spike of 10000 should not vanish.
+ * */
 // --- more values than columns -----------------------------------------------
-//
-// The NEWEST values are the ones kept, which are the last ones: a sparkline
-// is a window on a series that grows at its right end. Fewer values than
-// columns leave the right of the rectangle blank.
+/*
+ * The NEWEST values are the ones kept, which are the last ones: a sparkline
+ * is a window on a series that grows at its right end. Fewer values than
+ * columns leave the right of the rectangle blank. */
 
 import math;
 import core.TUI_buffer;

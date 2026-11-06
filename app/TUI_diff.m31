@@ -1,55 +1,55 @@
-// The diffing renderer: two buffers in, one byte string out.
-//
-// API
+/* The diffing renderer: two buffers in, one byte string out.
+ *
+ * API */
 // ---
-//   TUI_diff.full(next, depth)          every cell, from a reset terminal
-//   TUI_diff.diff(previous, next, depth)    only what changed
-//   TUI_diff.show(bytes)                the bytes made readable, for tests
-//   TUI_diff.move_to(out, x, y)         and the other small control helpers
-//
-// **One `bytes` per frame.** Nothing here touches a terminal; the caller
-// hands the result to one write. That is what makes this testable without a
-// terminal, and it is also the only way to draw a frame without tearing.
-//
+/*   TUI_diff.full(next, depth)          every cell, from a reset terminal
+ *   TUI_diff.diff(previous, next, depth)    only what changed
+ *   TUI_diff.show(bytes)                the bytes made readable, for tests
+ *   TUI_diff.move_to(out, x, y)         and the other small control helpers
+ *
+ * **One `bytes` per frame.** Nothing here touches a terminal; the caller
+ * hands the result to one write. That is what makes this testable without a
+ * terminal, and it is also the only way to draw a frame without tearing.
+ * */
 // --- what the diff decides --------------------------------------------------
-//
-// Walking a row left to right, a cell is written when its symbol, its style
-// or its width differs from the previous frame. Between two cells that need
-// writing there is a run of cells that do not, and there are two ways across
-// it:
-//
-//   - **jump**: `\x1b[nC` moves the cursor `n` columns right, 3 bytes plus
-//     the digits of `n` (and `\x1b[C` alone, 3 bytes, when `n` is 1);
-//   - **walk**: write the cells again, which costs their own bytes.
-//
-// The walk is taken when it is no more expensive and every cell in the run
-// is already in the pen's style -- otherwise crossing would cost an SGR
-// sequence as well, which is never cheaper. So a one-character gap between
-// two changed cells is redrawn and a twenty-character gap is jumped, which
-// is what a hand-written renderer does and what `n` in the escape is for.
-//
-// Moving to another row is always an absolute `\x1b[r;cH`. `\r\n` would be
-// two bytes rather than six, and would scroll the screen at the bottom
-// margin; a renderer that is sometimes right is worse than one that is
-// always six bytes.
-//
-// **Styles are written as differences too.** The pen -- the style the
-// terminal is holding -- starts each frame at `\x1b[0m` and changes only
-// when a cell wants something else, and then only by what changed:
-// `\x1b[24m` to stop underlining, not a reset and a repaint.
-//
-// **Hyperlinks (OSC 8) are written like the pen.** A cell with a link is written
-// inside `ESC ] 8 ; id ; uri ST ... ESC ] 8 ; ; ST`; the link a frame has open
-// changes only when a cell wants another one, is closed before an erase-to-end-of-
-// line and at the end of the frame, so a frame never leaves one open. Crossing a
-// gap by walking is taken only over cells whose link is the one already open. A
-// frame in which neither buffer has a link writes exactly the bytes it did before
-// links existed.
-//
-// **A run of blanks to the end of a row becomes `\x1b[K`.** Erase-to-end-of
-// line fills with the terminal's own background, so it is used only when the
-// pen can be put back to plain first, which is exactly when the remaining
-// cells are plain spaces.
+/*
+ * Walking a row left to right, a cell is written when its symbol, its style
+ * or its width differs from the previous frame. Between two cells that need
+ * writing there is a run of cells that do not, and there are two ways across
+ * it:
+ *
+ *   - **jump**: `\x1b[nC` moves the cursor `n` columns right, 3 bytes plus
+ *     the digits of `n` (and `\x1b[C` alone, 3 bytes, when `n` is 1);
+ *   - **walk**: write the cells again, which costs their own bytes.
+ *
+ * The walk is taken when it is no more expensive and every cell in the run
+ * is already in the pen's style -- otherwise crossing would cost an SGR
+ * sequence as well, which is never cheaper. So a one-character gap between
+ * two changed cells is redrawn and a twenty-character gap is jumped, which
+ * is what a hand-written renderer does and what `n` in the escape is for.
+ *
+ * Moving to another row is always an absolute `\x1b[r;cH`. `\r\n` would be
+ * two bytes rather than six, and would scroll the screen at the bottom
+ * margin; a renderer that is sometimes right is worse than one that is
+ * always six bytes.
+ *
+ * **Styles are written as differences too.** The pen -- the style the
+ * terminal is holding -- starts each frame at `\x1b[0m` and changes only
+ * when a cell wants something else, and then only by what changed:
+ * `\x1b[24m` to stop underlining, not a reset and a repaint.
+ *
+ * **Hyperlinks (OSC 8) are written like the pen.** A cell with a link is written
+ * inside `ESC ] 8 ; id ; uri ST ... ESC ] 8 ; ; ST`; the link a frame has open
+ * changes only when a cell wants another one, is closed before an erase-to-end-of-
+ * line and at the end of the frame, so a frame never leaves one open. Crossing a
+ * gap by walking is taken only over cells whose link is the one already open. A
+ * frame in which neither buffer has a link writes exactly the bytes it did before
+ * links existed.
+ *
+ * **A run of blanks to the end of a row becomes `\x1b[K`.** Erase-to-end-of
+ * line fills with the terminal's own background, so it is used only when the
+ * pen can be put back to plain first, which is exactly when the remaining
+ * cells are plain spaces. */
 
 import core.TUI_buffer;
 import core.TUI_geometry;
@@ -57,29 +57,29 @@ import core.TUI_osc;
 import core.TUI_style;
 import core.TUI_text;
 
-/// How many plain trailing blanks make `\x1b[K` worth its bytes: the escape
-/// is three bytes and putting the pen back may cost four more.
+/** How many plain trailing blanks make `\x1b[K` worth its bytes: the escape
+ * is three bytes and putting the pen back may cost four more. */
 const int ERASE_WORTH = 8;
 
-/// Every cell of `next`, assuming a terminal that has just been reset and
-/// whose cursor position is unknown.
-///
-/// This is what the first frame of a program emits, and what a resize or a
-/// redraw-everything key emits after it.
+/** Every cell of `next`, assuming a terminal that has just been reset and
+ * whose cursor position is unknown.
+ *
+ * This is what the first frame of a program emits, and what a resize or a
+ * redraw-everything key emits after it. */
 pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     bytes out = [];
     TUI_style.push_reset(out);
-    // Whatever the terminal shows is not to be trusted (a repaint is asked for because it
-    // is wrong): every cell is blanked first, and the cells of a cluster a terminal draws
-    // narrower than we do (which no write would reach) are blank, not leftovers.
+    /* Whatever the terminal shows is not to be trusted (a repaint is asked for because it
+     * is wrong): every cell is blanked first, and the cells of a cluster a terminal draws
+     * narrower than we do (which no write would reach) are blank, not leftovers. */
     clear_screen(out);
     out.extend(AUTOWRAP_OFF.to_bytes());
     TUI_geometry.Rect area = next.area();
     int pen = TUI_style.RESET_STYLE;
     str link = "";
     for (int y in area.y .. area.bottom()) {
-        // a row with no link in any cell takes the run path whatever the other rows hold (but not
-        // while a link is still open from the row before: that cell closes it, as it always did)
+        /* a row with no link in any cell takes the run path whatever the other rows hold (but not
+         * while a link is still open from the row before: that cell closes it, as it always did) */
         bool has_links = next.row_may_link(y);
         move_to(out, area.x, y);
         int tail = tail_start(next, y);
@@ -101,8 +101,8 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             if (has_links || link != "") {
                 link = write_link(out, link, next.link_at(x, y));
             } else {
-                // a run of cells in the pen's style that need nothing but their bytes (printable ASCII,
-                // or a character of certain width) is just those bytes
+                /* a run of cells in the pen's style that need nothing but their bytes (printable ASCII,
+                 * or a character of certain width) is just those bytes */
                 int run_end = next.plain_run_end(y, x, run_limit(x, tail, area.right()), pen);
                 if (run_end > x) {
                     next.append_run(out, y, x, run_end);
@@ -118,9 +118,9 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
             }
             bool is_wrapping = is_unsure && cell_width == 1 && y < area.bottom() - 1 && x + 1 >= area.right() && TUI_text.count_code_points(next.symbol_at(x, y)) > 1;
             if (is_wrapping) {
-                // with autowrap off a combining mark in the last column joins the cell on its
-                // left on some terminals: autowrap is on for this one narrow cell (a wide
-                // cluster must not wrap, that is what it is off for; the cursor is placed after)
+                /* with autowrap off a combining mark in the last column joins the cell on its
+                 * left on some terminals: autowrap is on for this one narrow cell (a wide
+                 * cluster must not wrap, that is what it is off for; the cursor is placed after) */
                 out.extend(AUTOWRAP_ON.to_bytes());
             }
             next.append_symbol(out, x, y);
@@ -141,8 +141,8 @@ pub bytes full(TUI_buffer.Buffer next, TUI_style.Depth depth) {
     return out;
 }
 
-/// Where a run of cells written from `x` must stop: at the trailing blanks (from `tail`), which
-/// become an erase when there are `ERASE_WORTH` of them, and otherwise at the row's end.
+/** Where a run of cells written from `x` must stop: at the trailing blanks (from `tail`), which
+ * become an erase when there are `ERASE_WORTH` of them, and otherwise at the row's end. */
 int run_limit(int x, int tail, int right) {
     if (x < tail && tail <= right - ERASE_WORTH) {
         return tail;
@@ -157,33 +157,33 @@ void blank_under(bytes out, int count) {
     }
 }
 
-/// A symbol of more bytes than this is not printable ASCII (a cell of the buffer holds one
-/// grapheme cluster, and "" for the second half of a wide one).
+/** A symbol of more bytes than this is not printable ASCII (a cell of the buffer holds one
+ * grapheme cluster, and "" for the second half of a wide one). */
 const int MAX_PLAIN_BYTES = 1;
-/// How many columns after a cluster of uncertain width are written again at least
-/// (`TUI_text.uncertain_reach` says how many a given cluster needs).
+/** How many columns after a cluster of uncertain width are written again at least
+ * (`TUI_text.uncertain_reach` says how many a given cluster needs). */
 const int UNCERTAIN_REACH = 2;
-/// `\e[?7l`: no autowrap. Written on entry, with every full frame and undone on leaving.
-/// A glyph a terminal draws wider than we think, or a character in the last column, then
-/// never wraps onto the next row (which a diff would not repair); on terminals that wrap
-/// at once instead of waiting, it also keeps the last cell of the last row from scrolling.
+/** `\e[?7l`: no autowrap. Written on entry, with every full frame and undone on leaving.
+ * A glyph a terminal draws wider than we think, or a character in the last column, then
+ * never wraps onto the next row (which a diff would not repair); on terminals that wrap
+ * at once instead of waiting, it also keeps the last cell of the last row from scrolling. */
 pub const str AUTOWRAP_OFF = "\x1b[?7l";
 /// `\e[?7h`: autowrap back on, for the shell.
 pub const str AUTOWRAP_ON = "\x1b[?7h";
 
-/// Is the cell at `x`, `y` a cluster whose width terminals may disagree on (see
-/// `TUI_text.is_uncertain_cluster`): anything but printable ASCII, Latin letters, CJK, kana,
-/// Hangul syllables and fullwidth forms -- an emoji, a sequence, a flag, a combining mark,
-/// a box-drawing character, an icon glyph? Those that segment grapheme clusters draw it in
-/// `width` columns, the others add up the code points, and some tables put it at another
-/// width altogether. Every cell after it in the row is then in a different column on one
-/// of them. So the cursor is put back with an absolute move after it, a cluster of two
-/// columns is written over a styled blank (what its columns show if it is drawn narrower),
-/// and the columns after it (`TUI_text.uncertain_reach` of them) are always written again,
-/// which repairs the cells it overdrew -- on a terminal that agrees this costs a few bytes.
+/** Is the cell at `x`, `y` a cluster whose width terminals may disagree on (see
+ * `TUI_text.is_uncertain_cluster`): anything but printable ASCII, Latin letters, CJK, kana,
+ * Hangul syllables and fullwidth forms -- an emoji, a sequence, a flag, a combining mark,
+ * a box-drawing character, an icon glyph? Those that segment grapheme clusters draw it in
+ * `width` columns, the others add up the code points, and some tables put it at another
+ * width altogether. Every cell after it in the row is then in a different column on one
+ * of them. So the cursor is put back with an absolute move after it, a cluster of two
+ * columns is written over a styled blank (what its columns show if it is drawn narrower),
+ * and the columns after it (`TUI_text.uncertain_reach` of them) are always written again,
+ * which repairs the cells it overdrew -- on a terminal that agrees this costs a few bytes. */
 pub bool is_uncertain(TUI_buffer.Buffer buffer, int x, int y) {
-    // the size first: printable ASCII is one byte and is never uncertain, and that is
-    // nearly every cell ever written
+    /* the size first: printable ASCII is one byte and is never uncertain, and that is
+     * nearly every cell ever written */
     if (buffer.symbol_size_at(x, y) <= MAX_PLAIN_BYTES) {
         return false;
     }
@@ -194,8 +194,8 @@ pub bool is_uncertain(TUI_buffer.Buffer buffer, int x, int y) {
     return buffer.table.is_uncertain(buffer.symbol_at(x, y), cell_width);
 }
 
-/// How far past the cell at `x`, `y` a terminal may have drawn it: 0 for a cell
-/// that is not uncertain, else `TUI_text.uncertain_reach`.
+/** How far past the cell at `x`, `y` a terminal may have drawn it: 0 for a cell
+ * that is not uncertain, else `TUI_text.uncertain_reach`. */
 pub int uncertain_reach_at(TUI_buffer.Buffer buffer, int x, int y) {
     if (!is_uncertain(buffer, x, y)) {
         return 0;
@@ -203,13 +203,13 @@ pub int uncertain_reach_at(TUI_buffer.Buffer buffer, int x, int y) {
     return TUI_text.uncertain_reach(buffer.symbol_at(x, y), buffer.width_at(x, y));
 }
 
-/// What has to be written to turn a terminal showing `previous` into one showing
-/// `next`. **Traps** when the two buffers do not cover the same rectangle --
-/// a resize is a `full` redraw, not a diff.
-///
-/// The pen is assumed to be plain at the start of the frame, which is what
-/// `full` leaves behind and what `\x1b[0m` guarantees; `diff` restores it at
-/// the end for the same reason.
+/** What has to be written to turn a terminal showing `previous` into one showing
+ * `next`. **Traps** when the two buffers do not cover the same rectangle --
+ * a resize is a `full` redraw, not a diff.
+ *
+ * The pen is assumed to be plain at the start of the frame, which is what
+ * `full` leaves behind and what `\x1b[0m` guarantees; `diff` restores it at
+ * the end for the same reason. */
 pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Depth depth) {
     TUI_geometry.Rect area = next.area();
     if (!previous.area().eq(area)) {
@@ -221,9 +221,9 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
     int current_x = -1;
     int current_y = -1;
     for (int y in area.y .. area.bottom()) {
-        // Most rows of most frames are untouched -- a cursor moved, two
-        // rows changed -- and an untouched row writes nothing, so it is not
-        // worth a per-cell look, let alone the trailing-blank scan.
+        /* Most rows of most frames are untouched -- a cursor moved, two
+         * rows changed -- and an untouched row writes nothing, so it is not
+         * worth a per-cell look, let alone the trailing-blank scan. */
         if (previous.is_same_row(next, y)) {
             continue;
         }
@@ -236,10 +236,10 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
         }
         int tail = tail_start(next, y);
         int x = area.x;
-        // From the first cluster of uncertain width in the row, in either frame, to its end,
-        // every cell is written: what a terminal that measures it differently left behind
-        // depends on what was written before, and a row written whole from there is the same
-        // picture whatever the frames before it were.
+        /* From the first cluster of uncertain width in the row, in either frame, to its end,
+         * every cell is written: what a terminal that measures it differently left behind
+         * depends on what was written before, and a row written whole from there is the same
+         * picture whatever the frames before it were. */
         int forced_from = previous.first_unsure(y);
         int next_unsure = next.first_unsure(y);
         if (next_unsure < forced_from) {
@@ -297,9 +297,9 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             if (next.symbol_size_at(x, y) > MAX_PLAIN_BYTES) {
                 is_unsure = is_uncertain(next, x, y);
                 if (is_unsure && cell_width > 1 && (pen != TUI_style.RESET_STYLE || !previous.is_plain_blank(x, y, cell_width))) {
-                    // a terminal may draw it in fewer columns than we do, and then the
-                    // ones it leaves undrawn would show what was there before (unless that
-                    // was nothing): blank them first, in the cell's own style, and come back
+                    /* a terminal may draw it in fewer columns than we do, and then the
+                     * ones it leaves undrawn would show what was there before (unless that
+                     * was nothing): blank them first, in the cell's own style, and come back */
                     blank_under(out, cell_width);
                     move_to(out, x, y);
                 }
@@ -314,9 +314,9 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
             }
             current_x = x + cell_width;
             if (is_unsure || current_x >= area.right()) {
-                // a cluster of uncertain width (see `is_uncertain`) leaves the cursor where
-                // it is not believed to be; on the last column it stays, or has wrapped, by
-                // terminal. Either way the next cell is reached with an absolute move.
+                /* a cluster of uncertain width (see `is_uncertain`) leaves the cursor where
+                 * it is not believed to be; on the last column it stays, or has wrapped, by
+                 * terminal. Either way the next cell is reached with an absolute move. */
                 current_x = -1;
             }
             x = x + cell_width;
@@ -330,30 +330,30 @@ pub bytes diff(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Dep
 }
 
 // --- scrolling a region instead of rewriting it ---------------------------------
-//
-// A view that moves by a few lines changes nearly every row of its window, and
-// plain `diff` writes nearly all of them. The terminal can move them itself: set
-// a scroll region (`\e[top;bottom r`), then a line feed at its last row scrolls it
-// up and a reverse index (`\eM`) at its first row scrolls it down. Those are the
-// oldest controls there are (VT100; GNU screen, tmux, ssh, every emulator) -- the
-// newer `CSI n S` / `CSI n T` are left alone because not all of them have those.
-//
-// `diff_scrolled` looks for a vertical shift `s` and a run of rows where row `y`
-// of the new frame is, cell for cell, row `y + s` of the old one and not blank.
-// If it finds one it emits the scroll, then diffs against the picture of the
-// screen the scroll leaves (`Buffer.scrolled`: the shifted rows, blanks where the
-// region opened up). A frame whose rows are only equal across the whole width
-// can be scrolled, so a vertical split or a sidebar that did not move too
-// never matches and falls back to `diff`: nothing here needs to know about
-// windows. It is taken only when the matching rows hold enough text to pay for the
-// escapes (`SCROLL_MIN_CELLS`), so it costs less than rewriting them.
+/*
+ * A view that moves by a few lines changes nearly every row of its window, and
+ * plain `diff` writes nearly all of them. The terminal can move them itself: set
+ * a scroll region (`\e[top;bottom r`), then a line feed at its last row scrolls it
+ * up and a reverse index (`\eM`) at its first row scrolls it down. Those are the
+ * oldest controls there are (VT100; GNU screen, tmux, ssh, every emulator) -- the
+ * newer `CSI n S` / `CSI n T` are left alone because not all of them have those.
+ *
+ * `diff_scrolled` looks for a vertical shift `s` and a run of rows where row `y`
+ * of the new frame is, cell for cell, row `y + s` of the old one and not blank.
+ * If it finds one it emits the scroll, then diffs against the picture of the
+ * screen the scroll leaves (`Buffer.scrolled`: the shifted rows, blanks where the
+ * region opened up). A frame whose rows are only equal across the whole width
+ * can be scrolled, so a vertical split or a sidebar that did not move too
+ * never matches and falls back to `diff`: nothing here needs to know about
+ * windows. It is taken only when the matching rows hold enough text to pay for the
+ * escapes (`SCROLL_MIN_CELLS`), so it costs less than rewriting them. */
 
 /// How many changed rows make a scroll worth looking for.
 const int SCROLL_MIN_CHANGED = 6;
 /// How many matching rows make a scroll worth its escapes.
 const int SCROLL_MIN_MATCHED = 4;
-/// How many cells of text those rows hold together: a row is at least a byte a cell,
-/// and the scroll costs about thirty bytes.
+/** How many cells of text those rows hold together: a row is at least a byte a cell,
+ * and the scroll costs about thirty bytes. */
 const int SCROLL_MIN_CELLS = 48;
 
 /// What `find_scroll` found: the region and how far it moves (`rows` > 0: up).
@@ -363,8 +363,8 @@ pub type Scroll {
     pub int rows = 0;
 }
 
-/// The best vertical shift of `next` against `previous`, or a `Scroll` with
-/// `rows` 0 when there is none worth taking.
+/** The best vertical shift of `next` against `previous`, or a `Scroll` with
+ * `rows` 0 when there is none worth taking. */
 pub Scroll find_scroll(TUI_buffer.Buffer previous, TUI_buffer.Buffer next) {
     TUI_geometry.Rect area = next.area();
     int height = area.height;
@@ -384,9 +384,9 @@ pub Scroll find_scroll(TUI_buffer.Buffer previous, TUI_buffer.Buffer next) {
     for (int y in area.y .. area.bottom()) {
         blank.push(next.is_blank_row(y));
     }
-    // Candidate shifts come from a few anchor rows (the first, middle and last
-    // changed non-blank rows): wherever the same row sits in the old frame is a
-    // shift worth counting. Trying every shift would cost rows x shifts.
+    /* Candidate shifts come from a few anchor rows (the first, middle and last
+     * changed non-blank rows): wherever the same row sits in the old frame is a
+     * shift worth counting. Trying every shift would cost rows x shifts. */
     List<int> candidates = [];
     List<int> anchors = [];
     for (int y in changed) {
@@ -441,8 +441,8 @@ pub Scroll find_scroll(TUI_buffer.Buffer previous, TUI_buffer.Buffer next) {
     return best;
 }
 
-/// The bytes that make the terminal scroll `scroll`'s region, leaving the pen
-/// plain and the cursor wherever (the caller moves it absolutely).
+/** The bytes that make the terminal scroll `scroll`'s region, leaving the pen
+ * plain and the cursor wherever (the caller moves it absolutely). */
 pub void push_scroll(bytes out, Scroll scroll) {
     TUI_style.push_reset(out);
     TUI_style.push_csi(out);
@@ -469,26 +469,26 @@ pub void push_scroll(bytes out, Scroll scroll) {
     out.push('r');
 }
 
-/// `diff`, but scrolling a region of the terminal when that is shorter than
-/// rewriting it. Same contract as `diff`: the pen starts and ends plain.
+/** `diff`, but scrolling a region of the terminal when that is shorter than
+ * rewriting it. Same contract as `diff`: the pen starts and ends plain. */
 pub bytes diff_scrolled(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Depth depth) {
     Scroll scroll = find_scroll(previous, next);
     if (scroll.rows == 0) {
         return diff(previous, next, depth);
     }
-    // Four or more whole rows that match is always worth the dozen bytes of
-    // escapes (a row costs at least that to write), so the plain diff is not
-    // computed to compare.
+    /* Four or more whole rows that match is always worth the dozen bytes of
+     * escapes (a row costs at least that to write), so the plain diff is not
+     * computed to compare. */
     bytes out = [];
     push_scroll(out, scroll);
     out.extend(diff(previous.scrolled(scroll.top, scroll.bottom, scroll.rows), next, depth));
     return out;
 }
 
-/// `diff_scrolled`, but `previous` is turned into the picture of the screen
-/// after the scroll instead of copied (it is the frame the caller has just
-/// shown and is about to throw away): the same bytes, without a copy of every
-/// cell. When nothing scrolls it is left as it was.
+/** `diff_scrolled`, but `previous` is turned into the picture of the screen
+ * after the scroll instead of copied (it is the frame the caller has just
+ * shown and is about to throw away): the same bytes, without a copy of every
+ * cell. When nothing scrolls it is left as it was. */
 pub bytes diff_scrolled_in_place(TUI_buffer.Buffer previous, TUI_buffer.Buffer next, TUI_style.Depth depth) {
     Scroll scroll = find_scroll(previous, next);
     if (scroll.rows == 0) {
@@ -502,12 +502,12 @@ pub bytes diff_scrolled_in_place(TUI_buffer.Buffer previous, TUI_buffer.Buffer n
 }
 
 // --- synchronized output ----------------------------------------------------------
-//
-// DEC private mode 2026: between `\e[?2026h` and `\e[?2026l` the terminal holds
-// what it is given and shows it as one frame, so a frame is never seen half
-// drawn. A terminal that does not know the mode ignores the sequences, so
-// writing them is harmless; the loop still asks first (DECRQM, `\e[?2026$p`),
-// because a terminal that answers is a terminal that means it.
+/*
+ * DEC private mode 2026: between `\e[?2026h` and `\e[?2026l` the terminal holds
+ * what it is given and shows it as one frame, so a frame is never seen half
+ * drawn. A terminal that does not know the mode ignores the sequences, so
+ * writing them is harmless; the loop still asks first (DECRQM, `\e[?2026$p`),
+ * because a terminal that answers is a terminal that means it. */
 
 /// Begin and end a synchronized update.
 pub const str SYNC_BEGIN = "\x1b[?2026h";
@@ -515,10 +515,10 @@ pub const str SYNC_END = "\x1b[?2026l";
 /// The question: is mode 2026 supported?
 pub const str SYNC_QUERY = "\x1b[?2026$p";
 
-/// What a terminal's answer to `SYNC_QUERY` says: 1 supported (set or
-/// reset), 0 not supported (unknown or permanently reset), -1 these bytes are not
-/// that answer. The reply is `\e[?2026;Ps$y`: Ps 0 not recognised, 1 set, 2
-/// reset, 3 permanently set, 4 permanently reset.
+/** What a terminal's answer to `SYNC_QUERY` says: 1 supported (set or
+ * reset), 0 not supported (unknown or permanently reset), -1 these bytes are not
+ * that answer. The reply is `\e[?2026;Ps$y`: Ps 0 not recognised, 1 set, 2
+ * reset, 3 permanently set, 4 permanently reset. */
 pub int sync_reply(bytes raw) {
     str head = "\x1b[?2026;";
     int n = head.size();
@@ -540,9 +540,9 @@ pub int sync_reply(bytes raw) {
     return 0;
 }
 
-/// `body` as one synchronized update: begin, the bytes, end. An empty `body` stays
-/// empty (a frame that changes nothing is not written at all). Write the result with
-/// ONE write, and only when the terminal has answered `SYNC_QUERY` (`sync_reply`).
+/** `body` as one synchronized update: begin, the bytes, end. An empty `body` stays
+ * empty (a frame that changes nothing is not written at all). Write the result with
+ * ONE write, and only when the terminal has answered `SYNC_QUERY` (`sync_reply`). */
 pub bytes synchronized(bytes body) {
     bytes out = [];
     if (body.size() == 0) {
@@ -554,8 +554,8 @@ pub bytes synchronized(bytes body) {
     return out;
 }
 
-/// Get from column `from` to column `target` in row `y`: either by walking over
-/// the unchanged cells between them, or by jumping.
+/** Get from column `from` to column `target` in row `y`: either by walking over
+ * the unchanged cells between them, or by jumping. */
 void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int pen, str link, bool has_links) {
     int gap = target - from;
     int jump = 3;
@@ -572,16 +572,16 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
             continue;
         }
         if (next.style_at(x, y) != pen || is_uncertain(next, x, y) || (has_links && next.link_at(x, y) != link)) {
-            // a style change costs more than a jump, and a cluster of uncertain width
-            // is never drawn again just to get across: the cursor would end up elsewhere
+            /* a style change costs more than a jump, and a cluster of uncertain width
+             * is never drawn again just to get across: the cursor would end up elsewhere */
             is_same_style = false;
             x = target;
             continue;
         }
         walk = walk + next.symbol_at(x, y).size();
         if (walk > jump) {
-            // Already dearer than the escape; the rest of the run cannot
-            // make it cheaper, and measuring it costs a reference each.
+            /* Already dearer than the escape; the rest of the run cannot
+             * make it cheaper, and measuring it costs a reference each. */
             x = target;
             continue;
         }
@@ -607,17 +607,17 @@ void cross(bytes out, TUI_buffer.Buffer next, int from, int target, int y, int p
     out.push('C');
 }
 
-/// The first column of the run of plain spaces that ends row `y`, or the
-/// row's end when it does not end in one. Computed once per row: asking the
-/// question per cell would make a full redraw quadratic in the width. The
-/// buffer answers it in one pass over its own lists (`Buffer.tail_start`),
-/// which is cheaper than this module reading the row back a cell at a time.
+/** The first column of the run of plain spaces that ends row `y`, or the
+ * row's end when it does not end in one. Computed once per row: asking the
+ * question per cell would make a full redraw quadratic in the width. The
+ * buffer answers it in one pass over its own lists (`Buffer.tail_start`),
+ * which is cheaper than this module reading the row back a cell at a time. */
 int tail_start(TUI_buffer.Buffer buffer, int y) {
     return buffer.tail_start(y);
 }
 
-// Open the link `want` (closing the one that is open), or close it when `want` is
-// "": the bytes only when it differs from `current`. Answers the link now open.
+/* Open the link `want` (closing the one that is open), or close it when `want` is
+ * "": the bytes only when it differs from `current`. Answers the link now open. */
 str write_link(bytes out, str current, str want) {
     if (current == want) {
         return current;
@@ -647,10 +647,10 @@ int digits(int value) {
 }
 
 // --- the small control sequences --------------------------------------------
-//
-// Only what the renderer itself needs, plus the four a caller cannot draw a
-// frame without. Everything else about the terminal -- raw mode, the size,
-// reading keys -- belongs to the terminal layer, not here.
+/*
+ * Only what the renderer itself needs, plus the four a caller cannot draw a
+ * frame without. Everything else about the terminal -- raw mode, the size,
+ * reading keys -- belongs to the terminal layer, not here. */
 
 /// `\x1b[y;xH`, in the terminal's 1-based coordinates.
 pub void move_to(bytes out, int x, int y) {
@@ -692,9 +692,9 @@ pub void show_cursor(bytes out) {
     out.push('h');
 }
 
-/// The bytes a terminal would obey, written so a person can read them:
-/// `\x1b` becomes `\e`, another control byte becomes `\xNN`, and the rest
-/// stands for itself. This is what a test asserts on.
+/** The bytes a terminal would obey, written so a person can read them:
+ * `\x1b` becomes `\e`, another control byte becomes `\xNN`, and the rest
+ * stands for itself. This is what a test asserts on. */
 pub str show(bytes data) {
     bytes out = [];
     for (int i in 0 .. data.size()) {

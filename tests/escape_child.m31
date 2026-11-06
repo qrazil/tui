@@ -1,11 +1,11 @@
-// The program tests/escape.m31 runs on a pseudo-terminal: a real `Loop.run_with` that
-// writes down, to a log file, every event it is handed and when (the monotonic
-// clock, in milliseconds, which the test reads too).
-//
-//   escape_child <log> <escape_wait_ms> <animate_ms>
-//
-// One line per event: `<ms> <Event.to_str()>`, after a first `<ms> ready` line written
-// when the loop has drawn its first frame. A `q` key quits.
+/* The program tests/escape.m31 runs on a pseudo-terminal: a real `Loop.run_with` that
+ * writes down, to a log file, every event it is handed and when (the monotonic
+ * clock, in milliseconds, which the test reads too).
+ *
+ *   escape_child <log> <escape_wait_ms> <animate_ms>
+ *
+ * One line per event: `<ms> <Event.to_str()>`, after a first `<ms> ready` line written
+ * when the loop has drawn its first frame. A `q` key quits. */
 
 import io;
 import os;

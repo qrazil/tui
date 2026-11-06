@@ -1,29 +1,29 @@
-// A synced jump list: a flat, selectable index of whatever an outline
-// currently shows. See `apps/git/design.md`'s corrected description -- this
-// is "closer to a synced table of contents than a directory browser", and
-// the two-way part is the point: selecting a row here scrolls the outline to
-// it, and moving the outline's own cursor highlights the row here. Neither
-// direction alone would be this primitive; a static index that only jumps
-// one way is a `TUI_list_table.ListView` of labels, which already exists.
-//
-// API
+/* A synced jump list: a flat, selectable index of whatever an outline
+ * currently shows. See `apps/git/design.md`'s corrected description -- this
+ * is "closer to a synced table of contents than a directory browser", and
+ * the two-way part is the point: selecting a row here scrolls the outline to
+ * it, and moving the outline's own cursor highlights the row here. Neither
+ * direction alone would be this primitive; a static index that only jumps
+ * one way is a `TUI_list_table.ListView` of labels, which already exists.
+ *
+ * API */
 // ---
-//   TUI_jump_list.Entry(id, label, depth)   one row, matched to an outline node
-//   TUI_jump_list.JumpList(entries)         the widget: selection, scroll, render
-//   jump.sync_from(outline)           rebuild `entries` from the outline's
-//                                     CURRENT flattened, visible rows
-//   jump.follow(outline)              outline moved -> highlight the match here
-//   jump.did_activate(outline) -> bool here selected -> move the outline there
-//   jump.step(delta), jump.render(buf, area)
-//
+/*   TUI_jump_list.Entry(id, label, depth)   one row, matched to an outline node
+ *   TUI_jump_list.JumpList(entries)         the widget: selection, scroll, render
+ *   jump.sync_from(outline)           rebuild `entries` from the outline's
+ *                                     CURRENT flattened, visible rows
+ *   jump.follow(outline)              outline moved -> highlight the match here
+ *   jump.did_activate(outline) -> bool here selected -> move the outline there
+ *   jump.step(delta), jump.render(buf, area)
+ * */
 // --- why matching is by id, not by row number --------------------------------
-//
-// Folding a section in the outline changes every row number below the fold,
-// but changes no `id`. `sync_from` copies the outline's rows (and their
-// ids) fresh every time it is called -- after a toggle, after a reload -- and
-// `follow`/`did_activate` always look a row up by `id`, never by position, which
-// is what keeps the two lists in step with each other regardless of what is
-// currently folded.
+/*
+ * Folding a section in the outline changes every row number below the fold,
+ * but changes no `id`. `sync_from` copies the outline's rows (and their
+ * ids) fresh every time it is called -- after a toggle, after a reload -- and
+ * `follow`/`did_activate` always look a row up by `id`, never by position, which
+ * is what keeps the two lists in step with each other regardless of what is
+ * currently folded. */
 
 import core.TUI_buffer;
 import core.TUI_geometry;
@@ -32,17 +32,17 @@ import core.TUI_scroll;
 import core.TUI_style;
 import core.TUI_text;
 
-/// One row of the jump list: an outline node's `id` and `label`, and how deep
-/// it was nested, copied out of an `Outline` by `sync_from`.
+/** One row of the jump list: an outline node's `id` and `label`, and how deep
+ * it was nested, copied out of an `Outline` by `sync_from`. */
 pub type Entry {
     pub str id;
     pub str label;
     pub int depth = 0;
 }
 
-/// The widget: a flat list of `Entry`, with its own selection and scroll,
-/// kept in step with an `Outline` through `sync_from`, `follow` and
-/// `did_activate` rather than owning the tree itself.
+/** The widget: a flat list of `Entry`, with its own selection and scroll,
+ * kept in step with an `Outline` through `sync_from`, `follow` and
+ * `did_activate` rather than owning the tree itself. */
 pub type JumpList {
     pub List<Entry> entries;
     pub int selected = -1;
@@ -57,9 +57,9 @@ pub static JumpList JumpList.empty() {
     return JumpList([]);
 }
 
-/// Rebuild `entries` from `outline`'s current, flattened, visible rows. A folded
-/// section contributes only itself -- the jump list shrinks when the
-/// document folds, which is what "synced" means.
+/** Rebuild `entries` from `outline`'s current, flattened, visible rows. A folded
+ * section contributes only itself -- the jump list shrinks when the
+ * document folds, which is what "synced" means. */
 pub void JumpList.sync_from(TUI_outline.Outline outline) {
     List<Entry> out = [];
     for (TUI_outline.Row row in outline.rows()) {
@@ -68,9 +68,9 @@ pub void JumpList.sync_from(TUI_outline.Outline outline) {
     entries = out;
 }
 
-/// The outline half of the sync: move the highlight to whatever row the
-/// outline's cursor is on now. Call this after any move, toggle or reload of
-/// the outline.
+/** The outline half of the sync: move the highlight to whatever row the
+ * outline's cursor is on now. Call this after any move, toggle or reload of
+ * the outline. */
 pub void JumpList.follow(TUI_outline.Outline outline) {
     match (outline.current()) {
         case Some(TUI_outline.Row row): {
@@ -81,9 +81,9 @@ pub void JumpList.follow(TUI_outline.Outline outline) {
     }
 }
 
-/// The jump-list half of the sync: move the outline's cursor (and its own
-/// scroll, through `Outline.render`) to the entry selected here. Answers
-/// whether the selection named a row the outline currently shows.
+/** The jump-list half of the sync: move the outline's cursor (and its own
+ * scroll, through `Outline.render`) to the entry selected here. Answers
+ * whether the selection named a row the outline currently shows. */
 pub bool JumpList.did_activate(TUI_outline.Outline outline) {
     if (selected < 0 || selected >= entries.size()) {
         return false;
@@ -91,8 +91,8 @@ pub bool JumpList.did_activate(TUI_outline.Outline outline) {
     return outline.did_select_id(entries[selected].id);
 }
 
-/// Select the entry with this `id`, if there is one. Answers whether one was
-/// found.
+/** Select the entry with this `id`, if there is one. Answers whether one was
+ * found. */
 pub bool JumpList.did_select_id(str id) {
     int index = 0;
     while (index < entries.size()) {
@@ -105,8 +105,8 @@ pub bool JumpList.did_select_id(str id) {
     return false;
 }
 
-/// Move the selection by `delta`, stopping at the ends --
-/// `TUI_list_table.ListView.step`'s own rule.
+/** Move the selection by `delta`, stopping at the ends --
+ * `TUI_list_table.ListView.step`'s own rule. */
 pub void JumpList.step(int delta) {
     int count = entries.size();
     if (count == 0) {

@@ -1,86 +1,86 @@
-// A multi-line text box: cursor, selection, scrolling, wrapping, line numbers.
-//
-// API
+/* A multi-line text box: cursor, selection, scrolling, wrapping, line numbers.
+ *
+ * API */
 // ---
-//   TUI_textarea.TextArea(...)           the box; every argument has a default
-//   TUI_textarea.TextArea.of(text)       a box that starts with `text`
-//   area_box.handle(event) -> TUI_input.Outcome    one terminal event in, what happened out
-//   area_box.handle_mouse(gesture, area) click, double/triple click, drag, wheel
-//   area_box.render(buffer, area) / layout(area) / cursor_position(area)
-//   area_box.text() / set_text(t) / line_count() / line(row)
-//   area_box.selection()  -> Option<Selection>      the selected span, ordered
-//   area_box.selected_text() / select_all() / clear_selection()
-//   area_box.replace(from, to, text)     the one editing primitive
-//   TUI_textarea.Position(row, column)   a place in the text
-//
+/*   TUI_textarea.TextArea(...)           the box; every argument has a default
+ *   TUI_textarea.TextArea.of(text)       a box that starts with `text`
+ *   area_box.handle(event) -> TUI_input.Outcome    one terminal event in, what happened out
+ *   area_box.handle_mouse(gesture, area) click, double/triple click, drag, wheel
+ *   area_box.render(buffer, area) / layout(area) / cursor_position(area)
+ *   area_box.text() / set_text(t) / line_count() / line(row)
+ *   area_box.selection()  -> Option<Selection>      the selected span, ordered
+ *   area_box.selected_text() / select_all() / clear_selection()
+ *   area_box.replace(from, to, text)     the one editing primitive
+ *   TUI_textarea.Position(row, column)   a place in the text
+ * */
 // --- the model, which is all a caller needs to build on ---------------------
-//
-// The text is a list of lines (`lines`), without their `\n`, and there is
-// always at least one, possibly empty: the text `"a\n"` is `["a", ""]`. A
-// **Position** is `(row, column)`: a line, and a cursor position BETWEEN two
-// grapheme clusters of it, 0 before the first and `length` after the last.
-// Columns are cluster counts, not bytes and not terminal columns, so a cursor
-// step is one visible character however wide or however many code points.
-//
-// The **cursor** is `(row, column)`. The **selection** is the span between the
-// cursor and the **anchor** (`anchor_row`, `anchor_column`, valid when
-// `has_anchor`): the anchor is where the selection started, the cursor is
-// the end that moves, and either may come first. `selection()` answers the
-// ordered span; `has_selection()` is false when the two coincide.
-//
-// Every change to the text goes through `replace(from, to, text)`: cut out the
-// span `from..to` (ordered positions), put `text` there (it may hold `\n`),
-// leave the cursor after it. Typing, Enter, Backspace, paste, cut, kill are
-// each a call to it, so there is one place that keeps the lines, the cursor
-// and the undo history agreeing. Anything a caller builds -- a search and
-// replace, a formatter -- can use it the same way.
-//
-// This is the base for a form field or a commit-message box. It is
-// deliberately modest: lines are plain strings (re-clustered when a line is
-// touched), undo keeps a snapshot of the line list, and nothing is indexed.
-// A program that edits large files wants its own text engine (a rope or a
-// gap buffer); `replace`, `Position` and `Selection` are the seam to put
-// one behind.
-//
+/*
+ * The text is a list of lines (`lines`), without their `\n`, and there is
+ * always at least one, possibly empty: the text `"a\n"` is `["a", ""]`. A
+ * **Position** is `(row, column)`: a line, and a cursor position BETWEEN two
+ * grapheme clusters of it, 0 before the first and `length` after the last.
+ * Columns are cluster counts, not bytes and not terminal columns, so a cursor
+ * step is one visible character however wide or however many code points.
+ *
+ * The **cursor** is `(row, column)`. The **selection** is the span between the
+ * cursor and the **anchor** (`anchor_row`, `anchor_column`, valid when
+ * `has_anchor`): the anchor is where the selection started, the cursor is
+ * the end that moves, and either may come first. `selection()` answers the
+ * ordered span; `has_selection()` is false when the two coincide.
+ *
+ * Every change to the text goes through `replace(from, to, text)`: cut out the
+ * span `from..to` (ordered positions), put `text` there (it may hold `\n`),
+ * leave the cursor after it. Typing, Enter, Backspace, paste, cut, kill are
+ * each a call to it, so there is one place that keeps the lines, the cursor
+ * and the undo history agreeing. Anything a caller builds -- a search and
+ * replace, a formatter -- can use it the same way.
+ *
+ * This is the base for a form field or a commit-message box. It is
+ * deliberately modest: lines are plain strings (re-clustered when a line is
+ * touched), undo keeps a snapshot of the line list, and nothing is indexed.
+ * A program that edits large files wants its own text engine (a rope or a
+ * gap buffer); `replace`, `Position` and `Selection` are the seam to put
+ * one behind.
+ * */
 // --- keys -------------------------------------------------------------------
-//
-//   arrows, Home/End (the line), Ctrl-Home/End (the text), PageUp/PageDown
-//   Ctrl-A/E line start/end, Ctrl-B/F, Ctrl-P/N, Ctrl-Left/Right, Alt-B/F  readline
-//   Shift + any of the motions        extend the selection
-//   Alt-A                             select all
-//   Enter newline;   Alt-Enter        submit
-//   Backspace, Delete, Ctrl-D         delete the selection, or a cluster
-//   Alt-Backspace, Ctrl-W             delete the word before the cursor
-//   Alt-D                             delete the word after it
-//   Ctrl-K, Ctrl-U                    kill to the end / the start of the line
-//   Ctrl-C copy;  Ctrl-X cut;  Ctrl-V, Ctrl-Y paste  (the box's own clipboard)
-//   Ctrl-Z, Ctrl-_  undo;   Alt-_  redo
-//   Tab                               spaces to the next tab stop (`tab_width`; 0 leaves Tab alone)
-//   Escape                            clear the selection, or Cancelled when there is none
-//   Ctrl-C with no selection          Cancelled
-//
-// `Outcome` is `TUI_input.Outcome`, with the same meaning: `Ignored` means
-// nothing changed, so the caller may use the event itself.
-//
+/*
+ *   arrows, Home/End (the line), Ctrl-Home/End (the text), PageUp/PageDown
+ *   Ctrl-A/E line start/end, Ctrl-B/F, Ctrl-P/N, Ctrl-Left/Right, Alt-B/F  readline
+ *   Shift + any of the motions        extend the selection
+ *   Alt-A                             select all
+ *   Enter newline;   Alt-Enter        submit
+ *   Backspace, Delete, Ctrl-D         delete the selection, or a cluster
+ *   Alt-Backspace, Ctrl-W             delete the word before the cursor
+ *   Alt-D                             delete the word after it
+ *   Ctrl-K, Ctrl-U                    kill to the end / the start of the line
+ *   Ctrl-C copy;  Ctrl-X cut;  Ctrl-V, Ctrl-Y paste  (the box's own clipboard)
+ *   Ctrl-Z, Ctrl-_  undo;   Alt-_  redo
+ *   Tab                               spaces to the next tab stop (`tab_width`; 0 leaves Tab alone)
+ *   Escape                            clear the selection, or Cancelled when there is none
+ *   Ctrl-C with no selection          Cancelled
+ *
+ * `Outcome` is `TUI_input.Outcome`, with the same meaning: `Ignored` means
+ * nothing changed, so the caller may use the event itself.
+ * */
 // --- wrapping ---------------------------------------------------------------
-//
-// With `should_wrap` a line longer than the text width continues on the next
-// row, broken between clusters (never inside one; a cluster wider than the
-// row gets a row to itself). One column of the width is kept free, so the
-// cursor at the end of a full row has a cell to sit in. Up and Down then
-// move by VISUAL row, with the column they started from remembered (the
-// "goal column") so a short row in between does not lose it. Without
-// wrapping the box scrolls sideways (`left`) to keep the cursor in view.
-//
-// The box learns its width from `layout(area)` or `render`; before the first
-// one, wrapping is off in motion and the page is ten rows.
-//
+/*
+ * With `should_wrap` a line longer than the text width continues on the next
+ * row, broken between clusters (never inside one; a cluster wider than the
+ * row gets a row to itself). One column of the width is kept free, so the
+ * cursor at the end of a full row has a cell to sit in. Up and Down then
+ * move by VISUAL row, with the column they started from remembered (the
+ * "goal column") so a short row in between does not lose it. Without
+ * wrapping the box scrolls sideways (`left`) to keep the cursor in view.
+ *
+ * The box learns its width from `layout(area)` or `render`; before the first
+ * one, wrapping is off in motion and the page is ten rows.
+ * */
 // --- scrolling and the wheel ------------------------------------------------
-//
-// `render` scrolls just far enough to keep the cursor in view -- but only
-// after something that moved the cursor. The mouse wheel scrolls the view
-// WITHOUT moving the cursor, and `render` leaves it where the wheel put it
-// until the next key.
+/*
+ * `render` scrolls just far enough to keep the cursor in view -- but only
+ * after something that moved the cursor. The mouse wheel scrolls the view
+ * WITHOUT moving the cursor, and `render` leaves it where the wheel put it
+ * until the next key. */
 
 import term;
 import core.TUI_buffer;
@@ -221,8 +221,8 @@ List<str> TextArea.glyphs_of(int index) {
     return TUI_text.clusters(line(index));
 }
 
-/// Replace the text from outside: cursor at the end, no selection, undo
-/// history forgotten.
+/** Replace the text from outside: cursor at the end, no selection, undo
+ * history forgotten. */
 pub void TextArea.set_text(str text) {
     lines = text.split("\n");
     row = lines.size() - 1;
@@ -353,11 +353,11 @@ Position TextArea.within(Position target) {
 
 // --- the one editing primitive ------------------------------------------------
 
-/// Replace the span `from`..`to` with `insert`, which may contain `\n`. The
-/// two positions are clamped into the text and put in order, so a span given
-/// backwards, or past the end, means what it plainly says. The cursor ends up after the insertion, the
-/// selection is cleared and `revision` counts one more. Does NOT record
-/// undo: the key handlers do, because they know what is one step.
+/** Replace the span `from`..`to` with `insert`, which may contain `\n`. The
+ * two positions are clamped into the text and put in order, so a span given
+ * backwards, or past the end, means what it plainly says. The cursor ends up after the insertion, the
+ * selection is cleared and `revision` counts one more. Does NOT record
+ * undo: the key handlers do, because they know what is one step. */
 pub void TextArea.replace(Position first, Position second, str insert) {
     Position from = within(first);
     Position stop = within(second);
@@ -431,8 +431,8 @@ pub TUI_input.Outcome TextArea.redo() {
     return TUI_input.Outcome.Changed;
 }
 
-// Remove the selection as part of an edit that has already recorded undo.
-// Answers whether there was one.
+/* Remove the selection as part of an edit that has already recorded undo.
+ * Answers whether there was one. */
 bool TextArea.did_cut_selection() {
     match (selection()) {
         case Some(Selection span): {
@@ -445,8 +445,8 @@ bool TextArea.did_cut_selection() {
     }
 }
 
-// Insert at the cursor, over the selection. `kind` is LAST_TYPING for a
-// typed character (one undo step per word) and LAST_OTHER otherwise.
+/* Insert at the cursor, over the selection. `kind` is LAST_TYPING for a
+ * typed character (one undo step per word) and LAST_OTHER otherwise. */
 TUI_input.Outcome TextArea.insert_text(str insert, int kind) {
     if (insert == "") {
         return TUI_input.Outcome.Ignored;
@@ -481,8 +481,8 @@ TUI_input.Outcome TextArea.delete_span(Position from, Position stop) {
     return TUI_input.Outcome.Changed;
 }
 
-// Delete to a motion's end, as a kill: it goes on the clipboard, and
-// consecutive kills are one undo step and one clipboard entry.
+/* Delete to a motion's end, as a kill: it goes on the clipboard, and
+ * consecutive kills are one undo step and one clipboard entry. */
 TUI_input.Outcome TextArea.kill_span(Position from, Position stop, bool is_forward) {
     if (!from.is_before(stop)) {
         return TUI_input.Outcome.Ignored;
@@ -618,8 +618,8 @@ Spot TextArea.top_spot() {
 
 // --- moving -----------------------------------------------------------------
 
-// The column to land on in visual row `part` of `row`, aiming at display
-// column `aim` counted from the row's start.
+/* The column to land on in visual row `part` of `row`, aiming at display
+ * column `aim` counted from the row's start. */
 int TextArea.column_for(int target_row, int part, int aim) {
     List<str> glyphs = glyphs_of(target_row);
     List<int> starts = parts_of(glyphs);
@@ -740,8 +740,8 @@ bool TextArea.did_apply_motion(int motion) {
     return row != before_row || column != before_column;
 }
 
-// A motion key: with Shift the selection grows, without it a selection is
-// dropped (Left and Right then land on its edge, as in every editor).
+/* A motion key: with Shift the selection grows, without it a selection is
+ * dropped (Left and Right then land on its edge, as in every editor). */
 TUI_input.Outcome TextArea.move(int motion, bool is_extending) {
     if (!is_extending && has_selection() && (motion == MOVE_LEFT || motion == MOVE_RIGHT)) {
         match (selection()) {
@@ -1032,8 +1032,8 @@ TUI_input.Outcome TextArea.handle_alt(int raw_code) {
     return TUI_input.Outcome.Ignored;
 }
 
-/// How many columns the line-number gutter takes in a box `width` wide
-/// (0 when numbers are off or there would be no room left for text).
+/** How many columns the line-number gutter takes in a box `width` wide
+ * (0 when numbers are off or there would be no room left for text). */
 pub int TextArea.gutter_width(int width) {
     if (!should_show_numbers) {
         return 0;
@@ -1045,8 +1045,8 @@ pub int TextArea.gutter_width(int width) {
     return gutter;
 }
 
-/// Tell the box how big it is drawn, without drawing: wrapping, the page
-/// size and mouse positions all depend on it. `render` calls this.
+/** Tell the box how big it is drawn, without drawing: wrapping, the page
+ * size and mouse positions all depend on it. `render` calls this. */
 pub void TextArea.layout(TUI_geometry.Rect area) {
     int width = area.width - gutter_width(area.width);
     if (width < 0) {
@@ -1176,8 +1176,8 @@ Position TextArea.position_at(TUI_geometry.Rect area, int x, int y) {
     return Position(spot.row, column_for(spot.row, spot.part, aim));
 }
 
-// The ordered span of the word under a position (a run of word characters,
-// or of blanks, or one other character), for a double click.
+/* The ordered span of the word under a position (a run of word characters,
+ * or of blanks, or one other character), for a double click. */
 Selection TextArea.word_at(Position spot) {
     List<str> glyphs = glyphs_of(spot.row);
     if (glyphs.size() == 0) {
@@ -1211,10 +1211,10 @@ void TextArea.select_span(Selection span) {
     should_follow = true;
 }
 
-/// A mouse gesture inside `area` (the rectangle the box was drawn in).
-/// Press places the cursor (with Shift, extends the selection), Drag extends
-/// it, a double click selects the word and a triple click the line; the
-/// wheel scrolls the view without moving the cursor.
+/** A mouse gesture inside `area` (the rectangle the box was drawn in).
+ * Press places the cursor (with Shift, extends the selection), Drag extends
+ * it, a double click selects the word and a triple click the line; the
+ * wheel scrolls the view without moving the cursor. */
 pub TUI_mouse.Response TextArea.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return TUI_mouse.Response.Ignored;
@@ -1404,8 +1404,8 @@ void TextArea.draw_row(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, TUI_geo
     }
 }
 
-// Pasted or clipboard text: CRLF and lone CR are newlines, tabs are spaces,
-// other control characters are dropped.
+/* Pasted or clipboard text: CRLF and lone CR are newlines, tabs are spaces,
+ * other control characters are dropped. */
 str clean_paste(str pasted, int tab_width) {
     List<int> kept = [];
     int previous = 0;

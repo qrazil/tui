@@ -1,42 +1,42 @@
-// Text measured in terminal columns: wrapping, alignment, truncation.
-//
-// API
+/* Text measured in terminal columns: wrapping, alignment, truncation.
+ *
+ * API */
 // ---
-//   TUI_text.Align                      Left | Center | Right
-//   TUI_text.wrap(text, columns)        -> List<str>, greedy, width-aware
-//   TUI_text.truncate(text, columns, ellipsis:) -> str, with an ellipsis
-//   TUI_text.pad(text, columns, align)  -> str, to exactly `columns` if it is short
-//   TUI_text.fit(text, columns, align)  -> str, truncated AND padded
-//
-// Everything here counts **terminal columns**, by `unicode.width`: a CJK
-// ideograph is two, a combining mark is none, and an emoji sequence is one
-// grapheme of two. `str.size()` counts bytes and `str.chars().size()` counts
-// code points, and both are the wrong number for a grid.
-//
-// Nothing here ever splits a grapheme cluster. A line break, a truncation
-// and a pad all land between two clusters, so `é` written as `e` + U+0301
-// cannot come apart and an emoji cannot lose its skin tone.
-//
+/*   TUI_text.Align                      Left | Center | Right
+ *   TUI_text.wrap(text, columns)        -> List<str>, greedy, width-aware
+ *   TUI_text.truncate(text, columns, ellipsis:) -> str, with an ellipsis
+ *   TUI_text.pad(text, columns, align)  -> str, to exactly `columns` if it is short
+ *   TUI_text.fit(text, columns, align)  -> str, truncated AND padded
+ *
+ * Everything here counts **terminal columns**, by `unicode.width`: a CJK
+ * ideograph is two, a combining mark is none, and an emoji sequence is one
+ * grapheme of two. `str.size()` counts bytes and `str.chars().size()` counts
+ * code points, and both are the wrong number for a grid.
+ *
+ * Nothing here ever splits a grapheme cluster. A line break, a truncation
+ * and a pad all land between two clusters, so `é` written as `e` + U+0301
+ * cannot come apart and an emoji cannot lose its skin tone.
+ * */
 // --- how wrapping breaks ----------------------------------------------------
-//
-// Greedy, left to right, and a line is broken:
-//
-//   - at a run of spaces, which is dropped;
-//   - between two clusters when either is **two columns wide**, so Chinese,
-//     Japanese and Korean text wraps although it has no spaces in it -- this
-//     is the part a byte-counting wrapper gets wrong;
-//   - inside a word that is longer than the whole line, which is cut at the
-//     last cluster that fits. A URL is not made shorter by refusing to break
-//     it.
-//
-// A cluster wider than the line -- a two-column character in a one-column
-// space -- is put on a line of its own and overflows it, because there is no
-// answer that both fits and keeps the text.
-//
-// `\n` in the input starts a new line, and an empty line stays an empty
-// line: `wrap` answers one entry per output row, and a caller that joins the
-// answer with `\n` gets its paragraph back with the same number of blank
-// lines in it.
+/*
+ * Greedy, left to right, and a line is broken:
+ *
+ *   - at a run of spaces, which is dropped;
+ *   - between two clusters when either is **two columns wide**, so Chinese,
+ *     Japanese and Korean text wraps although it has no spaces in it -- this
+ *     is the part a byte-counting wrapper gets wrong;
+ *   - inside a word that is longer than the whole line, which is cut at the
+ *     last cluster that fits. A URL is not made shorter by refusing to break
+ *     it.
+ *
+ * A cluster wider than the line -- a two-column character in a one-column
+ * space -- is put on a line of its own and overflows it, because there is no
+ * answer that both fits and keeps the text.
+ *
+ * `\n` in the input starts a new line, and an empty line stays an empty
+ * line: `wrap` answers one entry per output row, and a caller that joins the
+ * answer with `\n` gets its paragraph back with the same number of blank
+ * lines in it. */
 
 import text.unicode;
 
@@ -51,18 +51,18 @@ pub enum Align {
 pub const str ELLIPSIS = "\u{2026}";
 
 // --- measuring, with the fast path every UI needs ---------------------------
-//
-// `unicode.width` runs UAX #29 over the text: a state machine per code point
-// and a binary search per cluster. That is the right answer and it is not
-// cheap, and a terminal program asks it thousands of times a frame -- of
-// strings that are almost always printable ASCII, where the answer is the
-// byte count and every cluster is one byte.
-//
-// So both questions are asked here first as a byte scan, and only text with
-// a byte outside 0x20..0x7E goes to `unicode`. The two agree by
-// construction: in that range one byte is one code point, one code point is
-// one grapheme cluster (no combining mark, no joiner is ASCII), and every
-// cluster is one column wide.
+/*
+ * `unicode.width` runs UAX #29 over the text: a state machine per code point
+ * and a binary search per cluster. That is the right answer and it is not
+ * cheap, and a terminal program asks it thousands of times a frame -- of
+ * strings that are almost always printable ASCII, where the answer is the
+ * byte count and every cluster is one byte.
+ *
+ * So both questions are asked here first as a byte scan, and only text with
+ * a byte outside 0x20..0x7E goes to `unicode`. The two agree by
+ * construction: in that range one byte is one code point, one code point is
+ * one grapheme cluster (no combining mark, no joiner is ASCII), and every
+ * cluster is one column wide. */
 
 /// Is every byte of `text` printable ASCII?
 pub bool is_plain(str text) {
@@ -76,8 +76,8 @@ pub bool is_plain(str text) {
     return true;
 }
 
-/// How many columns `text` takes: `unicode.width`, with the ASCII fast path, and
-/// `cluster_columns`'s two corrections for the clusters they apply to.
+/** How many columns `text` takes: `unicode.width`, with the ASCII fast path, and
+ * `cluster_columns`'s two corrections for the clusters they apply to. */
 pub int width(str text) {
     if (is_plain(text)) {
         return text.size();
@@ -93,23 +93,23 @@ pub int width(str text) {
 }
 
 // --- two clusters `unicode.width` measures differently from UTS #51 ------------------
-//
-// Checked against every fully-qualified emoji sequence of Unicode's
-// emoji-test.txt (tests/emoji_sequences.txt, with python-wcwidth as a second
-// opinion): `unicode.width` says two columns for 3728 of 3773, and one for
-// the 45 that are an emoji modifier (a skin tone, U+1F3FB..1F3FF) after a base that is
-// text-presentation by default (a raised hand, a victory hand...). UTS #51 says
-// an emoji modifier sequence is drawn with emoji presentation, which is two columns
-// in every terminal that segments grapheme clusters, so that is what is used here.
-// (The terminals that add up code points draw 1 + 2; the renderer treats the cluster
-// as one of uncertain width either way, see `TUI_diff.is_uncertain`.)
-//
-// And a variation selector with nothing before it (U+FE0E, U+FE0F, which
-// `unicode.width` counts as two columns for FE0F) draws nothing at all: it is
-// zero columns, and `Buffer.set_str` drops it like any zero-width cluster.
+/*
+ * Checked against every fully-qualified emoji sequence of Unicode's
+ * emoji-test.txt (tests/emoji_sequences.txt, with python-wcwidth as a second
+ * opinion): `unicode.width` says two columns for 3728 of 3773, and one for
+ * the 45 that are an emoji modifier (a skin tone, U+1F3FB..1F3FF) after a base that is
+ * text-presentation by default (a raised hand, a victory hand...). UTS #51 says
+ * an emoji modifier sequence is drawn with emoji presentation, which is two columns
+ * in every terminal that segments grapheme clusters, so that is what is used here.
+ * (The terminals that add up code points draw 1 + 2; the renderer treats the cluster
+ * as one of uncertain width either way, see `TUI_diff.is_uncertain`.)
+ *
+ * And a variation selector with nothing before it (U+FE0E, U+FE0F, which
+ * `unicode.width` counts as two columns for FE0F) draws nothing at all: it is
+ * zero columns, and `Buffer.set_str` drops it like any zero-width cluster. */
 
-/// Does `text` hold a variation selector (U+FE0E, U+FE0F) or an emoji modifier
-/// (U+1F3FB..1F3FF)? Only then is `cluster_columns` anything but `unicode.width`.
+/** Does `text` hold a variation selector (U+FE0E, U+FE0F) or an emoji modifier
+ * (U+1F3FB..1F3FF)? Only then is `cluster_columns` anything but `unicode.width`. */
 bool has_adjusted(str text) {
     int length = text.size();
     for (int index in 0 .. length - 2) {
@@ -124,8 +124,8 @@ bool has_adjusted(str text) {
     return false;
 }
 
-/// The columns one grapheme cluster takes: `unicode.width`, except that a cluster
-/// that is only a variation selector is 0 and an emoji modifier sequence is 2.
+/** The columns one grapheme cluster takes: `unicode.width`, except that a cluster
+ * that is only a variation selector is 0 and an emoji modifier sequence is 2. */
 pub int cluster_columns(str cluster) {
     int measured = unicode.width(cluster);
     if (!has_adjusted(cluster)) {
@@ -150,24 +150,24 @@ bool has_modifier(str text) {
     return false;
 }
 
-/// Is the cluster one whose width terminals may disagree on? Everything is, except
-/// what every terminal draws in the same columns: printable ASCII, the Latin letters of
-/// U+00C0..U+024F (not the signs x and /), box drawing and block elements, CJK
-/// ideographs, kana, Hangul syllables and the fullwidth forms (all two columns, and in
-/// none of them ambiguous). The rest is
-/// drawn differently by some terminal: a zero-width joiner, a variation selector, an
-/// emoji modifier, a keycap, a flag or a regional indicator, a combining mark, an emoji
-/// newer than the terminal's tables, a Nerd Font glyph, an East Asian Ambiguous character
-/// (box drawing, arrows, Greek, Cyrillic), a Hangul jamo, an Indic or Thai cluster. Those
-/// that segment grapheme clusters draw it in `width` columns, the others add up the code
-/// points (a family is 6, a flag 2 to 4, a Devanagari syllable one column per sign).
-/// `width` is what the cell says.
+/** Is the cluster one whose width terminals may disagree on? Everything is, except
+ * what every terminal draws in the same columns: printable ASCII, the Latin letters of
+ * U+00C0..U+024F (not the signs x and /), box drawing and block elements, CJK
+ * ideographs, kana, Hangul syllables and the fullwidth forms (all two columns, and in
+ * none of them ambiguous). The rest is
+ * drawn differently by some terminal: a zero-width joiner, a variation selector, an
+ * emoji modifier, a keycap, a flag or a regional indicator, a combining mark, an emoji
+ * newer than the terminal's tables, a Nerd Font glyph, an East Asian Ambiguous character
+ * (box drawing, arrows, Greek, Cyrillic), a Hangul jamo, an Indic or Thai cluster. Those
+ * that segment grapheme clusters draw it in `width` columns, the others add up the code
+ * points (a family is 6, a flag 2 to 4, a Devanagari syllable one column per sign).
+ * `width` is what the cell says. */
 pub bool is_uncertain_cluster(str cluster, int width) {
     return !is_certain_width(cluster);
 }
 
-/// Does every terminal draw this cluster in `width` columns, whatever it does with
-/// emoji, combining marks and the East Asian Ambiguous class? See `is_uncertain_cluster`.
+/** Does every terminal draw this cluster in `width` columns, whatever it does with
+ * emoji, combining marks and the East Asian Ambiguous class? See `is_uncertain_cluster`. */
 pub bool is_certain_width(str cluster) {
     int length = cluster.size();
     if (length == 0) {
@@ -193,8 +193,8 @@ pub bool is_certain_width(str cluster) {
     int second = cluster.byte_at(1);
     int third = cluster.byte_at(2);
     if (lead == 0xE2) {
-        // U+2500..U+259F: box drawing and block elements, which every terminal but one told to
-        // draw the East Asian Ambiguous class wide draws in one column
+        /* U+2500..U+259F: box drawing and block elements, which every terminal but one told to
+         * draw the East Asian Ambiguous class wide draws in one column */
         return second == 0x94 || second == 0x95 || (second == 0x96 && third <= 0x9F);
     }
     if (lead == 0xE3) {
@@ -221,11 +221,11 @@ pub bool is_certain_width(str cluster) {
     return false;
 }
 
-/// Is this cluster nothing but invisible format characters: a zero-width space, joiner or
-/// non-joiner on its own, a direction mark, a word joiner, a byte order mark, a bidirectional
-/// control, a line separator, or a variation selector with no base before it (a cluster
-/// that has one keeps it)? Terminals draw some of them as a blank column and some not at
-/// all, and they mean nothing in a cell, so a buffer drops them.
+/** Is this cluster nothing but invisible format characters: a zero-width space, joiner or
+ * non-joiner on its own, a direction mark, a word joiner, a byte order mark, a bidirectional
+ * control, a line separator, or a variation selector with no base before it (a cluster
+ * that has one keeps it)? Terminals draw some of them as a blank column and some not at
+ * all, and they mean nothing in a cell, so a buffer drops them. */
 pub bool is_invisible(str cluster) {
     for (int code in cluster.chars()) {
         bool is_format = (code >= 0x200B && code <= 0x200F) || (code >= 0x2028 && code <= 0x202E) || (code >= 0x2060 && code <= 0x2064) || (code >= 0x2066 && code <= 0x2069) || code == 0xFEFF || code == 0x61C || code == 0x180E || code == 0xFE0E || code == 0xFE0F;
@@ -247,10 +247,10 @@ pub int count_code_points(str text) {
     return count;
 }
 
-/// How many columns after a cluster of uncertain width may have been drawn over by a
-/// terminal that adds up its code points: twice the number of code points (two
-/// columns is the most one takes), minus the columns the cell has, and at least 2.
-/// A family of five code points is 8; a flag 2.
+/** How many columns after a cluster of uncertain width may have been drawn over by a
+ * terminal that adds up its code points: twice the number of code points (two
+ * columns is the most one takes), minus the columns the cell has, and at least 2.
+ * A family of five code points is 8; a flag 2. */
 pub int uncertain_reach(str cluster, int width) {
     int code_points = 0;
     for (int index in 0 .. cluster.size()) {
@@ -268,8 +268,8 @@ pub int uncertain_reach(str cluster, int width) {
     return most - width;
 }
 
-/// The grapheme clusters of `text`: `unicode.graphemes`, with the same fast
-/// path.
+/** The grapheme clusters of `text`: `unicode.graphemes`, with the same fast
+ * path. */
 pub List<str> clusters(str text) {
     if (!is_plain(text)) {
         return unicode.graphemes(text);
@@ -282,8 +282,8 @@ pub List<str> clusters(str text) {
     return out;
 }
 
-/// `text` broken into lines of at most `columns` columns. See the header for the
-/// rules. `columns` below 1 is treated as 1.
+/** `text` broken into lines of at most `columns` columns. See the header for the
+ * rules. `columns` below 1 is treated as 1. */
 pub List<str> wrap(str text, int columns) {
     int room = columns;
     if (room < 1) {
@@ -347,16 +347,16 @@ void wrap_line(List<str> out, str line, int columns) {
     out.push(current.join(""));
 }
 
-/// `wrap_line` for a line that is all printable ASCII -- the usual case for
-/// a commit message, a file path, a log line -- where a cluster is a byte
-/// and a column, so there is no need to cut the line into one string per
-/// character to find its words. A word is one substring (`flush` joins
-/// whatever it is handed, so a line of words comes out the same as a line of
-/// characters), except a word longer than the whole line, which `flush` cuts
-/// cluster by cluster and so is handed to it that way. Only a space is a
-/// separator here: a tab is not printable ASCII, so a line with one in it
-/// never reaches this. The same breaks, in the same places, as the general
-/// path above -- `tests.m31`'s wrapping cases are the proof.
+/** `wrap_line` for a line that is all printable ASCII -- the usual case for
+ * a commit message, a file path, a log line -- where a cluster is a byte
+ * and a column, so there is no need to cut the line into one string per
+ * character to find its words. A word is one substring (`flush` joins
+ * whatever it is handed, so a line of words comes out the same as a line of
+ * characters), except a word longer than the whole line, which `flush` cuts
+ * cluster by cluster and so is handed to it that way. Only a space is a
+ * separator here: a tab is not printable ASCII, so a line with one in it
+ * never reaches this. The same breaks, in the same places, as the general
+ * path above -- `tests.m31`'s wrapping cases are the proof. */
 void wrap_plain(List<str> out, str line, int columns) {
     List<str> current = [];
     int current_width = 0;
@@ -382,9 +382,9 @@ void wrap_plain(List<str> out, str line, int columns) {
     out.push(current.join(""));
 }
 
-/// `line[from .. end]` as the list `flush` takes: one string, or -- when it
-/// is wider than a whole line and `flush` will have to cut it -- one string
-/// per character, which is what `clusters` would have made of it.
+/** `line[from .. end]` as the list `flush` takes: one string, or -- when it
+ * is wider than a whole line and `flush` will have to cut it -- one string
+ * per character, which is what `clusters` would have made of it. */
 List<str> plain_word(str line, int from, int end, int columns) {
     if (end - from <= columns) {
         return [line.substr(from, end)];
@@ -396,9 +396,9 @@ List<str> plain_word(str line, int from, int end, int columns) {
     return out;
 }
 
-/// Put `word` on `cur`, breaking the line first if it does not fit and
-/// breaking the word itself if it is longer than a whole line. Answers the
-/// new width of `cur`, which it changes in place.
+/** Put `word` on `cur`, breaking the line first if it does not fit and
+ * breaking the word itself if it is longer than a whole line. Answers the
+ * new width of `cur`, which it changes in place. */
 int flush(List<str> out, List<str> current, int current_width, List<str> word, int word_w, int gap, int columns) {
     if (word.size() == 0) {
         return current_width;
@@ -417,8 +417,8 @@ int flush(List<str> out, List<str> current, int current_width, List<str> word, i
         }
         return used + spaces + word_w;
     }
-    // It does not fit after what is already there. Start a new line, unless
-    // the line is empty already -- then the word alone is too long.
+    /* It does not fit after what is already there. Start a new line, unless
+     * the line is empty already -- then the word alone is too long. */
     if (used > 0) {
         out.push(current.join(""));
         current.clear();
@@ -445,11 +445,11 @@ int flush(List<str> out, List<str> current, int current_width, List<str> word, i
     return line_w;
 }
 
-/// `text` cut to at most `columns` columns, with `ellipsis` on the end to say it was.
-///
-/// Nothing is cut when it already fits. When even the ellipsis does not fit,
-/// the text is cut to `columns` with no ellipsis -- one column of `...` says
-/// nothing a bare cut does not.
+/** `text` cut to at most `columns` columns, with `ellipsis` on the end to say it was.
+ *
+ * Nothing is cut when it already fits. When even the ellipsis does not fit,
+ * the text is cut to `columns` with no ellipsis -- one column of `...` says
+ * nothing a bare cut does not. */
 pub str truncate(str text, int columns, str ellipsis = ELLIPSIS) {
     if (columns <= 0) {
         return "";
@@ -464,15 +464,15 @@ pub str truncate(str text, int columns, str ellipsis = ELLIPSIS) {
     return cut(text, columns - ellipsis_width) + ellipsis;
 }
 
-/// The longest prefix of `text` that is at most `columns` columns, cut between
-/// grapheme clusters.
+/** The longest prefix of `text` that is at most `columns` columns, cut between
+ * grapheme clusters. */
 pub str cut(str text, int columns) {
     if (columns <= 0) {
         return "";
     }
-    // No encoding is narrower than one byte a column -- an East Asian wide
-    // character is three bytes or four -- so fewer bytes than columns is
-    // already the whole answer.
+    /* No encoding is narrower than one byte a column -- an East Asian wide
+     * character is three bytes or four -- so fewer bytes than columns is
+     * already the whole answer. */
     if (text.size() <= columns) {
         return text;
     }
@@ -492,11 +492,11 @@ pub str cut(str text, int columns) {
     return out.join("");
 }
 
-/// `text` with its first `columns` columns removed, cut between grapheme
-/// clusters -- `cut`'s complement, for a horizontally scrolled window into
-/// text wider than the room for it. Dropping partway through a wide cluster
-/// drops the whole cluster, the same "never split a cluster" rule `cut`
-/// follows, rather than showing half of one.
+/** `text` with its first `columns` columns removed, cut between grapheme
+ * clusters -- `cut`'s complement, for a horizontally scrolled window into
+ * text wider than the room for it. Dropping partway through a wide cluster
+ * drops the whole cluster, the same "never split a cluster" rule `cut`
+ * follows, rather than showing half of one. */
 pub str drop_columns(str text, int columns) {
     if (columns <= 0) {
         return text;
@@ -519,9 +519,9 @@ pub str drop_columns(str text, int columns) {
     return out.join("");
 }
 
-/// `text` padded with spaces to `columns` columns. Text already that wide or wider
-/// is returned as it is -- padding never truncates, so that the two
-/// decisions stay separate.
+/** `text` padded with spaces to `columns` columns. Text already that wide or wider
+ * is returned as it is -- padding never truncates, so that the two
+ * decisions stay separate. */
 pub str pad(str text, int columns, Align align) {
     int text_width = width(text);
     if (text_width >= columns) {
@@ -542,8 +542,8 @@ pub str pad(str text, int columns, Align align) {
     }
 }
 
-/// `text` in exactly `columns` columns: truncated if it is too long, padded if it
-/// is too short. This is what a table cell wants.
+/** `text` in exactly `columns` columns: truncated if it is too long, padded if it
+ * is too short. This is what a table cell wants. */
 pub str fit(str text, int columns, Align align, str ellipsis = ELLIPSIS) {
     return pad(truncate(text, columns, ellipsis: ellipsis), columns, align);
 }

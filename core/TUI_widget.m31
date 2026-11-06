@@ -1,47 +1,47 @@
-// The widget protocol, and the two widgets everything else is drawn inside.
-//
-// API
+/* The widget protocol, and the two widgets everything else is drawn inside.
+ *
+ * API */
 // ---
-//   interface TUI_widget.Widget { void render(Buffer buffer, Rect area); }
-//   TUI_widget.Block(...)      borders, a title and padding; `block.inner(area)`
-//   TUI_widget.Paragraph(text) wrapped, aligned, scrollable text
-//   TUI_widget.Span(text, style)   a run of text in one style
-//   TUI_widget.Line(spans)     spans drawn left to right on one row -- a Widget
-//
+/*   interface TUI_widget.Widget { void render(Buffer buffer, Rect area); }
+ *   TUI_widget.Block(...)      borders, a title and padding; `block.inner(area)`
+ *   TUI_widget.Paragraph(text) wrapped, aligned, scrollable text
+ *   TUI_widget.Span(text, style)   a run of text in one style
+ *   TUI_widget.Line(spans)     spans drawn left to right on one row -- a Widget
+ * */
 // --- the protocol is one method ---------------------------------------------
-//
-// ```
-// interface Widget {
-//     void render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area);
-// }
-// ```
-//
-// That is the whole of it, and it is a one-method interface, so **anything**
-// satisfies it: a struct with fields, the name of a plain function, or a
-// lambda written at the call site (reference §6.7). A program's own widget
-// needs no registration, no base type and no declaration that it is one --
-// it needs a `render` method with that signature. `apps/tui/tests.m31` writes
-// one of each of the three to prove it.
-//
-// A widget is **not** told where it is on the screen by a field; it is
-// handed the rectangle. So the same value can be drawn twice in two places,
-// and a container widget is a widget that cuts its rectangle up with
-// `TUI_geometry` and hands the parts on.
-//
+/*
+ * ```
+ * interface Widget {
+ *     void render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area);
+ * }
+ * ```
+ *
+ * That is the whole of it, and it is a one-method interface, so **anything**
+ * satisfies it: a struct with fields, the name of a plain function, or a
+ * lambda written at the call site (reference §6.7). A program's own widget
+ * needs no registration, no base type and no declaration that it is one --
+ * it needs a `render` method with that signature. `apps/tui/tests.m31` writes
+ * one of each of the three to prove it.
+ *
+ * A widget is **not** told where it is on the screen by a field; it is
+ * handed the rectangle. So the same value can be drawn twice in two places,
+ * and a container widget is a widget that cuts its rectangle up with
+ * `TUI_geometry` and hands the parts on.
+ * */
 // --- composing ---------------------------------------------------------------
-//
-// There is no `.block(...)` on every widget, the way ratatui has. A block
-// and its content are two widgets and the caller puts them together:
-//
-// ```
-// TUI_widget.Block block = TUI_widget.Block(title: "Logs");
-// block.render(buffer, area);
-// para.render(buffer, block.inner(area));
-// ```
-//
-// Two lines instead of one, and in exchange every widget stays independent
-// of `Block`, `inner` is available on its own, and a widget a program writes
-// is no harder to use than a widget shipped here.
+/*
+ * There is no `.block(...)` on every widget, the way ratatui has. A block
+ * and its content are two widgets and the caller puts them together:
+ *
+ * ```
+ * TUI_widget.Block block = TUI_widget.Block(title: "Logs");
+ * block.render(buffer, area);
+ * para.render(buffer, block.inner(area));
+ * ```
+ *
+ * Two lines instead of one, and in exchange every widget stays independent
+ * of `Block`, `inner` is available on its own, and a widget a program writes
+ * is no harder to use than a widget shipped here. */
 
 import core.TUI_buffer;
 import core.TUI_geometry;
@@ -103,19 +103,19 @@ int Borders.row() {
 // Six characters a set: horizontal, vertical, and the four corners.
 const Array<str> BORDER = ["\u{2500}", "\u{2502}", "\u{250C}", "\u{2510}", "\u{2514}", "\u{2518}", "\u{2550}", "\u{2551}", "\u{2554}", "\u{2557}", "\u{255A}", "\u{255D}", "\u{2500}", "\u{2502}", "\u{256D}", "\u{256E}", "\u{2570}", "\u{256F}", "\u{2501}", "\u{2503}", "\u{250F}", "\u{2513}", "\u{2517}", "\u{251B}"];
 
-/// A frame around a rectangle: a border, a title on the top edge, and
-/// padding inside.
-///
-/// Every field has a default, so a plain single-line box is `Block()` and
-/// everything else is named:
-///
-/// ```
-/// TUI_widget.Block(title: "Files", borders: TUI_widget.Borders.Rounded, pad_x: 1)
-/// ```
-///
-/// **Render the block before its content.** `render` fills its rectangle
-/// with the block's style first, which is what makes a coloured panel one
-/// call; content drawn into `inner(area)` afterwards sits on top of it.
+/** A frame around a rectangle: a border, a title on the top edge, and
+ * padding inside.
+ *
+ * Every field has a default, so a plain single-line box is `Block()` and
+ * everything else is named:
+ *
+ * ```
+ * TUI_widget.Block(title: "Files", borders: TUI_widget.Borders.Rounded, pad_x: 1)
+ * ```
+ *
+ * **Render the block before its content.** `render` fills its rectangle
+ * with the block's style first, which is what makes a coloured panel one
+ * call; content drawn into `inner(area)` afterwards sits on top of it. */
 pub type Block {
     pub Borders borders = Borders.Single;
     /// Which edges are drawn, as `TOP | RIGHT | BOTTOM | LEFT`.
@@ -129,10 +129,10 @@ pub type Block {
     pub int pad_x = 0;
     /// Blank rows between the border and the content.
     pub int pad_y = 0;
-    /// Which characters the border is made of, for this block: `Auto` follows the buffer's terminal (Unicode
-    /// line drawing unless it measured box drawing wider than a column, then ASCII: see `TUI_width`), `Ascii`
-    /// is `+-|` always, `Unicode` is line drawing always. The setting of the whole program is
-    /// `Loop.borders` and the environment variable `TUI_BORDERS`; this one wins over both for this block.
+    /** Which characters the border is made of, for this block: `Auto` follows the buffer's terminal (Unicode
+     * line drawing unless it measured box drawing wider than a column, then ASCII: see `TUI_width`), `Ascii`
+     * is `+-|` always, `Unicode` is line drawing always. The setting of the whole program is
+     * `Loop.borders` and the environment variable `TUI_BORDERS`; this one wins over both for this block. */
     pub TUI_width.Borders charset = TUI_width.Borders.Auto;
 }
 
@@ -140,8 +140,8 @@ bool Block.is_drawn(int side) {
     return borders.row() >= 0 && (sides & side) != 0;
 }
 
-/// The rectangle left for content: `area` less the edges that are drawn,
-/// less the padding. A title with no top border still takes its row.
+/** The rectangle left for content: `area` less the edges that are drawn,
+ * less the padding. A title with no top border still takes its row. */
 pub TUI_geometry.Rect Block.inner(TUI_geometry.Rect area) {
     int left = 0;
     int right = 0;
@@ -179,8 +179,8 @@ pub void Block.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     if (area.is_empty()) {
         return;
     }
-    // the block's own choice of characters holds while it draws (the buffer writes line drawing as ASCII
-    // when `is_ascii_lines`), and the buffer's setting is back afterwards
+    /* the block's own choice of characters holds while it draws (the buffer writes line drawing as ASCII
+     * when `is_ascii_lines`), and the buffer's setting is back afterwards */
     bool was_ascii = buffer.table.is_ascii_lines;
     match (charset) {
         case Auto: {
@@ -248,29 +248,29 @@ void Block.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     buffer.set_str(title_x, area.y, title_text, title_style, max: room);
 }
 
-/// Text in a rectangle: wrapped or not, aligned, and scrolled vertically.
-///
-/// `text` is mandatory and positional; everything else is named.
-///
-/// ```
-/// TUI_widget.Paragraph(body, align: TUI_text.Align.Center, scroll: 4)
-/// ```
+/** Text in a rectangle: wrapped or not, aligned, and scrolled vertically.
+ *
+ * `text` is mandatory and positional; everything else is named.
+ *
+ * ```
+ * TUI_widget.Paragraph(body, align: TUI_text.Align.Center, scroll: 4)
+ * ``` */
 pub type Paragraph {
     pub str text;
-    /// Break long lines to the width of the rectangle. With this off, a long
-    /// line is truncated instead.
+    /** Break long lines to the width of the rectangle. With this off, a long
+     * line is truncated instead. */
     pub bool should_wrap = true;
     pub TUI_text.Align align = TUI_text.Align.Left;
     /// How many wrapped lines to skip at the top.
     pub int scroll = 0;
     pub TUI_style.Style style = TUI_style.Style();
-    /// Put on the end of a line that had to be cut. Only used when `should_wrap` is
-    /// off.
+    /** Put on the end of a line that had to be cut. Only used when `should_wrap` is
+     * off. */
     pub str ellipsis = TUI_text.ELLIPSIS;
 }
 
-/// The lines this paragraph would draw in a rectangle `room` columns wide --
-/// what a scrollbar needs to know, and what `scroll` counts.
+/** The lines this paragraph would draw in a rectangle `room` columns wide --
+ * what a scrollbar needs to know, and what `scroll` counts. */
 pub List<str> Paragraph.lines(int room) {
     if (should_wrap) {
         return TUI_text.wrap(text, room);
@@ -310,17 +310,17 @@ pub void Paragraph.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
 }
 
 // --- styled spans -------------------------------------------------------------
-//
-// A `Style` already carries everything a cell needs (TUI_style.m31); what was
-// missing is a way to put more than one of them on the same row without a
-// caller hand-rolling the column arithmetic. `Span` and `Line` are that:
-// ratatui's `Span`/`Line` *concept*, through this library's own idiom rather
-// than its API -- `Line` is a `List<Span>` with a `render` method, so it is a
-// `Widget` exactly like `Block` and `Paragraph`, composes with `TUI_geometry` the
-// same way, and needs no separate "text buffer" type of its own.
+/*
+ * A `Style` already carries everything a cell needs (TUI_style.m31); what was
+ * missing is a way to put more than one of them on the same row without a
+ * caller hand-rolling the column arithmetic. `Span` and `Line` are that:
+ * ratatui's `Span`/`Line` *concept*, through this library's own idiom rather
+ * than its API -- `Line` is a `List<Span>` with a `render` method, so it is a
+ * `Widget` exactly like `Block` and `Paragraph`, composes with `TUI_geometry` the
+ * same way, and needs no separate "text buffer" type of its own. */
 
-/// A run of text in one style -- the smallest styled unit a `Line` is built
-/// from. `"a" + Span("b") ` is not a thing; build a `Line` of both instead.
+/** A run of text in one style -- the smallest styled unit a `Line` is built
+ * from. `"a" + Span("b") ` is not a thing; build a `Line` of both instead. */
 pub type Span {
     pub str text;
     pub TUI_style.Style style = TUI_style.Style();
@@ -328,9 +328,9 @@ pub type Span {
     pub str link = "";
 }
 
-/// A plain, unstyled span. `Span.of("x")` and `Span("x")` mean the same
-/// thing; this spelling reads better in a list literal of otherwise-styled
-/// spans: `[Span.of("["), Span("staged", style: accent), Span.of("]")]`.
+/** A plain, unstyled span. `Span.of("x")` and `Span("x")` mean the same
+ * thing; this spelling reads better in a list literal of otherwise-styled
+ * spans: `[Span.of("["), Span("staged", style: accent), Span.of("]")]`. */
 pub static Span Span.of(str text) {
     return Span(text);
 }
@@ -340,26 +340,26 @@ pub int Span.width() {
     return TUI_text.width(text);
 }
 
-/// A row of spans, drawn left to right: `apps/tui`'s answer to ratatui's
-/// `Line`. Like any other widget it does not know where it is drawn; unlike
-/// `Paragraph` it never wraps -- a `Line` is one row, by construction, and a
-/// caller that wants more builds more of them.
-///
-/// ```
-/// TUI_widget.Line([TUI_widget.Span("staged: ", style: dim),
-///     TUI_widget.Span("3 files", style: accent)])
-/// ```
+/** A row of spans, drawn left to right: `apps/tui`'s answer to ratatui's
+ * `Line`. Like any other widget it does not know where it is drawn; unlike
+ * `Paragraph` it never wraps -- a `Line` is one row, by construction, and a
+ * caller that wants more builds more of them.
+ *
+ * ```
+ * TUI_widget.Line([TUI_widget.Span("staged: ", style: dim),
+ *     TUI_widget.Span("3 files", style: accent)])
+ * ``` */
 pub type Line {
     pub List<Span> spans;
     pub TUI_text.Align align = TUI_text.Align.Left;
-    /// Fills the rectangle first, so a span that does not reach the edge
-    /// still sits on a deliberate background rather than whatever was
-    /// already in the buffer -- the same reason `Paragraph.style` exists.
+    /** Fills the rectangle first, so a span that does not reach the edge
+     * still sits on a deliberate background rather than whatever was
+     * already in the buffer -- the same reason `Paragraph.style` exists. */
     pub TUI_style.Style style = TUI_style.Style();
 }
 
-/// A `Line` of one span in one style -- the common case, and what a caller
-/// reaches for before building a `List<Span>` by hand.
+/** A `Line` of one span in one style -- the common case, and what a caller
+ * reaches for before building a `List<Span>` by hand. */
 pub static Line Line.of(str text, TUI_style.Style style = TUI_style.Style()) {
     return Line([Span(text, style: style)], style: style);
 }
@@ -373,8 +373,8 @@ pub int Line.width() {
     return total;
 }
 
-/// The spans' text, concatenated with no separator -- what the line reads as
-/// with every style stripped off.
+/** The spans' text, concatenated with no separator -- what the line reads as
+ * with every style stripped off. */
 pub str Line.plain() {
     List<str> out = [];
     for (Span span in spans) {

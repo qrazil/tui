@@ -1,23 +1,23 @@
-// A minimal interactive file browser: the smallest proof that `TUI_app.Loop`
-// actually works against a real terminal -- read a key, change state,
-// redraw, flush -- built ONLY from widgets that existed before this change
-// (`TUI_list_table.ListView`, `TUI_widget.Block`/`Paragraph`). It does not use, and
-// does not wait on, the outline/jump-list/which-key/transient/diff-cursor
-// primitives this same change adds elsewhere in `apps/tui`: proving the loop
-// itself is a separate concern from those, and this is deliberately as
-// simple as the loop allows.
-//
-//   ./build.sh apps/tui/browse.m31 -o /tmp/browse && /tmp/browse
-//
-// j/k or the arrows move the selection, Enter descends into a directory (and
-// does nothing on a file -- its preview is already on screen), u or
-// Backspace goes back up, q or Escape quits.
-//
-// This is NOT in the test corpus -- like `examples/keys.m31`, it needs a real
-// terminal and a person. What tests/test.sh DOES check is that it compiles clean;
-// the loop it proves is `TUI_app.Loop`'s own, already tested against synthetic
-// buffers and events where that is possible (`apps/tui/tests.m31`, "the
-// application loop's own pieces").
+/* A minimal interactive file browser: the smallest proof that `TUI_app.Loop`
+ * actually works against a real terminal -- read a key, change state,
+ * redraw, flush -- built ONLY from widgets that existed before this change
+ * (`TUI_list_table.ListView`, `TUI_widget.Block`/`Paragraph`). It does not use, and
+ * does not wait on, the outline/jump-list/which-key/transient/diff-cursor
+ * primitives this same change adds elsewhere in `apps/tui`: proving the loop
+ * itself is a separate concern from those, and this is deliberately as
+ * simple as the loop allows.
+ *
+ *   ./build.sh apps/tui/browse.m31 -o /tmp/browse && /tmp/browse
+ *
+ * j/k or the arrows move the selection, Enter descends into a directory (and
+ * does nothing on a file -- its preview is already on screen), u or
+ * Backspace goes back up, q or Escape quits.
+ *
+ * This is NOT in the test corpus -- like `examples/keys.m31`, it needs a real
+ * terminal and a person. What tests/test.sh DOES check is that it compiles clean;
+ * the loop it proves is `TUI_app.Loop`'s own, already tested against synthetic
+ * buffers and events where that is possible (`apps/tui/tests.m31`, "the
+ * application loop's own pieces"). */
 
 import fs;
 import io;
@@ -31,20 +31,20 @@ import core.TUI_style;
 import core.TUI_text;
 import core.TUI_widget;
 
-/// How many lines of a text file's preview to show. Past this the panel
-/// would scroll, which is more than this demo needs to prove the loop works.
+/** How many lines of a text file's preview to show. Past this the panel
+ * would scroll, which is more than this demo needs to prove the loop works. */
 const int PREVIEW_LINES = 40;
 
-/// Where the browser is, and what it currently shows. One object, held by
-/// the entry code below and reached by the `draw`/`handle` lambdas that
-/// close over it -- there is no mutable module state (reference §2), so this
-/// is where the state that would otherwise want to be one actually lives.
+/** Where the browser is, and what it currently shows. One object, held by
+ * the entry code below and reached by the `draw`/`handle` lambdas that
+ * close over it -- there is no mutable module state (reference §2), so this
+ * is where the state that would otherwise want to be one actually lives. */
 type State {
     /// Path components below where the program started; empty means ".".
     List<str> parts = [];
-    /// The names `reload` last found in the current directory, in the same
-    /// order as `list`'s items -- what `enter` and `show_preview` look up by
-    /// the current selection.
+    /** The names `reload` last found in the current directory, in the same
+     * order as `list`'s items -- what `enter` and `show_preview` look up by
+     * the current selection. */
     List<str> names = [];
     TUI_list_table.ListView list = TUI_list_table.ListView([]);
     str preview = "";
@@ -84,9 +84,9 @@ void State.reload() {
     show_preview();
 }
 
-/// What the right-hand panel shows for whatever is selected now: a
-/// directory says so, a text file shows its first lines, anything else says
-/// why not (binary, unreadable).
+/** What the right-hand panel shows for whatever is selected now: a
+ * directory says so, a text file shows its first lines, anything else says
+ * why not (binary, unreadable). */
 void State.show_preview() {
     if (names.size() == 0) {
         preview = "";
@@ -138,8 +138,8 @@ void State.show_preview() {
     }
 }
 
-/// Enter: descend into the selected directory. Does nothing on a file --
-/// its preview is already what `show_preview` put on screen.
+/** Enter: descend into the selected directory. Does nothing on a file --
+ * its preview is already what `show_preview` put on screen. */
 void State.enter() {
     if (names.size() == 0) {
         return;
@@ -161,10 +161,10 @@ void State.up() {
     reload();
 }
 
-/// The frame: a title bar naming the path, the listing on the left, a
-/// preview or a message on the right, a one-line key legend at the bottom --
-/// the same layout `apps/tui/demo.m31` builds once, run here through
-/// `TUI_app.Loop` instead.
+/** The frame: a title bar naming the path, the listing on the left, a
+ * preview or a message on the right, a one-line key legend at the bottom --
+ * the same layout `apps/tui/demo.m31` builds once, run here through
+ * `TUI_app.Loop` instead. */
 void State.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     List<TUI_geometry.Rect> band = TUI_geometry.rows(area, [TUI_geometry.Constraint.Length(1), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
     TUI_style.Style bold = TUI_style.Style(attrs: TUI_style.BOLD);
@@ -186,10 +186,10 @@ void State.draw(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     buffer.set_str(band[2].x + 1, band[2].y, "j/k move   enter open   u up   q quit", rev);
 }
 
-/// What a key does to the browser's state: `Redraw` on anything that changed
-/// it, `Continue` on everything else, `Quit` on q or Escape -- the same
-/// shape `examples/keys.m31` hand-writes its own read loop around, here
-/// answered instead of looped, since `TUI_app.Loop` does the looping.
+/** What a key does to the browser's state: `Redraw` on anything that changed
+ * it, `Continue` on everything else, `Quit` on q or Escape -- the same
+ * shape `examples/keys.m31` hand-writes its own read loop around, here
+ * answered instead of looped, since `TUI_app.Loop` does the looping. */
 TUI_app.Action State.handle(term.Event event) {
     match (event) {
         case Key(term.Key key): {

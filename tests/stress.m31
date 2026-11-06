@@ -1,40 +1,40 @@
-// The stress harness: what the renderer writes, replayed on terminals that differ.
-//
-//   bash tests/test.sh
-//
-// Our emulator-based tests agreed with the renderer and real terminals did not, so this
-// harness asks the question the other way round. It draws random frames through the
-// library's real output (`Loop.frame_bytes`: the diff, the scrolled diff, the full frame
-// of a resize, the synchronized-output markers), applies the bytes to an emulator that
-// behaves like one kind of real terminal, and after EVERY frame asserts that its screen
-// is the screen a from-scratch repaint of the same frame gives on that same terminal.
-// Where the terminal has no disagreement with the library (it wraps differently, it
-// erases differently) the screen must also be exactly the buffer.
-//
-// The terminals (`TST_emulator.Screen`'s knobs):
-//   ideal          no autowrap; grapheme segmentation; what the older tests used
-//   pending-wrap   xterm: the cursor waits on the last column until the next printable
-//   instant-wrap   the cursor wraps the moment the last column is written
-//   no-autowrap    the last column is overwritten again and again
-//   sum-codepoints Terminal.app: a cluster is drawn as the sum of its code points
-//   vs16-ignored   a text emoji with U+FE0F is drawn one column (the base character)
-//   vs16-widens    U+FE0F makes anything two columns
-//   ambiguous-wide East Asian Ambiguous (box drawing, arrows, shapes, Greek) are two columns
-//   private-wide   private use glyphs (Nerd Font icons) take two columns
-//   new-emoji-narrow  emoji newer than the terminal's tables are one column
-//   astral-narrow  pictographs of U+1F300.. are one column
-//   jamo-add       conjoining Hangul jamo are two columns each
-//   no-combining   a combining mark takes a cell of its own
-//   no-bce         erase (EL) paints the default background, not the pen's
-//   unclamped      CUF/CUB do not stop at the margin, CUF keeps a pending wrap
-//   no-sync        mode 2026 is ignored and not answered
-//   terminal-app   sum-codepoints + pending-wrap + no-sync + no-bce
-//
-// Two phases. The pair phase is exhaustive over small rows: every row of a pool as the
-// old frame against every row as the new one, on a screen ten columns wide, which is
-// the minimal reproducer of anything that breaks. The random phase draws long
-// sequences of scenes (a text layer, a popup box with a list that grows and shrinks, a
-// query that is typed and erased, resizes) at 40 x 12 and 61 x 16.
+/* The stress harness: what the renderer writes, replayed on terminals that differ.
+ *
+ *   bash tests/test.sh
+ *
+ * Our emulator-based tests agreed with the renderer and real terminals did not, so this
+ * harness asks the question the other way round. It draws random frames through the
+ * library's real output (`Loop.frame_bytes`: the diff, the scrolled diff, the full frame
+ * of a resize, the synchronized-output markers), applies the bytes to an emulator that
+ * behaves like one kind of real terminal, and after EVERY frame asserts that its screen
+ * is the screen a from-scratch repaint of the same frame gives on that same terminal.
+ * Where the terminal has no disagreement with the library (it wraps differently, it
+ * erases differently) the screen must also be exactly the buffer.
+ *
+ * The terminals (`TST_emulator.Screen`'s knobs):
+ *   ideal          no autowrap; grapheme segmentation; what the older tests used
+ *   pending-wrap   xterm: the cursor waits on the last column until the next printable
+ *   instant-wrap   the cursor wraps the moment the last column is written
+ *   no-autowrap    the last column is overwritten again and again
+ *   sum-codepoints Terminal.app: a cluster is drawn as the sum of its code points
+ *   vs16-ignored   a text emoji with U+FE0F is drawn one column (the base character)
+ *   vs16-widens    U+FE0F makes anything two columns
+ *   ambiguous-wide East Asian Ambiguous (box drawing, arrows, shapes, Greek) are two columns
+ *   private-wide   private use glyphs (Nerd Font icons) take two columns
+ *   new-emoji-narrow  emoji newer than the terminal's tables are one column
+ *   astral-narrow  pictographs of U+1F300.. are one column
+ *   jamo-add       conjoining Hangul jamo are two columns each
+ *   no-combining   a combining mark takes a cell of its own
+ *   no-bce         erase (EL) paints the default background, not the pen's
+ *   unclamped      CUF/CUB do not stop at the margin, CUF keeps a pending wrap
+ *   no-sync        mode 2026 is ignored and not answered
+ *   terminal-app   sum-codepoints + pending-wrap + no-sync + no-bce
+ *
+ * Two phases. The pair phase is exhaustive over small rows: every row of a pool as the
+ * old frame against every row as the new one, on a screen ten columns wide, which is
+ * the minimal reproducer of anything that breaks. The random phase draws long
+ * sequences of scenes (a text layer, a popup box with a list that grows and shrinks, a
+ * query that is typed and erased, resizes) at 40 x 12 and 61 x 16. */
 
 import os;
 import random;
@@ -71,8 +71,8 @@ type Variant {
     /// The terminal agrees with the library on every width, so the screen must be the buffer.
     bool is_exact = true;
     int regional_width = 1;
-    /// A terminal of `TST_emulator.preset` (the owner's: alacritty, rio, kitty, a terminal that switches on mode 2027, one that
-    /// draws East Asian Ambiguous wide), with its own settings instead of the fields above.
+    /** A terminal of `TST_emulator.preset` (the owner's: alacritty, rio, kitty, a terminal that switches on mode 2027, one that
+     * draws East Asian Ambiguous wide), with its own settings instead of the fields above. */
     str preset = "";
     /// What the loop's calibration measured on this terminal (the default table: nothing measured).
     TUI_width.Table table = TUI_width.Table();
@@ -151,8 +151,8 @@ bool is_limit(Variant variant) {
     return variant.is_known_limit;
 }
 
-/// Ask a terminal like `variant` what it measures, the way the loop does at start-up, and keep the answer
-/// in the variant (and whether mode 2027 was switched on: the terminals the harness makes later have it on).
+/** Ask a terminal like `variant` what it measures, the way the loop does at start-up, and keep the answer
+ * in the variant (and whether mode 2027 was switched on: the terminals the harness makes later have it on). */
 void calibrate(Variant variant) {
     TUI_app.Loop loop = TUI_app.Loop();
     TST_emulator.Screen screen = screen_for(variant, 80, 24);
@@ -594,8 +594,8 @@ List<str> rows_pool() {
     return out;
 }
 
-/// One row on a ten column, one row screen; `kind` 0 plain, 1 with a coloured background all
-/// along the row (blanks included), 2 coloured text on a plain tail.
+/** One row on a ten column, one row screen; `kind` 0 plain, 1 with a coloured background all
+ * along the row (blanks included), 2 coloured text on a plain tail. */
 TUI_buffer.Buffer pair_buffer(str text, int kind, TUI_width.Table table) {
     TUI_buffer.Buffer buffer = TUI_buffer.Buffer.sized(PAIR_WIDTH, 2);
     buffer.table = table;
@@ -739,9 +739,9 @@ void random_phase(Tally tally, List<Variant> all, int sequences, int frames) {
 
 // --- the finder: the sequence of the report ---------------------------------------------
 
-/// Open a picker over text, type p, o, m (the list narrows from many rows to few), erase the m:
-/// the scene sequence of m3's fuzzy finder, with entries of different lengths, wide characters,
-/// emoji and a path longer than the box.
+/** Open a picker over text, type p, o, m (the list narrows from many rows to few), erase the m:
+ * the scene sequence of m3's fuzzy finder, with entries of different lengths, wide characters,
+ * emoji and a path longer than the box. */
 List<Scene> finder_plan(int width, int height, bool has_preview) {
     List<str> entries = [];
     for (int index in 0 .. 60) {
@@ -848,8 +848,8 @@ List<int> finder_phase(Tally tally, List<Variant> all) {
     return totals;
 }
 
-/// What the calibration saved on the finder sequence, per terminal: the bytes the static policy writes, the
-/// bytes with the terminal measured. A terminal that agrees with the library's tables must not write more.
+/** What the calibration saved on the finder sequence, per terminal: the bytes the static policy writes, the
+ * bytes with the terminal measured. A terminal that agrees with the library's tables must not write more. */
 void finder_report(Tally tally, List<Variant> all, List<int> static_bytes, List<int> measured_bytes) {
     for (int index in 0 .. all.size()) {
         Variant variant = all[index];

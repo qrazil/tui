@@ -1,74 +1,74 @@
-// Cells, and the grid of them a frame is drawn into.
-//
-// API
+/* Cells, and the grid of them a frame is drawn into.
+ *
+ * API */
 // ---
-//   TUI_buffer.Buffer.sized(width, height)  a blank buffer at the origin
-//   TUI_buffer.Buffer.empty(rect)           a blank buffer covering `rect`
-//   b.area()                                the rectangle it covers
-//   b.get(x, y) -> Cell                     what is there
-//   b.set(x, y, cell)                       put one cell
-//   b.set_str(x, y, text, style, max:)      write text, width-aware, clipped
-//   b.fill(rect, symbol, style)             every cell of a rectangle
-//   b.restyle(rect, style)                  the style, leaving the glyphs
-//   b.link(rect, uri)                       the cells of a rectangle are a hyperlink (OSC 8)
-//   b.set_link_str(x, y, text, style, uri)  write text that is a hyperlink
-//   b.link_at(x, y)                         the link of a cell, "" for none
-//   b.clear()                               blanks, in the plain style, no links
-//   b.to_str()                              the rows as plain text -- `print(b)`
-//   b.frame()                               the same inside a ruled box, for tests
-//
+/*   TUI_buffer.Buffer.sized(width, height)  a blank buffer at the origin
+ *   TUI_buffer.Buffer.empty(rect)           a blank buffer covering `rect`
+ *   b.area()                                the rectangle it covers
+ *   b.get(x, y) -> Cell                     what is there
+ *   b.set(x, y, cell)                       put one cell
+ *   b.set_str(x, y, text, style, max:)      write text, width-aware, clipped
+ *   b.fill(rect, symbol, style)             every cell of a rectangle
+ *   b.restyle(rect, style)                  the style, leaving the glyphs
+ *   b.link(rect, uri)                       the cells of a rectangle are a hyperlink (OSC 8)
+ *   b.set_link_str(x, y, text, style, uri)  write text that is a hyperlink
+ *   b.link_at(x, y)                         the link of a cell, "" for none
+ *   b.clear()                               blanks, in the plain style, no links
+ *   b.to_str()                              the rows as plain text -- `print(b)`
+ *   b.frame()                               the same inside a ruled box, for tests
+ * */
 // --- a cell is a grapheme cluster -------------------------------------------
-//
-// Not a code point. `é` spelled `e` + U+0301 is one cell, `👍🏽` is one cell,
-// and a flag is one cell, because that is what a reader counts and what a
-// terminal draws. `unicode.graphemes` does the grouping and `unicode.width`
-// says how many columns the result takes.
-//
-// **A cluster two columns wide occupies two cells**: the cluster itself, and
-// a *continuation* -- a cell whose symbol is the empty string and whose
-// width is 0. The continuation is not a space and is never written to the
-// terminal; it is there so that the grid stays a grid, so that `x + 1` is
-// still the next column, and so that the renderer can tell "the right-hand
-// half of a wide character" from "a blank".
-//
-// The invariant every write here keeps: **a continuation always has a
-// two-wide cell immediately to its left, in the same row.** Overwriting
-// either half of a pair turns the other half into a space, in the style the
-// orphan already had. That is where terminal libraries go wrong, and it is
-// checked in the test corpus from both directions.
-//
+/*
+ * Not a code point. `é` spelled `e` + U+0301 is one cell, `👍🏽` is one cell,
+ * and a flag is one cell, because that is what a reader counts and what a
+ * terminal draws. `unicode.graphemes` does the grouping and `unicode.width`
+ * says how many columns the result takes.
+ *
+ * **A cluster two columns wide occupies two cells**: the cluster itself, and
+ * a *continuation* -- a cell whose symbol is the empty string and whose
+ * width is 0. The continuation is not a space and is never written to the
+ * terminal; it is there so that the grid stays a grid, so that `x + 1` is
+ * still the next column, and so that the renderer can tell "the right-hand
+ * half of a wide character" from "a blank".
+ *
+ * The invariant every write here keeps: **a continuation always has a
+ * two-wide cell immediately to its left, in the same row.** Overwriting
+ * either half of a pair turns the other half into a space, in the style the
+ * orphan already had. That is where terminal libraries go wrong, and it is
+ * checked in the test corpus from both directions.
+ * */
 // --- a cell may be a hyperlink ----------------------------------------------
-//
-// A cell has a link, "" for none: an OSC 8 URI, written around the cells that
-// carry it by `TUI_diff` and compared like the symbol and the style, so a link
-// that appears, changes or goes away is redrawn. `link(rect, uri)` is the one door:
-// like `restyle` it marks cells that are already drawn. Writing over a cell takes
-// its link off (new text is not what the link was on).
-//
-// A buffer that never had a link pays nothing: the list of links is created by the
-// first `link` and every comparison and copy asks `has_links` before looking at it.
-// The URI is made safe on the way in (`TUI_osc.hyperlink_uri`): an empty, over-long
-// or unusable one is no link. `clear` drops every link.
-//
+/*
+ * A cell has a link, "" for none: an OSC 8 URI, written around the cells that
+ * carry it by `TUI_diff` and compared like the symbol and the style, so a link
+ * that appears, changes or goes away is redrawn. `link(rect, uri)` is the one door:
+ * like `restyle` it marks cells that are already drawn. Writing over a cell takes
+ * its link off (new text is not what the link was on).
+ *
+ * A buffer that never had a link pays nothing: the list of links is created by the
+ * first `link` and every comparison and copy asks `has_links` before looking at it.
+ * The URI is made safe on the way in (`TUI_osc.hyperlink_uri`): an empty, over-long
+ * or unusable one is no link. `clear` drops every link.
+ * */
 // --- what a cell costs ------------------------------------------------------
-//
-// A `Cell` is a struct, and a 200x50 buffer has ten thousand of them; a
-// struct per cell holding a `Style` holding two `Colour`s would be thirty
-// thousand refcounted allocations per frame. So the buffer stores two
-// parallel lists of integers and `Cell` is the shape it hands out and takes
-// in, built on demand:
-//
-//     cells    the glyph in the low 32 bits, the width above them
-//     styles   the packed style (`TUI_style.Style.pack`)
-//
-// A **glyph** is the code point itself when the cluster is a single code
-// point (every ASCII character, every ideograph, every box-drawing
-// character), 0 for the continuation (whose symbol is ""), and
-// `CLUSTER_BASE` + n for a cluster of several code points, which is the
-// string `clusters[n]` of this buffer. So a cell holds no reference: writing
-// one is two integer stores, comparing two buffers' cells is an integer
-// compare (a string compare only for the rare cluster that is a string), and
-// a buffer of ten thousand cells makes no refcount traffic at all.
+/*
+ * A `Cell` is a struct, and a 200x50 buffer has ten thousand of them; a
+ * struct per cell holding a `Style` holding two `Colour`s would be thirty
+ * thousand refcounted allocations per frame. So the buffer stores two
+ * parallel lists of integers and `Cell` is the shape it hands out and takes
+ * in, built on demand:
+ *
+ *     cells    the glyph in the low 32 bits, the width above them
+ *     styles   the packed style (`TUI_style.Style.pack`)
+ *
+ * A **glyph** is the code point itself when the cluster is a single code
+ * point (every ASCII character, every ideograph, every box-drawing
+ * character), 0 for the continuation (whose symbol is ""), and
+ * `CLUSTER_BASE` + n for a cluster of several code points, which is the
+ * string `clusters[n]` of this buffer. So a cell holds no reference: writing
+ * one is two integer stores, comparing two buffers' cells is an integer
+ * compare (a string compare only for the rare cluster that is a string), and
+ * a buffer of ten thousand cells makes no refcount traffic at all. */
 
 import text.unicode;
 import core.TUI_geometry;
@@ -77,11 +77,11 @@ import core.TUI_style;
 import core.TUI_text;
 import core.TUI_width;
 
-/// One cell of the grid.
-///
-/// `symbol` is one grapheme cluster, `width` is how many columns it takes, and
-/// a cell with `width` 0 and an empty `symbol` is the second half of a
-/// two-column character -- see the header.
+/** One cell of the grid.
+ *
+ * `symbol` is one grapheme cluster, `width` is how many columns it takes, and
+ * a cell with `width` 0 and an empty `symbol` is the second half of a
+ * two-column character -- see the header. */
 pub type Cell {
     pub str symbol;
     pub TUI_style.Style style = TUI_style.Style();
@@ -113,11 +113,11 @@ pub str Cell.to_str() {
     return "[" + symbol + "] w" + str(width) + " " + style.to_str();
 }
 
-/// A rectangle of cells.
-///
-/// Its lists are private and have no defaults, so nothing outside this
-/// module can build one field by field; `Buffer.sized` and `Buffer.empty`
-/// are the two doors in.
+/** A rectangle of cells.
+ *
+ * Its lists are private and have no defaults, so nothing outside this
+ * module can build one field by field; `Buffer.sized` and `Buffer.empty`
+ * are the two doors in. */
 pub type Buffer {
     TUI_geometry.Rect box;
     /// The glyph of each cell in the low 32 bits and its width above them (see the header).
@@ -127,17 +127,17 @@ pub type Buffer {
     List<str> clusters;
     /// One link per cell, or EMPTY when no cell of this buffer has had one.
     List<str> links;
-    /// What the terminal measured (`TUI_width`, `Loop.width_table`): the widths of the cells written
-    /// here, which clusters the renderer trusts, and whether line drawing is written as ASCII. The
-    /// default measured nothing: the static policy of `TUI_text`. Shared, not copied.
+    /** What the terminal measured (`TUI_width`, `Loop.width_table`): the widths of the cells written
+     * here, which clusters the renderer trusts, and whether line drawing is written as ASCII. The
+     * default measured nothing: the static policy of `TUI_text`. Shared, not copied. */
     pub TUI_width.Table table = TUI_width.Table();
-    /// A small cache of the strings of single code points above ASCII (`symbol_of` would
-    /// allocate one per ask): `glyph_cache[n]` is the glyph whose string is `text_cache[n]`.
+    /** A small cache of the strings of single code points above ASCII (`symbol_of` would
+     * allocate one per ask): `glyph_cache[n]` is the glyph whose string is `text_cache[n]`. */
     List<int> glyph_cache = [];
     List<str> text_cache = [];
-    /// Per row: 1 when a cell of that row has had a link (`link`), and 0 when none has, so a row of 0 has
-    /// no link in any cell and the renderer takes its fast path over it. Conservative: a link that was
-    /// overwritten leaves its row at 1. Empty when `links` is.
+    /** Per row: 1 when a cell of that row has had a link (`link`), and 0 when none has, so a row of 0 has
+     * no link in any cell and the renderer takes its fast path over it. Conservative: a link that was
+     * overwritten leaves its row at 1. Empty when `links` is. */
     List<int> link_rows = [];
 }
 
@@ -146,8 +146,8 @@ pub static Buffer Buffer.sized(int width, int height) {
     return Buffer.empty(TUI_geometry.Rect(0, 0, width, height));
 }
 
-/// A blank buffer covering `area`. A negative width or height is taken as
-/// zero.
+/** A blank buffer covering `area`. A negative width or height is taken as
+ * zero. */
 pub static Buffer Buffer.empty(TUI_geometry.Rect area) {
     int width = area.width;
     int height = area.height;
@@ -188,8 +188,8 @@ pub Cell Buffer.get(int x, int y) {
     return Cell(symbol_of(cell & GLYPH_MASK), style: TUI_style.Style.unpack(styles[index]), width: cell >> WIDTH_SHIFT, link: link_of(index));
 }
 
-/// The packed style at `x`, `y` -- what the renderer compares. **Traps**
-/// outside the buffer.
+/** The packed style at `x`, `y` -- what the renderer compares. **Traps**
+ * outside the buffer. */
 pub int Buffer.style_at(int x, int y) {
     if (!box.has_point(x, y)) {
         trap("TUI_buffer.Buffer.style_at: outside the buffer");
@@ -197,8 +197,8 @@ pub int Buffer.style_at(int x, int y) {
     return styles[at(x, y)];
 }
 
-/// The symbol at `x`, `y`; the empty string for a continuation. **Traps**
-/// outside the buffer.
+/** The symbol at `x`, `y`; the empty string for a continuation. **Traps**
+ * outside the buffer. */
 pub str Buffer.symbol_at(int x, int y) {
     if (!box.has_point(x, y)) {
         trap("TUI_buffer.Buffer.symbol_at: outside the buffer");
@@ -206,8 +206,8 @@ pub str Buffer.symbol_at(int x, int y) {
     return symbol_of(cells[at(x, y)] & GLYPH_MASK);
 }
 
-/// The text a glyph stands for: "" for the continuation, the code point as a string, or the
-/// cluster of this buffer's table. A printable ASCII character is a module constant.
+/** The text a glyph stands for: "" for the continuation, the code point as a string, or the
+ * cluster of this buffer's table. A printable ASCII character is a module constant. */
 str Buffer.symbol_of(int glyph) {
     if (glyph >= 32 && glyph < 127) {
         return ASCII[glyph - 32];
@@ -230,8 +230,8 @@ str Buffer.symbol_of(int glyph) {
     return clusters[glyph - CLUSTER_BASE];
 }
 
-/// The glyph for `text`, one grapheme cluster (or "" for a continuation): the code point itself
-/// when there is only one, else an entry of the cluster table.
+/** The glyph for `text`, one grapheme cluster (or "" for a continuation): the code point itself
+ * when there is only one, else an entry of the cluster table. */
 int Buffer.glyph_of(str text) {
     int size = text.size();
     if (size == 0) {
@@ -265,8 +265,8 @@ int Buffer.glyph_of(str text) {
     return CLUSTER_BASE + clusters.size() - 1;
 }
 
-/// Drop the table entries no cell points at any more (overwritten clusters are never taken
-/// out one by one), renumbering the cells that do.
+/** Drop the table entries no cell points at any more (overwritten clusters are never taken
+ * out one by one), renumbering the cells that do. */
 void Buffer.compact_clusters() {
     List<str> kept = [];
     for (int index in 0 .. cells.size()) {
@@ -334,9 +334,9 @@ int Buffer.push_glyph(bytes out, int glyph) {
     return byte_count;
 }
 
-/// Does cell `index` of this buffer differ from cell `other_index` of `other`: in glyph, width or
-/// style (not link)? A glyph that is a cluster is a string, and the same table index in two
-/// buffers proves nothing, so those are compared as strings.
+/** Does cell `index` of this buffer differ from cell `other_index` of `other`: in glyph, width or
+ * style (not link)? A glyph that is a cluster is a string, and the same table index in two
+ * buffers proves nothing, so those are compared as strings. */
 bool Buffer.is_cell_different(Buffer other, int index, int other_index) {
     int mine = cells[index];
     int theirs = other.cells[other_index];
@@ -352,13 +352,13 @@ bool Buffer.is_cell_different(Buffer other, int index, int other_index) {
     return clusters[(mine & GLYPH_MASK) - CLUSTER_BASE] != other.clusters[(theirs & GLYPH_MASK) - CLUSTER_BASE];
 }
 
-/// Is the cell at `x`, `y` the same in both buffers?
-///
-/// The renderer asks this of every cell of every frame. One call that reads
-/// both buffers' lists is much cheaper than three that each hand back a value
-/// the caller then has to release (reference §7.2).
-///
-/// **Traps** when the buffers do not cover the same rectangle.
+/** Is the cell at `x`, `y` the same in both buffers?
+ *
+ * The renderer asks this of every cell of every frame. One call that reads
+ * both buffers' lists is much cheaper than three that each hand back a value
+ * the caller then has to release (reference §7.2).
+ *
+ * **Traps** when the buffers do not cover the same rectangle. */
 pub bool Buffer.is_same_cell(Buffer other, int x, int y) {
     if (!box.eq(other.box)) {
         trap("TUI_buffer.Buffer.is_same_cell: the buffers cover different rectangles");
@@ -373,12 +373,12 @@ pub bool Buffer.is_same_cell(Buffer other, int x, int y) {
     return true;
 }
 
-/// Is row `y` the same in both buffers, cell for cell? The renderer asks
-/// this before it looks at any cell of a row: a keystroke changes one or two
-/// rows of fifty, and a row that did not change costs one pass over two
-/// integer lists here instead of a per-cell `is_same_cell` (each with its own
-/// bounds check) plus a scan for its trailing blanks. **Traps** when the
-/// buffers do not cover the same rectangle.
+/** Is row `y` the same in both buffers, cell for cell? The renderer asks
+ * this before it looks at any cell of a row: a keystroke changes one or two
+ * rows of fifty, and a row that did not change costs one pass over two
+ * integer lists here instead of a per-cell `is_same_cell` (each with its own
+ * bounds check) plus a scan for its trailing blanks. **Traps** when the
+ * buffers do not cover the same rectangle. */
 pub bool Buffer.is_same_row(Buffer other, int y) {
     if (!box.eq(other.box)) {
         trap("TUI_buffer.Buffer.is_same_row: the buffers cover different rectangles");
@@ -412,11 +412,11 @@ pub bool Buffer.is_same_row(Buffer other, int y) {
     return true;
 }
 
-/// The first column of the run of plain blanks -- a space, in the reset
-/// style -- that ends row `y`, or the row's end when it does not end in one.
-/// This is what the renderer turns into `\x1b[K`; computed here, in one pass
-/// over the lists, rather than cell by cell through `style_at`/`symbol_at`.
-/// **Traps** outside the buffer.
+/** The first column of the run of plain blanks -- a space, in the reset
+ * style -- that ends row `y`, or the row's end when it does not end in one.
+ * This is what the renderer turns into `\x1b[K`; computed here, in one pass
+ * over the lists, rather than cell by cell through `style_at`/`symbol_at`.
+ * **Traps** outside the buffer. */
 pub int Buffer.tail_start(int y) {
     if (y < box.y || y >= box.bottom()) {
         trap("TUI_buffer.Buffer.tail_start: outside the buffer");
@@ -436,8 +436,8 @@ pub int Buffer.tail_start(int y) {
     return box.x;
 }
 
-/// Are the `count` cells from `x`, `y` plain blanks: a space, one column, in the reset style,
-/// no link? What a terminal shows there, if it was told so, is nothing to clear.
+/** Are the `count` cells from `x`, `y` plain blanks: a space, one column, in the reset style,
+ * no link? What a terminal shows there, if it was told so, is nothing to clear. */
 pub bool Buffer.is_plain_blank(int x, int y, int count) {
     if (!box.has_point(x, y) || x + count > box.right()) {
         return false;
@@ -453,11 +453,11 @@ pub bool Buffer.is_plain_blank(int x, int y, int count) {
     return true;
 }
 
-/// The first column of row `y` that holds a cluster whose width terminals may disagree on
-/// (`TUI_width.Table.is_certain`: `TUI_text.is_certain_width` until the terminal has been measured), or the row's right edge when there is none. One pass over
-/// the glyphs; printable ASCII, nearly every cell there is, is passed by its value alone, and
-/// a run of one glyph (a rule of box-drawing characters) is asked about once.
-/// **Traps** outside the buffer.
+/** The first column of row `y` that holds a cluster whose width terminals may disagree on
+ * (`TUI_width.Table.is_certain`: `TUI_text.is_certain_width` until the terminal has been measured), or the row's right edge when there is none. One pass over
+ * the glyphs; printable ASCII, nearly every cell there is, is passed by its value alone, and
+ * a run of one glyph (a rule of box-drawing characters) is asked about once.
+ * **Traps** outside the buffer. */
 pub int Buffer.first_unsure(int y) {
     if (y < box.y || y >= box.bottom()) {
         trap("TUI_buffer.Buffer.first_unsure: outside the buffer");
@@ -481,13 +481,13 @@ pub int Buffer.first_unsure(int y) {
     return box.right();
 }
 
-/// Append the UTF-8 bytes of the symbol at `x`, `y` to `out`.
-///
-/// `out.extend(b.symbol_at(x, y).to_bytes())` says the same thing and allocates
-/// a whole `bytes` object per cell to do it; this is the same without the
-/// allocation. Answers how many bytes it appended, so a caller that
-/// needs to know whether the symbol is a long cluster (more than 3 bytes: not
-/// ASCII, Latin, Hangul, CJK or a box) does not ask the buffer again.
+/** Append the UTF-8 bytes of the symbol at `x`, `y` to `out`.
+ *
+ * `out.extend(b.symbol_at(x, y).to_bytes())` says the same thing and allocates
+ * a whole `bytes` object per cell to do it; this is the same without the
+ * allocation. Answers how many bytes it appended, so a caller that
+ * needs to know whether the symbol is a long cluster (more than 3 bytes: not
+ * ASCII, Latin, Hangul, CJK or a box) does not ask the buffer again. */
 pub int Buffer.append_symbol(bytes out, int x, int y) {
     if (!box.has_point(x, y)) {
         trap("TUI_buffer.Buffer.append_symbol: outside the buffer");
@@ -495,8 +495,8 @@ pub int Buffer.append_symbol(bytes out, int x, int y) {
     return push_glyph(out, cells[at(x, y)] & GLYPH_MASK);
 }
 
-/// The size in bytes of the symbol at `x`, `y`, without handing the symbol out. **Traps**
-/// outside the buffer.
+/** The size in bytes of the symbol at `x`, `y`, without handing the symbol out. **Traps**
+ * outside the buffer. */
 pub int Buffer.symbol_size_at(int x, int y) {
     if (!box.has_point(x, y)) {
         trap("TUI_buffer.Buffer.symbol_size_at: outside the buffer");
@@ -504,9 +504,9 @@ pub int Buffer.symbol_size_at(int x, int y) {
     return glyph_size(cells[at(x, y)] & GLYPH_MASK);
 }
 
-/// The width of the cell at `x`, `y`: 2 for the left half of a wide
-/// character, 0 for its right half, 1 otherwise. **Traps** outside the
-/// buffer.
+/** The width of the cell at `x`, `y`: 2 for the left half of a wide
+ * character, 0 for its right half, 1 otherwise. **Traps** outside the
+ * buffer. */
 pub int Buffer.width_at(int x, int y) {
     if (!box.has_point(x, y)) {
         trap("TUI_buffer.Buffer.width_at: outside the buffer");
@@ -515,17 +515,17 @@ pub int Buffer.width_at(int x, int y) {
 }
 
 // --- scanning a row ---------------------------------------------------------
-//
-// The renderer's per-cell loop was a call per cell for each thing it asked (a width, a style, a
-// symbol size, a symbol, each with its own bounds check). These answer a question about a run of
-// cells in one pass over the lists, which is where a frame's time was going: `next_change` skips
-// the cells that did not change, `ascii_run_end` and `changed_ascii_run_end` find how far plain
-// printable text runs in one style, and `append_run` writes it.
+/*
+ * The renderer's per-cell loop was a call per cell for each thing it asked (a width, a style, a
+ * symbol size, a symbol, each with its own bounds check). These answer a question about a run of
+ * cells in one pass over the lists, which is where a frame's time was going: `next_change` skips
+ * the cells that did not change, `ascii_run_end` and `changed_ascii_run_end` find how far plain
+ * printable text runs in one style, and `append_run` writes it. */
 
-/// The first column of row `y`, from `from` and before `until`, whose cell differs from
-/// `previous`'s (symbol, width, style or link), or `until` when none does. The right half of a
-/// wide character is not looked at, as the renderer never did. **Traps** when the buffers do
-/// not cover the same rectangle, or on a row outside them.
+/** The first column of row `y`, from `from` and before `until`, whose cell differs from
+ * `previous`'s (symbol, width, style or link), or `until` when none does. The right half of a
+ * wide character is not looked at, as the renderer never did. **Traps** when the buffers do
+ * not cover the same rectangle, or on a row outside them. */
 pub int Buffer.next_change(Buffer previous, int y, int from, int until) {
     if (!box.eq(previous.box)) {
         trap("TUI_buffer.Buffer.next_change: the buffers cover different rectangles");
@@ -561,10 +561,10 @@ pub int Buffer.next_change(Buffer previous, int y, int from, int until) {
     return until;
 }
 
-/// Is the cell `cell` (width and glyph) one the renderer writes as its bytes without asking
-/// anything else of it: printable ASCII in one column, or a single code point the width table
-/// trusts (`table.is_uncertain` false for it at that width)? `memo` is the last answer for a
-/// glyph and width: `[cell, 1 or 0]`, so a run of one character is asked about once.
+/** Is the cell `cell` (width and glyph) one the renderer writes as its bytes without asking
+ * anything else of it: printable ASCII in one column, or a single code point the width table
+ * trusts (`table.is_uncertain` false for it at that width)? `memo` is the last answer for a
+ * glyph and width: `[cell, 1 or 0]`, so a run of one character is asked about once. */
 bool Buffer.is_plain_cell(int cell, List<int> memo) {
     int glyph = cell & GLYPH_MASK;
     if (glyph < 0x80) {
@@ -583,10 +583,10 @@ bool Buffer.is_plain_cell(int cell, List<int> memo) {
     return memo[1] == 1;
 }
 
-/// The end (exclusive) of the run of cells in row `y` from column `x` that the renderer writes as
-/// their bytes (printable ASCII, or a single code point of certain width: see `is_plain_cell`),
-/// all in the packed style `style`, stopping at `limit`: `x` itself when the first is not one.
-/// The right half of a wide character belongs to the run of its left half.
+/** The end (exclusive) of the run of cells in row `y` from column `x` that the renderer writes as
+ * their bytes (printable ASCII, or a single code point of certain width: see `is_plain_cell`),
+ * all in the packed style `style`, stopping at `limit`: `x` itself when the first is not one.
+ * The right half of a wide character belongs to the run of its left half. */
 pub int Buffer.plain_run_end(int y, int x, int limit, int style) {
     if (y < box.y || y >= box.bottom() || x < box.x || limit > box.right()) {
         trap("TUI_buffer.Buffer.plain_run_end: outside the buffer");
@@ -617,9 +617,9 @@ pub int Buffer.plain_run_end(int y, int x, int limit, int style) {
     return index - base;
 }
 
-/// `plain_run_end` for a diff: the run also ends at the first cell that `previous` already has
-/// (unless the cell is at or after `forced_from`, from which the renderer writes every cell).
-/// The cell at `x` itself is taken as changed.
+/** `plain_run_end` for a diff: the run also ends at the first cell that `previous` already has
+ * (unless the cell is at or after `forced_from`, from which the renderer writes every cell).
+ * The cell at `x` itself is taken as changed. */
 pub int Buffer.changed_plain_run_end(Buffer previous, int y, int x, int limit, int forced_from, int style) {
     if (!box.eq(previous.box) || y < box.y || y >= box.bottom() || x < box.x || limit > box.right()) {
         trap("TUI_buffer.Buffer.changed_plain_run_end: outside the buffer");
@@ -656,8 +656,8 @@ pub int Buffer.changed_plain_run_end(Buffer previous, int y, int x, int limit, i
     return index - base;
 }
 
-/// Append the bytes of the cells of row `y` from column `x` up to `end` -- cells the renderer
-/// writes as their bytes, as `plain_run_end` found them -- to `out`.
+/** Append the bytes of the cells of row `y` from column `x` up to `end` -- cells the renderer
+ * writes as their bytes, as `plain_run_end` found them -- to `out`. */
 pub void Buffer.append_run(bytes out, int y, int x, int end) {
     if (y < box.y || y >= box.bottom() || x < box.x || end > box.right()) {
         trap("TUI_buffer.Buffer.append_run: outside the buffer");
@@ -676,12 +676,12 @@ pub void Buffer.append_run(bytes out, int y, int x, int end) {
     }
 }
 
-/// Put one cell. Outside the buffer it does nothing -- a widget that
-/// overshoots is clipped, not fatal.
-///
-/// A cell of width 2 also writes its continuation, if there is a column for
-/// it; with no room the wide character is not written at all and a blank
-/// takes its place, because half of a wide glyph is not a character.
+/** Put one cell. Outside the buffer it does nothing -- a widget that
+ * overshoots is clipped, not fatal.
+ *
+ * A cell of width 2 also writes its continuation, if there is a column for
+ * it; with no room the wide character is not written at all and a blank
+ * takes its place, because half of a wide glyph is not a character. */
 pub void Buffer.set(int x, int y, Cell cell) {
     if (!box.has_point(x, y)) {
         return;
@@ -703,8 +703,8 @@ pub void Buffer.set(int x, int y, Cell cell) {
         return;
     }
     if (cell.width <= 0) {
-        // A lone continuation is not a cell a caller can place: it only
-        // means anything beside its head. Written on its own it is a blank.
+        /* A lone continuation is not a cell a caller can place: it only
+         * means anything beside its head. Written on its own it is a blank. */
         put(x, y, " ", packed_style, 1);
         return;
     }
@@ -712,8 +712,8 @@ pub void Buffer.set(int x, int y, Cell cell) {
     link(TUI_geometry.Rect(x, y, 1, 1), cell.link);
 }
 
-/// Restyle one cell, leaving its symbol alone. Outside the buffer it does
-/// nothing.
+/** Restyle one cell, leaving its symbol alone. Outside the buffer it does
+ * nothing. */
 pub void Buffer.set_style(int x, int y, TUI_style.Style style) {
     if (!box.has_point(x, y)) {
         return;
@@ -721,18 +721,18 @@ pub void Buffer.set_style(int x, int y, TUI_style.Style style) {
     styles[at(x, y)] = style.pack();
 }
 
-/// The write every other write goes through: one cell, with the orphan
-/// repair the header promises.
+/** The write every other write goes through: one cell, with the orphan
+ * repair the header promises. */
 void Buffer.put(int x, int y, str text, int packed_style, int width) {
     put_cell(x, at(x, y), glyph_of(text) | (width << WIDTH_SHIFT), packed_style);
 }
 
-/// `put` for a cell already encoded (`glyph | width << WIDTH_SHIFT`), at list index `index`
-/// (column `x`).
+/** `put` for a cell already encoded (`glyph | width << WIDTH_SHIFT`), at list index `index`
+ * (column `x`). */
 void Buffer.put_cell(int x, int index, int cell, int packed_style) {
     int old_width = cells[index] >> WIDTH_SHIFT;
-    // Writing over the right half of a wide pair leaves its left half
-    // showing a glyph it has no room for: make that a space.
+    /* Writing over the right half of a wide pair leaves its left half
+     * showing a glyph it has no room for: make that a space. */
     if (old_width == 0 && x > box.x) {
         cells[index - 1] = BLANK_CELL;
     }
@@ -747,17 +747,17 @@ void Buffer.put_cell(int x, int index, int cell, int packed_style) {
     }
 }
 
-/// Write `text` at `x`, `y`, one grapheme cluster per cell, and answer how
-/// many columns were taken.
-///
-///   - Text is clipped to the buffer's right edge, and to `max` columns when
-///     that is given and smaller.
-///   - A two-column cluster with only one column left is not written: a
-///     space is written instead, so the run has no ragged half-character.
-///   - A zero-width cluster -- a combining mark, a zero-width joiner -- is
-///     appended to the cell before it rather than taking a cell of its own.
-///     With no cell before it, it is dropped.
-///   - A newline in `text` is a cell like any other; split the text first.
+/** Write `text` at `x`, `y`, one grapheme cluster per cell, and answer how
+ * many columns were taken.
+ *
+ *   - Text is clipped to the buffer's right edge, and to `max` columns when
+ *     that is given and smaller.
+ *   - A two-column cluster with only one column left is not written: a
+ *     space is written instead, so the run has no ragged half-character.
+ *   - A zero-width cluster -- a combining mark, a zero-width joiner -- is
+ *     appended to the cell before it rather than taking a cell of its own.
+ *     With no cell before it, it is dropped.
+ *   - A newline in `text` is a cell like any other; split the text first. */
 pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = -1) {
     if (y < box.y || y >= box.bottom()) {
         return 0;
@@ -774,9 +774,9 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
         return fast_ascii(x, y, text, packed_style, limit);
     }
     if (x >= box.x && !table.is_ascii_lines) {
-        // text of printable ASCII, Latin letters, ideographs, kana, Hangul syllables and fullwidth forms:
-        // every character is a cluster of its own, in a width no terminal disputes, so it is written
-        // from its code points, with no cluster strings
+        /* text of printable ASCII, Latin letters, ideographs, kana, Hangul syllables and fullwidth forms:
+         * every character is a cluster of its own, in a width no terminal disputes, so it is written
+         * from its code points, with no cluster strings */
         int taken = set_simple(x, y, text, packed_style, limit);
         if (taken >= 0) {
             return taken;
@@ -785,13 +785,13 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
     int column = x;
     int used = 0;
     int last = -1;
-    // the last cluster measured and its columns: a rule of one box-drawing character, or a
-    // run of one letter, is measured once
+    /* the last cluster measured and its columns: a rule of one box-drawing character, or a
+     * run of one letter, is measured once */
     str measured = "";
     int measured_width = 0;
     for (str cluster in unicode.graphemes(text)) {
-        // a control character is never written to the terminal (it would be obeyed:
-        // a tab moves the cursor, ESC starts a sequence): its picture takes its cell
+        /* a control character is never written to the terminal (it would be obeyed:
+         * a tab moves the cursor, ESC starts a sequence): its picture takes its cell */
         str grapheme = cluster;
         if (is_control_cluster(cluster)) {
             grapheme = control_picture(cluster);
@@ -830,8 +830,8 @@ pub int Buffer.set_str(int x, int y, str text, TUI_style.Style style, int max = 
             continue;
         }
         if (column < box.x) {
-            // A wide cluster straddling the left edge: half of it is off the
-            // buffer, so neither half is drawn.
+            /* A wide cluster straddling the left edge: half of it is off the
+             * buffer, so neither half is drawn. */
             put(box.x, y, " ", packed_style, 1);
             last = at(box.x, y);
             column = column + grapheme_width;
@@ -860,8 +860,8 @@ str Buffer.safe_symbol(str symbol) {
     return symbol;
 }
 
-/// `set_str` for a text of which every character is `simple_width` (a cluster of its own, in the width it answers):
-/// the columns taken, or -1 when some character is not, and nothing was written.
+/** `set_str` for a text of which every character is `simple_width` (a cluster of its own, in the width it answers):
+ * the columns taken, or -1 when some character is not, and nothing was written. */
 int Buffer.set_simple(int x, int y, str text, int packed_style, int limit) {
     List<int> points = text.chars();
     int count = points.size();
@@ -901,9 +901,9 @@ int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
     if (byte_count > limit) {
         byte_count = limit;
     }
-    // A printable ASCII byte is its own glyph. Over a plain one-column cell (nearly every cell
-    // there is) the write is two stores; anything else (half of a wide pair, a cell with a link)
-    // goes through `put_cell` and its repairs.
+    /* A printable ASCII byte is its own glyph. Over a plain one-column cell (nearly every cell
+     * there is) the write is two stores; anything else (half of a wide pair, a cell with a link)
+     * goes through `put_cell` and its repairs. */
     int base = at(x, y);
     if (byte_count < 3 || row_may_link(y)) {
         for (int i in 0 .. byte_count) {
@@ -923,8 +923,8 @@ int Buffer.fast_ascii(int x, int y, str text, int packed_style, int limit) {
     return byte_count;
 }
 
-/// `put_cell` for the last cell of a run written left to right: the cell before it was written
-/// a moment ago, so only the right half of a wide pair can be left behind.
+/** `put_cell` for the last cell of a run written left to right: the cell before it was written
+ * a moment ago, so only the right half of a wide pair can be left behind. */
 void Buffer.put_last(int x, int index, int cell, int packed_style) {
     if ((cells[index] >> WIDTH_SHIFT) == 2 && x + 1 < box.right()) {
         cells[index + 1] = BLANK_CELL;
@@ -941,8 +941,8 @@ void Buffer.put_run(int x, int index, int count, int cell, int packed_style) {
         }
         return;
     }
-    // Only the two ends of the run can orphan half of a wide pair: a wide character inside it
-    // is overwritten whole.
+    /* Only the two ends of the run can orphan half of a wide pair: a wide character inside it
+     * is overwritten whole. */
     List<int> mine = cells;
     List<int> my_styles = styles;
     put_cell(x, index, cell, packed_style);
@@ -953,9 +953,9 @@ void Buffer.put_run(int x, int index, int count, int cell, int packed_style) {
     put_last(x + count - 1, index + count - 1, cell, packed_style);
 }
 
-/// Fill `rect` with `symbol`, in `style`. Only the part inside the buffer is
-/// written.
-/// **Traps** on a symbol of no width, which would never finish the row.
+/** Fill `rect` with `symbol`, in `style`. Only the part inside the buffer is
+ * written.
+ * **Traps** on a symbol of no width, which would never finish the row. */
 pub void Buffer.fill(TUI_geometry.Rect rect, str symbol_in, TUI_style.Style style) {
     str symbol = safe_symbol(symbol_in);
     if (has_control(symbol_in)) {
@@ -969,9 +969,9 @@ pub void Buffer.fill(TUI_geometry.Rect rect, str symbol_in, TUI_style.Style styl
     int packed_style = style.pack();
     for (int y in clipped.y .. clipped.bottom()) {
         int column = clipped.x;
-        // A one-column symbol -- a space, a border character -- is the case
-        // that runs on every cell of every frame, so it writes cells
-        // directly instead of going round through `set_str`.
+        /* A one-column symbol -- a space, a border character -- is the case
+         * that runs on every cell of every frame, so it writes cells
+         * directly instead of going round through `set_str`. */
         if (symbol_width == 1) {
             put_run(column, at(column, y), clipped.right() - column, glyph_of(symbol) | ONE_COLUMN, packed_style);
             continue;
@@ -987,8 +987,8 @@ pub void Buffer.fill(TUI_geometry.Rect rect, str symbol_in, TUI_style.Style styl
     }
 }
 
-/// Restyle every cell of `rect`, leaving the glyphs. This is how a list marks
-/// its selected row.
+/** Restyle every cell of `rect`, leaving the glyphs. This is how a list marks
+ * its selected row. */
 pub void Buffer.restyle(TUI_geometry.Rect rect, TUI_style.Style style) {
     TUI_geometry.Rect clipped = rect.intersect(box);
     int packed_style = style.pack();
@@ -1010,11 +1010,11 @@ pub void Buffer.clear() {
     link_rows = [];
 }
 
-/// Is row `y` of this buffer cell for cell the same as row `other_y` of
-/// `other`? Both buffers must be the same width (**traps** otherwise). This is
-/// what finds a scrolled region: row `y` of the new frame against row
-/// `y + d` of the one before it. A pass over two integer lists, ending at
-/// the first difference.
+/** Is row `y` of this buffer cell for cell the same as row `other_y` of
+ * `other`? Both buffers must be the same width (**traps** otherwise). This is
+ * what finds a scrolled region: row `y` of the new frame against row
+ * `y + d` of the one before it. A pass over two integer lists, ending at
+ * the first difference. */
 pub bool Buffer.is_row_like(Buffer other, int y, int other_y) {
     if (box.width != other.box.width) {
         trap("TUI_buffer.Buffer.is_row_like: the buffers are not the same width");
@@ -1044,12 +1044,12 @@ pub bool Buffer.is_blank_row(int y) {
     return tail_start(y) == box.x;
 }
 
-/// A copy of this buffer in which the rows `top` ..= `bottom` have moved up by
-/// `rows` (down when `rows` is negative), the way a terminal's scroll region
-/// moves them: the rows that fall off an edge are lost and the rows that open
-/// up at the other are plain blanks. Rows outside the region are copied as
-/// they are. This is the picture of the screen after the terminal has
-/// scrolled, which the renderer then diffs against.
+/** A copy of this buffer in which the rows `top` ..= `bottom` have moved up by
+ * `rows` (down when `rows` is negative), the way a terminal's scroll region
+ * moves them: the rows that fall off an edge are lost and the rows that open
+ * up at the other are plain blanks. Rows outside the region are copied as
+ * they are. This is the picture of the screen after the terminal has
+ * scrolled, which the renderer then diffs against. */
 pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
     Buffer out = Buffer.empty(box);
     out.table = table;
@@ -1096,16 +1096,16 @@ pub Buffer Buffer.scrolled(int top, int bottom, int rows) {
     return out;
 }
 
-/// An independent copy of this buffer: what a frame looked like before something
-/// was drawn over it (a fade-in needs the picture under the popup).
+/** An independent copy of this buffer: what a frame looked like before something
+ * was drawn over it (a fade-in needs the picture under the popup). */
 pub Buffer Buffer.copy() {
     return scrolled(box.y, box.y - 1, 0);
 }
 
-/// `scrolled`, in place: this buffer becomes the picture of the screen after
-/// the terminal scrolled the rows `top` ..= `bottom` up by `rows` (down when
-/// negative). The loop uses it on the frame it has just shown, which it is
-/// finished with, rather than allocating a copy of every cell.
+/** `scrolled`, in place: this buffer becomes the picture of the screen after
+ * the terminal scrolled the rows `top` ..= `bottom` up by `rows` (down when
+ * negative). The loop uses it on the frame it has just shown, which it is
+ * finished with, rather than allocating a copy of every cell. */
 pub void Buffer.scroll_rows(int top, int bottom, int rows) {
     int first = top - box.y;
     int last = bottom - box.y;
@@ -1176,8 +1176,8 @@ void Buffer.make_links() {
     }
 }
 
-/// Can row `y` have a link in some cell (`link_rows`)? False for a row that has none, and for every row of a
-/// buffer that never had a link. **Traps** outside the buffer.
+/** Can row `y` have a link in some cell (`link_rows`)? False for a row that has none, and for every row of a
+ * buffer that never had a link. **Traps** outside the buffer. */
 pub bool Buffer.row_may_link(int y) {
     if (links.size() == 0) {
         return false;
@@ -1193,8 +1193,8 @@ bool Buffer.index_may_link(int index) {
     return link_rows[index / box.width] != 0;
 }
 
-/// Does any cell of this buffer carry a hyperlink? What the renderer asks before
-/// it looks at links at all.
+/** Does any cell of this buffer carry a hyperlink? What the renderer asks before
+ * it looks at links at all. */
 pub bool Buffer.has_links() {
     return links.size() > 0;
 }
@@ -1207,10 +1207,10 @@ pub str Buffer.link_at(int x, int y) {
     return link_of(at(x, y));
 }
 
-/// Make every cell of `rect` (the part inside the buffer) the hyperlink `uri`, or
-/// no link when `uri` is "". Like `restyle` it marks what is already drawn, so draw
-/// the text first. `uri` is made safe (`TUI_osc.hyperlink_uri`): one that is empty
-/// or too long means no link.
+/** Make every cell of `rect` (the part inside the buffer) the hyperlink `uri`, or
+ * no link when `uri` is "". Like `restyle` it marks what is already drawn, so draw
+ * the text first. `uri` is made safe (`TUI_osc.hyperlink_uri`): one that is empty
+ * or too long means no link. */
 pub void Buffer.link(TUI_geometry.Rect rect, str uri) {
     TUI_geometry.Rect clipped = rect.intersect(box);
     if (clipped.is_empty()) {
@@ -1231,8 +1231,8 @@ pub void Buffer.link(TUI_geometry.Rect rect, str uri) {
     }
 }
 
-/// `set_str`, and the cells it wrote are the hyperlink `uri`. Answers the columns
-/// taken, as `set_str` does.
+/** `set_str`, and the cells it wrote are the hyperlink `uri`. Answers the columns
+ * taken, as `set_str` does. */
 pub int Buffer.set_link_str(int x, int y, str text, TUI_style.Style style, str uri, int max = -1) {
     int used = set_str(x, y, text, style, max: max);
     if (used > 0) {
@@ -1241,8 +1241,8 @@ pub int Buffer.set_link_str(int x, int y, str text, TUI_style.Style style, str u
     return used;
 }
 
-/// Row `y` as text. A continuation contributes nothing, so the text's
-/// display width is the buffer's width.
+/** Row `y` as text. A continuation contributes nothing, so the text's
+ * display width is the buffer's width. */
 pub str Buffer.row_text(int y) {
     if (y < box.y || y >= box.bottom()) {
         return "";
@@ -1267,8 +1267,8 @@ pub str Buffer.to_str() {
     return out.join("\n");
 }
 
-/// The buffer inside a ruled box, so that trailing spaces are visible and an
-/// expectation in the test corpus can be read at a glance.
+/** The buffer inside a ruled box, so that trailing spaces are visible and an
+ * expectation in the test corpus can be read at a glance. */
 pub str Buffer.frame() {
     str bar = "+" + "-".repeat(box.width) + "+";
     List<str> out = [];
@@ -1290,8 +1290,8 @@ const int ONE_COLUMN = 0x1_0000_0000;
 /// A space, one column: what a blank cell is.
 const int BLANK_CELL = 0x1_0000_0020;
 
-/// Does the cluster start with a C0 control, DEL or a C1 control (U+0080 to U+009F)?
-/// Those are the bytes a terminal acts on instead of drawing.
+/** Does the cluster start with a C0 control, DEL or a C1 control (U+0080 to U+009F)?
+ * Those are the bytes a terminal acts on instead of drawing. */
 bool is_control_cluster(str cluster) {
     if (cluster.size() == 0) {
         return false;
@@ -1318,8 +1318,8 @@ bool has_control(str text) {
     return false;
 }
 
-/// What stands for a control character on screen: its Control Picture (U+2400 + the
-/// code, U+2421 for DEL), or U+FFFD for a C1 control. One column each.
+/** What stands for a control character on screen: its Control Picture (U+2400 + the
+ * code, U+2421 for DEL), or U+FFFD for a C1 control. One column each. */
 str control_picture(str cluster) {
     int first = cluster.byte_at(0);
     if (first < 32) {
@@ -1331,19 +1331,19 @@ str control_picture(str cluster) {
     return "\u{FFFD}";
 }
 
-/// Is every byte of `text`'s first `upto` bytes printable ASCII? Then every
-/// cluster among them is one byte and one column, and `set_str` can skip
-/// the Unicode work entirely. Only `limit + 1` bytes matter when the write
-/// is clipped to `limit` columns: the byte just past the clip decides
-/// whether the slow path would have had a zero-width cluster to glue onto
-/// the last cell written, and an ASCII byte there is a one-column cluster
-/// the slow path stops at too -- so the two agree exactly, and a long line
-/// clipped to a narrow column is no longer scanned to its end.
-/// The columns of `code` when it is a character that is a grapheme cluster of its own, drawn in that many columns
-/// by every terminal and not in any class the width calibration measures: printable ASCII and the Latin letters
-/// U+00C0..U+024F (but not U+00D7 and U+00F7, whose width some terminals dispute) are 1; the ideographs
-/// U+4E00..U+9FFF, hiragana and katakana letters, Hangul syllables and fullwidth forms are 2. 0 for any other
-/// character: a control, a combining mark, an emoji, a joiner, a selector, whatever has a rule of its own.
+/** Is every byte of `text`'s first `upto` bytes printable ASCII? Then every
+ * cluster among them is one byte and one column, and `set_str` can skip
+ * the Unicode work entirely. Only `limit + 1` bytes matter when the write
+ * is clipped to `limit` columns: the byte just past the clip decides
+ * whether the slow path would have had a zero-width cluster to glue onto
+ * the last cell written, and an ASCII byte there is a one-column cluster
+ * the slow path stops at too -- so the two agree exactly, and a long line
+ * clipped to a narrow column is no longer scanned to its end.
+ * The columns of `code` when it is a character that is a grapheme cluster of its own, drawn in that many columns
+ * by every terminal and not in any class the width calibration measures: printable ASCII and the Latin letters
+ * U+00C0..U+024F (but not U+00D7 and U+00F7, whose width some terminals dispute) are 1; the ideographs
+ * U+4E00..U+9FFF, hiragana and katakana letters, Hangul syllables and fullwidth forms are 2. 0 for any other
+ * character: a control, a combining mark, an emoji, a joiner, a selector, whatever has a rule of its own. */
 pub int simple_width(int code) {
     if (code >= 0x20 && code < 0x7F) {
         return 1;
@@ -1376,6 +1376,6 @@ bool is_ascii_run(str text, int upto) {
     return true;
 }
 
-/// The 95 printable ASCII characters, one string each, as module constants:
-/// immortal, so writing one into a cell costs no allocation (reference §7.3).
+/** The 95 printable ASCII characters, one string each, as module constants:
+ * immortal, so writing one into a cell costs no allocation (reference §7.3). */
 const Array<str> ASCII = [" ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "[", "\\", "]", "^", "_", "`", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "{", "|", "}", "~"];

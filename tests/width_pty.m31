@@ -1,16 +1,16 @@
-// The width calibration (0.14.0) on a pseudo-terminal.
-//
-//   TUI_WIDTH_CHILD=/path/to/width_child  width_pty      (tests/test.sh builds both)
-//
-// `width_child` is a real `Loop.run_with`; this program starts it on a pty and plays the terminal: it applies what the
-// child writes to an emulator (`TST_emulator`, with the width model of one of the owner's terminals), writes back
-// the cursor position reports the emulator answers, types keys among them, holds answers back, and reads what
-// the child logged (what it found, its events, and when, on the monotonic clock both processes share). What is
-// printed is only `ok` or `FAIL` lines, so the output can be compared with tests/width_pty.out.
-//
-// Timing is asserted so a slow machine cannot fail it: a LOWER bound is strict (a terminal that never answers is
-// waited for the whole budget, which no delay can make false), an UPPER bound is loose (a second or more of margin).
-// Writes never block (a closed pty is ignored) and the pty is drained while waiting.
+/* The width calibration (0.14.0) on a pseudo-terminal.
+ *
+ *   TUI_WIDTH_CHILD=/path/to/width_child  width_pty      (tests/test.sh builds both)
+ *
+ * `width_child` is a real `Loop.run_with`; this program starts it on a pty and plays the terminal: it applies what the
+ * child writes to an emulator (`TST_emulator`, with the width model of one of the owner's terminals), writes back
+ * the cursor position reports the emulator answers, types keys among them, holds answers back, and reads what
+ * the child logged (what it found, its events, and when, on the monotonic clock both processes share). What is
+ * printed is only `ok` or `FAIL` lines, so the output can be compared with tests/width_pty.out.
+ *
+ * Timing is asserted so a slow machine cannot fail it: a LOWER bound is strict (a terminal that never answers is
+ * waited for the whole budget, which no delay can make false), an UPPER bound is loose (a second or more of margin).
+ * Writes never block (a closed pty is ignored) and the pty is drained while waiting. */
 
 import io;
 import os;
@@ -74,8 +74,8 @@ void Session.write(bytes data) {
     pty.master.set_deadline_ns(0);
 }
 
-/// Apply what has arrived to the terminal and send what the terminal says (and the user types) to the child,
-/// piece by piece, in the order the plan gives.
+/** Apply what has arrived to the terminal and send what the terminal says (and the user types) to the child,
+ * piece by piece, in the order the plan gives. */
 void Session.settle() {
     if (incoming.size() == 0) {
         return;
@@ -207,8 +207,8 @@ str what_of(str line) {
     return rest.join(" ");
 }
 
-/// A child on a pty, on a terminal of `TST_emulator.preset(preset)`, with the given budget and environment
-/// (`probe` for TUI_WIDTH_PROBE, `borders` for TUI_BORDERS). None if it never drew its first frame.
+/** A child on a pty, on a terminal of `TST_emulator.preset(preset)`, with the given budget and environment
+ * (`probe` for TUI_WIDTH_PROBE, `borders` for TUI_BORDERS). None if it never drew its first frame. */
 Option<Session> start(str child, str log, str preset, int probe_ms, str probe, str borders, TST_emulator.Link plan) {
     Result<int, io.Error> cleared = io.write(log, "");
     Map<str, str> environment = os.env_map();

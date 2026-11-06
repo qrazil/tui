@@ -1,29 +1,29 @@
-// The two widgets that show more rows than they have room for.
-//
-// API
+/* The two widgets that show more rows than they have room for.
+ *
+ * API */
 // ---
-//   TUI_list_table.ListView(items)              a scrolling list with a selection
-//   TUI_list_table.Table(header, rows, widths)  columns cut by `TUI_geometry.Constraint`
-//
-// Both keep their own `offset`, and both **move it when they draw**: a
-// selection outside the visible window scrolls the window to it, because the
-// widget is the only thing that knows how many rows fit. That is a field
-// store on the widget's own struct, so the caller sees the new offset
-// afterwards and can save it. Nothing else here changes anything.
-//
-// The type is `ListView` rather than `List` because `List` is a predeclared
-// type name and nothing may shadow one (reference §4.1).
+/*   TUI_list_table.ListView(items)              a scrolling list with a selection
+ *   TUI_list_table.Table(header, rows, widths)  columns cut by `TUI_geometry.Constraint`
+ *
+ * Both keep their own `offset`, and both **move it when they draw**: a
+ * selection outside the visible window scrolls the window to it, because the
+ * widget is the only thing that knows how many rows fit. That is a field
+ * store on the widget's own struct, so the caller sees the new offset
+ * afterwards and can save it. Nothing else here changes anything.
+ *
+ * The type is `ListView` rather than `List` because `List` is a predeclared
+ * type name and nothing may shadow one (reference §4.1). */
 
 import core.TUI_buffer;
 import core.TUI_geometry;
 import core.TUI_style;
 import core.TUI_text;
 
-/// A vertical list of single-line items, with one of them selected.
-///
-/// ```
-/// TUI_list_table.ListView(names, selected: 3, highlight_symbol: "> ")
-/// ```
+/** A vertical list of single-line items, with one of them selected.
+ *
+ * ```
+ * TUI_list_table.ListView(names, selected: 3, highlight_symbol: "> ")
+ * ``` */
 pub type ListView {
     pub List<str> items;
     /// Which item is selected, or -1 for none.
@@ -33,14 +33,14 @@ pub type ListView {
     pub TUI_style.Style style = TUI_style.Style();
     /// Laid over `style` on the selected row.
     pub TUI_style.Style highlight_style = TUI_style.Style(attrs: TUI_style.REVERSE);
-    /// Written before the selected item; its width is left blank before
-    /// every other item, so the text lines up.
+    /** Written before the selected item; its width is left blank before
+     * every other item, so the text lines up. */
     pub str highlight_symbol = "";
     pub TUI_text.Align align = TUI_text.Align.Left;
 }
 
-/// Select item `index`, or nothing with -1. The offset follows at the next
-/// `render`, which is the only place the height is known.
+/** Select item `index`, or nothing with -1. The offset follows at the next
+ * `render`, which is the only place the height is known. */
 pub void ListView.select(int index) {
     selected = index;
 }
@@ -65,8 +65,8 @@ pub void ListView.step(int delta) {
     selected = target;
 }
 
-/// The offset that shows `selected` in a window `height` rows tall, clamped to
-/// the list. `render` assigns this to `offset`.
+/** The offset that shows `selected` in a window `height` rows tall, clamped to
+ * the list. `render` assigns this to `offset`. */
 pub int ListView.scrolled(int height) {
     int item_count = items.size();
     int top = offset;
@@ -126,21 +126,21 @@ pub void ListView.render(TUI_buffer.Buffer buffer, TUI_geometry.Rect area) {
     }
 }
 
-/// A grid of text with a header row and column widths given as layout
-/// constraints.
-///
-/// ```
-/// TUI_list_table.Table(["name", "size"], rows,
-///     [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8)])
-/// ```
-///
-/// The columns are cut by `TUI_geometry.columns`, so every constraint and every rule
-/// in `TUI_geometry` applies: a table whose columns do not fit shrinks them by
-/// the documented order, and a cell too wide for its column is truncated
-/// with an ellipsis rather than spilling into the next one.
-///
-/// An empty `header` means no header row. An empty `widths` divides the
-/// space equally between as many columns as the widest row has.
+/** A grid of text with a header row and column widths given as layout
+ * constraints.
+ *
+ * ```
+ * TUI_list_table.Table(["name", "size"], rows,
+ *     [TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(8)])
+ * ```
+ *
+ * The columns are cut by `TUI_geometry.columns`, so every constraint and every rule
+ * in `TUI_geometry` applies: a table whose columns do not fit shrinks them by
+ * the documented order, and a cell too wide for its column is truncated
+ * with an ellipsis rather than spilling into the next one.
+ *
+ * An empty `header` means no header row. An empty `widths` divides the
+ * space equally between as many columns as the widest row has. */
 pub type Table {
     pub List<str> header;
     pub List<List<str>> rows;
@@ -158,8 +158,8 @@ pub type Table {
     pub List<TUI_text.Align> aligns = [];
 }
 
-/// How many columns the table has: as many as its widths, or as many as its
-/// widest row.
+/** How many columns the table has: as many as its widths, or as many as its
+ * widest row. */
 pub int Table.columns() {
     if (widths.size() > 0) {
         return widths.size();

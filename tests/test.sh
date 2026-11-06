@@ -7,7 +7,7 @@
 # Four things are checked (and, last, the pty tests of the escape wait and of the width calibration: 3b and 3d below), and the rule is the repository's own: grep for
 # FAILED, never for ok.
 #
-#   1. every .m31 file in the repository is formatted (`m31c fmt --check -r .`)
+#   1. every .m31 file in the repository is formatted (`m31c -fmt --check --recursive .`)
 #   2. tests/{tests,widgets,syntax,terminal,width}.m31 and examples/{bench,demo,browse,widgets,features,width_probe}.m31 all
 #      compile under gcc and clang, at -O0 and -O2, with no warning from the emitted C
 #   3. each test's output matches its tests/<name>.out, and contains no `FAIL` line
@@ -62,7 +62,7 @@ fi
 # 1. formatting -------------------------------------------------------------
 note "formatted"
 unformatted=""
-out=$("$LANGC" fmt --check -r "$DIR" 2>&1) || unformatted="$out"
+out=$("$LANGC" -fmt --check --recursive "$DIR" 2>&1) || unformatted="$out"
 if [ -n "$unformatted" ]; then bad; echo "$unformatted" | sed 's/^/    /'; else good; fi
 
 # 2. compiles clean, on every compiler present ------------------------------
@@ -76,7 +76,7 @@ for src in "$DIR"/tests/tests."$LANG_EXT" "$DIR"/tests/widgets."$LANG_EXT" "$DIR
     # tests/widgets and examples/widgets are two programs of one name: keep their builds apart.
     case "$src" in */examples/widgets.*) base=example_widgets;; esac
     note "compiles: $base"
-    if ! "$LANGC" --emit-c "$src" -o "$WORK/$base.c" 2>"$WORK/$base.diag"; then
+    if ! "$LANGC" -emit-c "$src" --out "$WORK/$base.c" 2>"$WORK/$base.diag"; then
         bad; sed 's/^/    /' "$WORK/$base.diag" | head -8; continue
     fi
     bad_cc=0

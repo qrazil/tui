@@ -1,25 +1,25 @@
-// How long a frame takes, and how many bytes it is.
-//
-//   bash tests/test.sh          (runs this last)
-//
-// The budget is one frame in 16.6 ms, which is sixty frames a second. A
-// terminal program redraws on a keystroke rather than on a clock, so the
-// real target is "faster than the person notices", but 60 Hz is the number
-// everyone compares against and it is the one printed below.
-//
-// Four measurements, on a 200x50 grid -- a full-screen terminal:
-//
-//   draw     laying a screenful of widgets into the buffer
-//   full     `TUI_diff.full`: every cell, as escape bytes
-//   diff-1   `TUI_diff.diff` after one cell changed
-//   diff-0   `TUI_diff.diff` with nothing changed -- the cost of the scan
-//
-// Then the same screen on a terminal whose widths were measured (0.14.0, `TUI_width`): the table
-// of an Alacritty-like terminal (every class as the library expects but a symbol with U+FE0F and a
-// family), fed to the probe as the cursor reports it would have answered, and the time that takes.
-//
-// Times are the mean of many runs, because a single run of anything this
-// fast measures the clock.
+/* How long a frame takes, and how many bytes it is.
+ *
+ *   bash tests/test.sh          (runs this last)
+ *
+ * The budget is one frame in 16.6 ms, which is sixty frames a second. A
+ * terminal program redraws on a keystroke rather than on a clock, so the
+ * real target is "faster than the person notices", but 60 Hz is the number
+ * everyone compares against and it is the one printed below.
+ *
+ * Four measurements, on a 200x50 grid -- a full-screen terminal:
+ *
+ *   draw     laying a screenful of widgets into the buffer
+ *   full     `TUI_diff.full`: every cell, as escape bytes
+ *   diff-1   `TUI_diff.diff` after one cell changed
+ *   diff-0   `TUI_diff.diff` with nothing changed -- the cost of the scan
+ *
+ * Then the same screen on a terminal whose widths were measured (0.14.0, `TUI_width`): the table
+ * of an Alacritty-like terminal (every class as the library expects but a symbol with U+FE0F and a
+ * family), fed to the probe as the cursor reports it would have answered, and the time that takes.
+ *
+ * Times are the mean of many runs, because a single run of anything this
+ * fast measures the clock. */
 
 import date;
 import core.TUI_buffer;
@@ -36,8 +36,8 @@ import core.TUI_width;
 const int SCREEN_WIDTH = 200;
 const int SCREEN_HEIGHT = 50;
 
-/// Lay a plausible screen into `b`: a title bar, a file list, a table and a
-/// paragraph, all inside blocks.
+/** Lay a plausible screen into `b`: a title bar, a file list, a table and a
+ * paragraph, all inside blocks. */
 void paint(TUI_buffer.Buffer buffer, int tick, List<str> names, List<List<str>> rows) {
     List<TUI_geometry.Rect> band = TUI_geometry.rows(buffer.area(), [TUI_geometry.Constraint.Length(3), TUI_geometry.Constraint.Fill(1), TUI_geometry.Constraint.Length(1)]);
     TUI_widget.Block top = TUI_widget.Block(title: " frame " + str(tick) + " ", borders: TUI_widget.Borders.Double, title_align: TUI_text.Align.Center);
@@ -83,8 +83,8 @@ int budget = 16666666;
 print("a " + str(SCREEN_WIDTH) + "x" + str(SCREEN_HEIGHT) + " frame, " + str(SCREEN_WIDTH * SCREEN_HEIGHT) + " cells");
 print("the 60-frames-a-second budget is " + to_milliseconds(budget));
 print("");
-// The data the screen shows, built once: what is being measured is the
-// library's work per frame, not the program's own bookkeeping.
+/* The data the screen shows, built once: what is being measured is the
+ * library's work per frame, not the program's own bookkeeping. */
 List<str> names = [];
 List<List<str>> rows = [];
 for (int item_index in 0 .. 60) {
@@ -144,8 +144,8 @@ while (run_index < runs) {
 }
 stop_ns = date.now_ns();
 report("diff-0", stop_ns - start_ns, runs, zero_bytes);
-// And the honest number a program actually pays per keystroke: paint the
-// next frame and diff it against the last one.
+/* And the honest number a program actually pays per keystroke: paint the
+ * next frame and diff it against the last one. */
 front.clear();
 paint(front, 0, names, rows);
 start_ns = date.now_ns();
@@ -159,10 +159,10 @@ while (run_index < runs) {
 stop_ns = date.now_ns();
 report("frame", stop_ns - start_ns, runs, 0);
 // --- the same screen, on a terminal whose widths were measured ---------------
-//
-// What `Loop.calibrate_width` makes of the answers (the I/O is not in the number: that is a few
-// hundred microseconds of syscalls and the terminal's own latency), and what the frame costs once
-// the box drawing, the triangles and the rest are certain and not rewritten.
+/*
+ * What `Loop.calibrate_width` makes of the answers (the I/O is not in the number: that is a few
+ * hundred microseconds of syscalls and the terminal's own latency), and what the frame costs once
+ * the box drawing, the triangles and the rest are certain and not rewritten. */
 print("");
 print("the same screen, the terminal measured (alacritty-like: only U+FE0F and a family disagree)");
 int probe_start_ns = date.now_ns();
@@ -211,13 +211,13 @@ report("frame", date.now_ns() - start_ns, runs, 0);
 front.table = TUI_width.Table();
 back.table = TUI_width.Table();
 // --- the shapes a real client hits that the screen above does not -----------
-//
-// A git client's log is a tall outline -- hundreds of commits, each unfolding
-// into files -- and one keystroke on it is a cursor move, a "what is under
-// the cursor" and a redraw. A diff is a flat run of thousands of lines with
-// the same three operations. Neither is a 50-row screen, and both used to be
-// paid for per visible row of the WHOLE document rather than per row on
-// screen, which is what these four numbers watch.
+/*
+ * A git client's log is a tall outline -- hundreds of commits, each unfolding
+ * into files -- and one keystroke on it is a cursor move, a "what is under
+ * the cursor" and a redraw. A diff is a flat run of thousands of lines with
+ * the same three operations. Neither is a 50-row screen, and both used to be
+ * paid for per visible row of the WHOLE document rather than per row on
+ * screen, which is what these four numbers watch. */
 print("");
 print("a 5,200-row outline (200 sections of 25), 2,000-line diff, 72-column wrap");
 List<TUI_outline.Node> roots = [];
@@ -286,8 +286,8 @@ while (run_index < runs) {
 }
 stop_ns = date.now_ns();
 report("wrap", stop_ns - start_ns, runs, prose.size());
-// What `TUI_app.Loop` pays before a frame is even drawn: a fresh buffer, or
-// the same one cleared.
+/* What `TUI_app.Loop` pays before a frame is even drawn: a fresh buffer, or
+ * the same one cleared. */
 start_ns = date.now_ns();
 run_index = 0;
 while (run_index < runs) {
@@ -305,8 +305,8 @@ while (run_index < runs) {
 stop_ns = date.now_ns();
 report("clear", stop_ns - start_ns, runs, 0);
 
-/// The table an Alacritty-like terminal gives: each reference character drawn as the library expects, except
-/// a symbol with U+FE0F (one column) and a family (six), fed to the probe as cursor reports.
+/** The table an Alacritty-like terminal gives: each reference character drawn as the library expects, except
+ * a symbol with U+FE0F (one column) and a family (six), fed to the probe as cursor reports. */
 TUI_width.Table alacritty_table() {
     TUI_width.Probe probe = TUI_width.probe(true);
     probe.did_take("\x1b[2;2R".to_bytes());

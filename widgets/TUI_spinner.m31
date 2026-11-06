@@ -1,51 +1,51 @@
-// A spinner: a small animation that says "working", and nothing about how far.
-//
-// API
+/* A spinner: a small animation that says "working", and nothing about how far.
+ *
+ * API */
 // ---
-//   TUI_spinner.Spinner(set:, label:, style:, ...)    a Widget
-//   TUI_spinner.Set  Braille | Line | Dots | Arc | Bounce | Ascii
-//   spinner.start() / stop() / reset()                 is it animating?
-//   spinner.did_advance(elapsed_ms) -> bool                feed it time; true if the frame changed
-//   spinner.did_tick() -> bool                             one frame step, no clock
-//   spinner.frame()                                    the glyph for now
-//   spinner.interval_ms()                              how often it wants `did_advance` called
-//   spinner.is_spinning()
-//
+/*   TUI_spinner.Spinner(set:, label:, style:, ...)    a Widget
+ *   TUI_spinner.Set  Braille | Line | Dots | Arc | Bounce | Ascii
+ *   spinner.start() / stop() / reset()                 is it animating?
+ *   spinner.did_advance(elapsed_ms) -> bool                feed it time; true if the frame changed
+ *   spinner.did_tick() -> bool                             one frame step, no clock
+ *   spinner.frame()                                    the glyph for now
+ *   spinner.interval_ms()                              how often it wants `did_advance` called
+ *   spinner.is_spinning()
+ * */
 // --- time, without a clock --------------------------------------------------
-//
-// A `Spinner` has no clock of its own and never sleeps. A program tells it how
-// much time has gone by (`did_advance`) and it keeps the remainder, so a frame
-// every 80 ms comes out right whether the caller ticks every 80 ms, every
-// 250 ms (three frames at once, which is a skipped-forward animation and not a
-// lag) or every 1 ms. `TUI_app.Loop.run_with` is the caller that matters: it
-// computes how long until the next frame is due and gives that, no less than a
-// millisecond, to the input read as its timeout, so an animating program wakes
-// exactly when a frame is due and sleeps in the kernel the rest of the time.
-// `did_advance` returns whether the frame changed, which is the answer to "do I
-// redraw?".
-//
-// A stopped spinner draws `idle_symbol` (a space unless set) and `did_advance`
-// ignores time, so a stopped spinner costs no redraws. `stop` keeps the
-// phase and `start` carries on from it; `reset` returns to the first frame.
-//
+/*
+ * A `Spinner` has no clock of its own and never sleeps. A program tells it how
+ * much time has gone by (`did_advance`) and it keeps the remainder, so a frame
+ * every 80 ms comes out right whether the caller ticks every 80 ms, every
+ * 250 ms (three frames at once, which is a skipped-forward animation and not a
+ * lag) or every 1 ms. `TUI_app.Loop.run_with` is the caller that matters: it
+ * computes how long until the next frame is due and gives that, no less than a
+ * millisecond, to the input read as its timeout, so an animating program wakes
+ * exactly when a frame is due and sleeps in the kernel the rest of the time.
+ * `did_advance` returns whether the frame changed, which is the answer to "do I
+ * redraw?".
+ *
+ * A stopped spinner draws `idle_symbol` (a space unless set) and `did_advance`
+ * ignores time, so a stopped spinner costs no redraws. `stop` keeps the
+ * phase and `start` carries on from it; `reset` returns to the first frame.
+ * */
 // --- the sets ---------------------------------------------------------------
-//
-//   Braille  ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏   the usual one; needs a font with braille
-//   Line     │ ╱ ─ ╲         box-drawing line that turns
-//   Dots     ⣾⣽⣻⢿⡿⣟⣯⣷       eight braille dots circling
-//   Arc      ◜◠◝◞◡◟          a quarter-circle chasing round
-//   Bounce   ⠁⠂⠄⡀⢀⠠⠐⠈      one dot bouncing
-//   Ascii    - \ | /         the fallback for a terminal with no Unicode: only
-//                            characters from 0x20 to 0x7E
-//
-// `Ascii` is the one to pick when the fallback is the point; a test checks that
-// its frames are plain ASCII.
-//
+/*
+ *   Braille  ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏   the usual one; needs a font with braille
+ *   Line     │ ╱ ─ ╲         box-drawing line that turns
+ *   Dots     ⣾⣽⣻⢿⡿⣟⣯⣷       eight braille dots circling
+ *   Arc      ◜◠◝◞◡◟          a quarter-circle chasing round
+ *   Bounce   ⠁⠂⠄⡀⢀⠠⠐⠈      one dot bouncing
+ *   Ascii    - \ | /         the fallback for a terminal with no Unicode: only
+ *                            characters from 0x20 to 0x7E
+ *
+ * `Ascii` is the one to pick when the fallback is the point; a test checks that
+ * its frames are plain ASCII.
+ * */
 // --- drawing ----------------------------------------------------------------
-//
-// The glyph goes in the first cell of the area, then a space, then the label,
-// truncated to the width. A zero-sized area draws nothing. A 1-wide area draws
-// the glyph alone.
+/*
+ * The glyph goes in the first cell of the area, then a space, then the label,
+ * truncated to the width. A zero-sized area draws nothing. A 1-wide area draws
+ * the glyph alone. */
 
 import core.TUI_buffer;
 import core.TUI_clip;
@@ -151,8 +151,8 @@ pub int Spinner.interval_ms() {
     return default_interval_ms(set);
 }
 
-/// How many milliseconds until the next frame is due: the whole interval minus
-/// what has been carried over. 0 for a stopped spinner, which is never due.
+/** How many milliseconds until the next frame is due: the whole interval minus
+ * what has been carried over. 0 for a stopped spinner, which is never due. */
 pub int Spinner.due_in_ms() {
     if (!is_running) {
         return 0;
@@ -164,8 +164,8 @@ pub int Spinner.due_in_ms() {
     return left;
 }
 
-/// Step to the next frame. Returns true when it moved (a stopped spinner does
-/// not).
+/** Step to the next frame. Returns true when it moved (a stopped spinner does
+ * not). */
 pub bool Spinner.did_tick() {
     if (!is_running) {
         return false;
@@ -174,9 +174,9 @@ pub bool Spinner.did_tick() {
     return true;
 }
 
-/// Account for `elapsed_ms` having gone by; step one frame for each whole
-/// interval in it. True when the frame on show is now different. A negative
-/// `elapsed_ms` counts as none.
+/** Account for `elapsed_ms` having gone by; step one frame for each whole
+ * interval in it. True when the frame on show is now different. A negative
+ * `elapsed_ms` counts as none. */
 pub bool Spinner.did_advance(int elapsed_ms) {
     if (!is_running || elapsed_ms <= 0) {
         return false;

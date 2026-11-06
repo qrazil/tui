@@ -1,61 +1,61 @@
-// A line / scatter chart with axes, nice tick labels, a legend and a hover.
-//
-// API
+/* A line / scatter chart with axes, nice tick labels, a legend and a hover.
+ *
+ * API */
 // ---
-//   TUI_chart.Point(x, y)                           one sample
-//   TUI_chart.Dataset(name, points, kind:, style:)  a series; Dataset.of_values(name, ys)
-//   TUI_chart.Axis(title:, min:, max:, ticks:, style:)   one axis; bounds optional
-//   TUI_chart.Chart(datasets, x_axis:, y_axis:, marker:, legend:, ...)
-//   chart.render(buffer, area)
-//   chart.plot_rect(area)                           the rectangle the data is drawn in
-//   chart.nearest(area, x, y) -> Option<Hover>      the data point nearest a screen cell
-//   chart.value_at(area, x, y) -> Option<Point>     the data coordinates under a screen cell
-//   chart.handle_mouse(gesture, area)               hover: sets `chart.hover`
-//   TUI_chart.Kind  Line | Scatter       TUI_chart.Marker  Braille | HalfBlock | Dot
-//   TUI_chart.LegendPosition  Hidden | TopRight | TopLeft | BottomRight | BottomLeft
-//
+/*   TUI_chart.Point(x, y)                           one sample
+ *   TUI_chart.Dataset(name, points, kind:, style:)  a series; Dataset.of_values(name, ys)
+ *   TUI_chart.Axis(title:, min:, max:, ticks:, style:)   one axis; bounds optional
+ *   TUI_chart.Chart(datasets, x_axis:, y_axis:, marker:, legend:, ...)
+ *   chart.render(buffer, area)
+ *   chart.plot_rect(area)                           the rectangle the data is drawn in
+ *   chart.nearest(area, x, y) -> Option<Hover>      the data point nearest a screen cell
+ *   chart.value_at(area, x, y) -> Option<Point>     the data coordinates under a screen cell
+ *   chart.handle_mouse(gesture, area)               hover: sets `chart.hover`
+ *   TUI_chart.Kind  Line | Scatter       TUI_chart.Marker  Braille | HalfBlock | Dot
+ *   TUI_chart.LegendPosition  Hidden | TopRight | TopLeft | BottomRight | BottomLeft
+ * */
 // --- one scale places the marks AND the labels ------------------------------
-//
-// The axis bounds are decided once, from the pinned `min`/`max` or from the
-// data, and when neither end is pinned they are widened to "nice" tick values
-// (1, 2 or 5 times a power of ten: `TUI_scale.nice_ticks`), so the first and
-// last labels sit on the plot's edges. That gives a `TUI_scale.Scale` per axis,
-// in the sub-cell units of the marker (a braille cell is 2 by 4 dots, a half
-// block 1 by 2, a dot 1 by 1), and then BOTH the data points and the tick
-// labels ask the same scale where they go. A tick at value `v` is labelled under
-// the cell that holds a point whose x is `v`; there is no second formula to
-// disagree with the first.
-//
-// A tick label that would touch the one before it is left out, not
-// overwritten, so a narrow chart shows fewer labels instead of garbled ones.
-//
+/*
+ * The axis bounds are decided once, from the pinned `min`/`max` or from the
+ * data, and when neither end is pinned they are widened to "nice" tick values
+ * (1, 2 or 5 times a power of ten: `TUI_scale.nice_ticks`), so the first and
+ * last labels sit on the plot's edges. That gives a `TUI_scale.Scale` per axis,
+ * in the sub-cell units of the marker (a braille cell is 2 by 4 dots, a half
+ * block 1 by 2, a dot 1 by 1), and then BOTH the data points and the tick
+ * labels ask the same scale where they go. A tick at value `v` is labelled under
+ * the cell that holds a point whose x is `v`; there is no second formula to
+ * disagree with the first.
+ *
+ * A tick label that would touch the one before it is left out, not
+ * overwritten, so a narrow chart shows fewer labels instead of garbled ones.
+ * */
 // --- what is drawn ----------------------------------------------------------
-//
-//   - a **Line** dataset joins consecutive points with a straight segment,
-//     clipped to the axis bounds (a segment that leaves the plot is cut where
-//     it leaves, not bent along the edge); a **Scatter** one draws each point.
-//     Points that are not finite numbers are skipped, and a line does not
-//     bridge them.
-//   - each dataset is drawn in its own `style`; where two share a cell the
-//     later dataset's colour wins and the dots of both are kept.
-//   - the y axis on the left and the x axis along the bottom, with a tick
-//     mark at each labelled value; `title` on either puts one line of text
-//     above the plot (y) or below the labels (x).
-//   - a legend of the datasets that have a name, inside the plot, in a corner.
-//   - the hovered point (`hover`), if any: its cell reversed and a tooltip with
-//     its dataset and coordinates.
-//
-// When the area is too small for the axes (under 3 rows or 4 columns of plot)
-// the chart is the plot alone, edge to edge, without labels.
-//
+/*
+ *   - a **Line** dataset joins consecutive points with a straight segment,
+ *     clipped to the axis bounds (a segment that leaves the plot is cut where
+ *     it leaves, not bent along the edge); a **Scatter** one draws each point.
+ *     Points that are not finite numbers are skipped, and a line does not
+ *     bridge them.
+ *   - each dataset is drawn in its own `style`; where two share a cell the
+ *     later dataset's colour wins and the dots of both are kept.
+ *   - the y axis on the left and the x axis along the bottom, with a tick
+ *     mark at each labelled value; `title` on either puts one line of text
+ *     above the plot (y) or below the labels (x).
+ *   - a legend of the datasets that have a name, inside the plot, in a corner.
+ *   - the hovered point (`hover`), if any: its cell reversed and a tooltip with
+ *     its dataset and coordinates.
+ *
+ * When the area is too small for the axes (under 3 rows or 4 columns of plot)
+ * the chart is the plot alone, edge to edge, without labels.
+ * */
 // --- hover ------------------------------------------------------------------
-//
-// `handle_mouse` takes a gesture and the rectangle the chart was drawn in
-// (see `TUI_mouse`): Hover, Drag and Press inside the plot snap `hover` to the
-// nearest data point within `hover_radius` cells (a cell is about twice as
-// tall as it is wide, so rows count double); outside the plot, or on Leave, it
-// is cleared. It answers `Changed` only when `hover` changed, so a program
-// redraws only when the pointer moves onto another point.
+/*
+ * `handle_mouse` takes a gesture and the rectangle the chart was drawn in
+ * (see `TUI_mouse`): Hover, Drag and Press inside the plot snap `hover` to the
+ * nearest data point within `hover_radius` cells (a cell is about twice as
+ * tall as it is wide, so rows count double); outside the plot, or on Leave, it
+ * is cleared. It answers `Changed` only when `hover` changed, so a program
+ * redraws only when the pointer moves onto another point. */
 
 import math;
 import term;
@@ -113,9 +113,9 @@ pub static Dataset Dataset.of_values(str name, List<float> values, Kind kind = K
     return Dataset(name: name, points: points, kind: kind, style: style);
 }
 
-/// One axis. `min`/`max` pin an end; an end left `None` follows the data (and,
-/// with both ends unpinned, is widened to a tick value). `ticks` is how many
-/// labels to aim for; 0 chooses by the size of the plot.
+/** One axis. `min`/`max` pin an end; an end left `None` follows the data (and,
+ * with both ends unpinned, is widened to a tick value). `ticks` is how many
+ * labels to aim for; 0 chooses by the size of the plot. */
 pub type Axis {
     pub str title = "";
     pub Option<float> min = Option<float>.None;
@@ -353,8 +353,8 @@ void Chart.draw_axes(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, Frame fra
         str label = TUI_text.pad(tick_text(frame.y_ticks, value), frame.label_width, TUI_text.Align.Right);
         TUI_clip.put_str(buffer, area, area.x, y, label, axis_style);
     }
-    // x ticks: the label centred under the column of the mark, skipped if it
-    // would touch the previous one.
+    /* x ticks: the label centred under the column of the mark, skipped if it
+     * would touch the previous one. */
     int next_free = area.x;
     for (float value in frame.x_ticks.values) {
         int cell = plot.x + frame.x_scale.cell(value);
@@ -469,8 +469,8 @@ void Chart.draw_hover(TUI_buffer.Buffer buffer, Frame frame) {
     }
 }
 
-/// The data coordinates at the middle of screen cell `x`, `y`, or `None` when
-/// that cell is outside the plot.
+/** The data coordinates at the middle of screen cell `x`, `y`, or `None` when
+ * that cell is outside the plot. */
 pub Option<Point> Chart.value_at(TUI_geometry.Rect area, int x, int y) {
     if (area.is_empty()) {
         return Option<Point>.None;
@@ -484,9 +484,9 @@ pub Option<Point> Chart.value_at(TUI_geometry.Rect area, int x, int y) {
     return Option<Point>.Some(Point(value_x, value_y));
 }
 
-/// The data point nearest screen cell `x`, `y`, if one is within
-/// `hover_radius` cells (rows count double, since a cell is about twice as
-/// tall as wide). The first of equally near points wins.
+/** The data point nearest screen cell `x`, `y`, if one is within
+ * `hover_radius` cells (rows count double, since a cell is about twice as
+ * tall as wide). The first of equally near points wins. */
 pub Option<Hover> Chart.nearest(TUI_geometry.Rect area, int x, int y) {
     if (area.is_empty()) {
         return Option<Hover>.None;
@@ -518,9 +518,9 @@ pub Option<Hover> Chart.nearest(TUI_geometry.Rect area, int x, int y) {
     return found;
 }
 
-/// Hover, Drag and Press inside the plot snap `hover` to the nearest point;
-/// Leave, or a cell outside the plot, clears it. `Changed` only when `hover`
-/// did.
+/** Hover, Drag and Press inside the plot snap `hover` to the nearest point;
+ * Leave, or a cell outside the plot, clears it. `Changed` only when `hover`
+ * did. */
 pub TUI_mouse.Response Chart.handle_mouse(TUI_mouse.Gesture gesture, TUI_geometry.Rect area) {
     Option<Hover> next = Option<Hover>.None;
     match (gesture.kind) {
@@ -625,8 +625,8 @@ type Canvas {
     List<int> owners;
 }
 
-// Light one dot. `sub_x` counts dots from the left, `sub_y` from the BOTTOM
-// (the direction values grow in), both as the scales give them.
+/* Light one dot. `sub_x` counts dots from the left, `sub_y` from the BOTTOM
+ * (the direction values grow in), both as the scales give them. */
 void Canvas.plot(Marker kind, int sub_x, int sub_y, int owner) {
     int total_down = height * dots_down;
     if (sub_x < 0 || sub_y < 0 || sub_x >= width * dots_across || sub_y >= total_down) {
@@ -701,8 +701,8 @@ Canvas new_canvas(int width, int height, int dots_across, int dots_down) {
     return Canvas(width, height, dots_across, dots_down, masks, owners);
 }
 
-// The bit for the dot `across`, `down` inside a braille cell: the Unicode
-// braille block numbers them column by column, with the two bottom dots last.
+/* The bit for the dot `across`, `down` inside a braille cell: the Unicode
+ * braille block numbers them column by column, with the two bottom dots last. */
 int braille_bit(int across, int down) {
     if (across == 0) {
         if (down == 0) {
@@ -750,8 +750,8 @@ str glyph_for(Marker kind, int mask) {
 
 // --- clipping a segment to the axes -------------------------------------------
 
-// Liang-Barsky: the part of the segment inside the box, as [start_x, start_y, end_x, end_y],
-// or None when none of it is.
+/* Liang-Barsky: the part of the segment inside the box, as [start_x, start_y, end_x, end_y],
+ * or None when none of it is. */
 Option<List<float>> clip_segment(float start_x, float start_y, float end_x, float end_y, float x_low, float x_high, float y_low, float y_high) {
     float enter_at = 0.0;
     float leave_at = 1.0;

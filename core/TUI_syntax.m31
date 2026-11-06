@@ -1,45 +1,45 @@
-// Syntax highlighting for terminal programs: the styles to draw it in, over
-// the shared `syntax` library (github.com/qrazil/syntax) that does the
-// tokenizing.
-//
-// A language is picked from the file name (or by name); every line is
-// classified byte by byte from the state the line before left behind (an
-// open block comment, a triple-quoted string, a code fence). Nothing here
-// touches a terminal: the result is a class per byte, and `spans`/`draw`
-// turn that into styled text in a `Buffer`.
-//
-// This module is an adapter: the engine, the language definitions and the
-// detection live in `syntax`; what is here is the 16-colour styling and the
-// text-drawing, and the original twelve classes (the library's richer
-// classes, such as PROPERTY and CALL, are folded onto them with
-// `SYN_class.legacy`, so a colour scheme written for tui 0.6/0.7 looks the
-// same).
-//
-// API
+/* Syntax highlighting for terminal programs: the styles to draw it in, over
+ * the shared `syntax` library (github.com/qrazil/syntax) that does the
+ * tokenizing.
+ *
+ * A language is picked from the file name (or by name); every line is
+ * classified byte by byte from the state the line before left behind (an
+ * open block comment, a triple-quoted string, a code fence). Nothing here
+ * touches a terminal: the result is a class per byte, and `spans`/`draw`
+ * turn that into styled text in a `Buffer`.
+ *
+ * This module is an adapter: the engine, the language definitions and the
+ * detection live in `syntax`; what is here is the 16-colour styling and the
+ * text-drawing, and the original twelve classes (the library's richer
+ * classes, such as PROPERTY and CALL, are folded onto them with
+ * `SYN_class.legacy`, so a colour scheme written for tui 0.6/0.7 looks the
+ * same).
+ *
+ * API */
 // ---
-//   TUI_syntax.language_of(path, first_line)      "c", "rust", ...; "" when unknown
-//   TUI_syntax.languages()                        every name `language_of` can answer
-//   TUI_syntax.classify(lang, line, state)        Tokens: a class per byte, and the state after
-//   TUI_syntax.NORMAL .. TITLE                    the classes
-//   TUI_syntax.is_dark(colorfgbg)                 light or dark, from $COLORFGBG ("15;0")
-//   TUI_syntax.class_style(class, is_dark)        the Style of one class (16-colour indexes)
-//   TUI_syntax.spans(text, classes, base, is_dark)  the line as styled `Span`s
-//   TUI_syntax.draw(buffer, x, y, width, text, classes, base, is_dark, over)
-//                                                 write them, clipped with an ellipsis
-//   TUI_syntax.Highlighter(language)              lines fed in order, classified lazily and
-//                                                 cached: `add(text)`, `classes(index)`
-//
-// Classes: NORMAL, COMMENT, STRING, NUMBER, KEYWORD, TYPE, FUNCTION, PREPROC,
-// CONSTANT, OPERATOR, SPECIAL (escapes, markdown markers), TITLE.
-//
-// **Colours are the terminal's own 16** (palette indexes 1..14), so the
-// result is right at every colour depth and follows the user's colour
-// scheme; `is_dark` only picks between the two shades that read badly on
-// the other kind of background.
-//
-// Languages: whatever `syntax` knows (about sixty: c, cpp, go, javascript,
-// typescript, json, m31, markdown, python, rust, sh, toml, yaml, html, css,
-// sql, ...); see the library's docs/LANGUAGES.md.
+/*   TUI_syntax.language_of(path, first_line)      "c", "rust", ...; "" when unknown
+ *   TUI_syntax.languages()                        every name `language_of` can answer
+ *   TUI_syntax.classify(lang, line, state)        Tokens: a class per byte, and the state after
+ *   TUI_syntax.NORMAL .. TITLE                    the classes
+ *   TUI_syntax.is_dark(colorfgbg)                 light or dark, from $COLORFGBG ("15;0")
+ *   TUI_syntax.class_style(class, is_dark)        the Style of one class (16-colour indexes)
+ *   TUI_syntax.spans(text, classes, base, is_dark)  the line as styled `Span`s
+ *   TUI_syntax.draw(buffer, x, y, width, text, classes, base, is_dark, over)
+ *                                                 write them, clipped with an ellipsis
+ *   TUI_syntax.Highlighter(language)              lines fed in order, classified lazily and
+ *                                                 cached: `add(text)`, `classes(index)`
+ *
+ * Classes: NORMAL, COMMENT, STRING, NUMBER, KEYWORD, TYPE, FUNCTION, PREPROC,
+ * CONSTANT, OPERATOR, SPECIAL (escapes, markdown markers), TITLE.
+ *
+ * **Colours are the terminal's own 16** (palette indexes 1..14), so the
+ * result is right at every colour depth and follows the user's colour
+ * scheme; `is_dark` only picks between the two shades that read badly on
+ * the other kind of background.
+ *
+ * Languages: whatever `syntax` knows (about sixty: c, cpp, go, javascript,
+ * typescript, json, m31, markdown, python, rust, sh, toml, yaml, html, css,
+ * sql, ...); see the library's docs/LANGUAGES.md. */
 
 import core.TUI_buffer;
 import core.TUI_style;
@@ -63,8 +63,8 @@ pub const int OPERATOR = 9;
 pub const int SPECIAL = 10;
 pub const int TITLE = 11;
 
-/// One classified line: the class of each byte, and the state at its end
-/// (what the next line must be classified from).
+/** One classified line: the class of each byte, and the state at its end
+ * (what the next line must be classified from). */
 pub type Tokens {
     pub List<int> classes = [];
     pub int state = 0;
@@ -75,8 +75,8 @@ pub List<str> languages() {
     return SYN_registry.names();
 }
 
-/// The language of a file: by modeline, extension or name, else by a `#!`
-/// line. "" when unknown.
+/** The language of a file: by modeline, extension or name, else by a `#!`
+ * line. "" when unknown. */
 pub str language_of(str path, str first_line) {
     return SYN_detect.language_of(path, first_line);
 }
@@ -85,10 +85,10 @@ bool is_digit_byte(int byte) {
     return byte >= 48 && byte <= 57;
 }
 
-/// Classify one `line` of language `lang` that begins in `state` (0 for the
-/// first line, else the previous line's `Tokens.state`). An unknown `lang`
-/// is plain code: every class NORMAL, and a state of 0. Classes are the
-/// twelve above (the library's extended classes folded onto them).
+/** Classify one `line` of language `lang` that begins in `state` (0 for the
+ * first line, else the previous line's `Tokens.state`). An unknown `lang`
+ * is plain code: every class NORMAL, and a state of 0. Classes are the
+ * twelve above (the library's extended classes folded onto them). */
 pub Tokens classify(str lang, str line, int state) {
     SYN_highlight.Tokens raw = SYN_highlight.classify(lang, line, state);
     Tokens out = Tokens();
@@ -99,9 +99,9 @@ pub Tokens classify(str lang, str line, int state) {
     return out;
 }
 
-/// True when `$COLORFGBG` (`"15;0"`: foreground;background palette indexes)
-/// names a dark background, or says nothing (dark is the common default).
-/// Backgrounds 0..6 and 8 are dark; 7 and 9..15 are light.
+/** True when `$COLORFGBG` (`"15;0"`: foreground;background palette indexes)
+ * names a dark background, or says nothing (dark is the common default).
+ * Backgrounds 0..6 and 8 are dark; 7 and 9..15 are light. */
 pub bool is_dark(str colorfgbg) {
     if (colorfgbg == "") {
         return true;
@@ -130,8 +130,8 @@ pub bool is_dark(str colorfgbg) {
     return true;
 }
 
-/// The style of a class, in the terminal's own 16 colours. NORMAL is the
-/// plain style.
+/** The style of a class, in the terminal's own 16 colours. NORMAL is the
+ * plain style. */
 pub TUI_style.Style class_style(int class_value, bool is_dark) {
     int colour = -1;
     int attrs = 0;
@@ -179,12 +179,12 @@ pub TUI_style.Style class_style(int class_value, bool is_dark) {
     return TUI_style.Style(foreground: TUI_style.Colour.Indexed(colour), attrs: attrs);
 }
 
-/// `text` as styled spans, one per run of equal class. NORMAL runs take
-/// `base` as it is; a classified run takes `base` with the class's style laid
-/// over it (so a background in `base` survives and, on a line whose `base`
-/// has a foreground, only tokens the highlighter recognised change colour).
-/// `classes` is per byte, as `classify` answers; a run never splits a UTF-8
-/// sequence, and an empty or short `classes` leaves the rest NORMAL.
+/** `text` as styled spans, one per run of equal class. NORMAL runs take
+ * `base` as it is; a classified run takes `base` with the class's style laid
+ * over it (so a background in `base` survives and, on a line whose `base`
+ * has a foreground, only tokens the highlighter recognised change colour).
+ * `classes` is per byte, as `classify` answers; a run never splits a UTF-8
+ * sequence, and an empty or short `classes` leaves the rest NORMAL. */
 pub List<TUI_widget.Span> spans(str text, List<int> classes, TUI_style.Style base, bool is_dark) {
     List<TUI_widget.Span> out = [];
     int size = text.size();
@@ -216,10 +216,10 @@ pub List<TUI_widget.Span> spans(str text, List<int> classes, TUI_style.Style bas
     return out;
 }
 
-/// Write `text` at `x`, `y`, at most `width` columns, coloured by `classes`
-/// (see `spans`), with `over` laid on every span (a cursor row's reverse
-/// video). Text that does not fit ends in the ellipsis, as `TUI_text.truncate`
-/// does. Answers the columns used.
+/** Write `text` at `x`, `y`, at most `width` columns, coloured by `classes`
+ * (see `spans`), with `over` laid on every span (a cursor row's reverse
+ * video). Text that does not fit ends in the ellipsis, as `TUI_text.truncate`
+ * does. Answers the columns used. */
 pub int draw(TUI_buffer.Buffer buffer, int x, int y, int width, str text, List<int> classes, TUI_style.Style base, bool is_dark, TUI_style.Style over = TUI_style.Style()) {
     if (width <= 0) {
         return 0;
@@ -248,11 +248,11 @@ pub int draw(TUI_buffer.Buffer buffer, int x, int y, int width, str text, List<i
     return column - x;
 }
 
-/// Lines of one file, fed in order, classified lazily and remembered: a
-/// 5000-line file costs one `classify` per line the first time each is
-/// asked for, and nothing on a redraw. The state carried from line to line
-/// (an open comment, a fence) is kept, so `classes(i)` is right even when
-/// only line `i` is on screen.
+/** Lines of one file, fed in order, classified lazily and remembered: a
+ * 5000-line file costs one `classify` per line the first time each is
+ * asked for, and nothing on a redraw. The state carried from line to line
+ * (an open comment, a fence) is kept, so `classes(i)` is right even when
+ * only line `i` is on screen. */
 pub type Highlighter {
     pub str language;
     pub List<str> lines = [];
@@ -266,9 +266,9 @@ pub void Highlighter.add(str text) {
     lines = inner.lines;
 }
 
-/// The class of every byte of line `index` (empty when the highlighter has
-/// no language, or `index` is outside the lines added so far), folded onto
-/// the twelve classes.
+/** The class of every byte of line `index` (empty when the highlighter has
+ * no language, or `index` is outside the lines added so far), folded onto
+ * the twelve classes. */
 pub List<int> Highlighter.classes(int index) {
     if (language == "" || index < 0 || index >= inner.lines.size()) {
         return [];

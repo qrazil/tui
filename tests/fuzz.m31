@@ -1,22 +1,22 @@
-// Hostile input, in and out: the input decoder, the reply parsers, the mouse, and text that tries to
-// speak to the terminal.
-//
-//   bash tests/test.sh
-//
-// Seeded and deterministic (no clock). Four things are asked:
-//
-//   1. `term.decode` never traps on any bytes (random strings over an alphabet of escape-ish bytes, UTF-8 lead and
-//      continuation bytes, paste markers), and a byte stream cut between two whole sequences decodes to what
-//      the pieces decode to: the same events, in the same order.
-//   2. A paste of a megabyte is one `Paste` event of a megabyte.
-//   3. The reply parsers (`TUI_width.cursor_report`, `mode_reply`, `TUI_keys.reply_kind`, `modify_other_key`,
-//      `TUI_app.focus_report`, `TUI_diff.sync_reply`) and `TUI_mouse.Pointer` never trap on junk.
-//   4. Text that carries ESC, CSI, OSC, BEL, NUL, DEL, C1 controls, a newline or a URI with control characters
-//      reaches the terminal as characters and not as controls: after `set_str` and `link` the buffer holds no
-//      control character and the emulator, fed the frame, obeys nothing it should not (`controls`, `unknown`,
-//      `bad_bytes`) and shows what the buffer holds.
-//
-// Like the other corpora: a `check` line prints `ok` or `FAIL`, compared with tests/fuzz.out.
+/* Hostile input, in and out: the input decoder, the reply parsers, the mouse, and text that tries to
+ * speak to the terminal.
+ *
+ *   bash tests/test.sh
+ *
+ * Seeded and deterministic (no clock). Four things are asked:
+ *
+ *   1. `term.decode` never traps on any bytes (random strings over an alphabet of escape-ish bytes, UTF-8 lead and
+ *      continuation bytes, paste markers), and a byte stream cut between two whole sequences decodes to what
+ *      the pieces decode to: the same events, in the same order.
+ *   2. A paste of a megabyte is one `Paste` event of a megabyte.
+ *   3. The reply parsers (`TUI_width.cursor_report`, `mode_reply`, `TUI_keys.reply_kind`, `modify_other_key`,
+ *      `TUI_app.focus_report`, `TUI_diff.sync_reply`) and `TUI_mouse.Pointer` never trap on junk.
+ *   4. Text that carries ESC, CSI, OSC, BEL, NUL, DEL, C1 controls, a newline or a URI with control characters
+ *      reaches the terminal as characters and not as controls: after `set_str` and `link` the buffer holds no
+ *      control character and the emulator, fed the frame, obeys nothing it should not (`controls`, `unknown`,
+ *      `bad_bytes`) and shows what the buffer holds.
+ *
+ * Like the other corpora: a `check` line prints `ok` or `FAIL`, compared with tests/fuzz.out. */
 
 import random;
 import term;
@@ -349,8 +349,8 @@ void simple_text(Tally tally, random.Seeded dice) {
     check(tally, "each is drawn in the width simple_width says (library width)" + first, str(wrong_width), "0");
     check(tally, "each is a cluster of its own, beside itself and ASCII" + first, str(not_one_cluster), "0");
     check(tally, "a control, a combining mark, a joiner, an emoji and a selector are not simple", str(TUI_buffer.simple_width(0x9) + TUI_buffer.simple_width(0x301) + TUI_buffer.simple_width(0x200D) + TUI_buffer.simple_width(0x1F600) + TUI_buffer.simple_width(0xFE0F) + TUI_buffer.simple_width(0x3099)), "0");
-    // the same text, written by the simple path and by the cluster path (a trailing zero-width space sends the
-    // text down the cluster path and is dropped), lands in the same cells: clipped at either edge, and over what was there
+    /* the same text, written by the simple path and by the cluster path (a trailing zero-width space sends the
+     * text down the cluster path and is dropped), lands in the same cells: clipped at either edge, and over what was there */
     List<str> pool = ["abc", "caf\u{E9} Stra\u{DF}e", "\u{65E5}\u{672C}\u{8A9E}", "x\u{65E5}y\u{672C}", "\u{D55C}\u{AD6D}\u{C5B4}", "\u{3072}\u{30AB}\u{FF21}\u{FF22}", "mixed \u{4E2D}\u{6587} text 123"];
     int different = 0;
     str where = "";

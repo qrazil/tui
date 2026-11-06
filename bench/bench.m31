@@ -1,13 +1,13 @@
-// The cross-library benchmark: the scenarios bench/ratatui/src/main.rs runs, line for line, so the two
-// can be compared. A frame's cost as an application pays it (clear, lay the frame into a buffer, diff it
-// against the last one, serialise to bytes), not what a terminal does with the bytes.
-//
-//   bench <scenario>  runs one scenario only (what a profile wants)
-//   bash bench/run.sh              builds both, runs both alternately, writes bench/results/*.txt
-//
-// Output, one line per scenario: `RESULT <name> <median_us> <p95_us> <min_us> <bytes>`. A sample is the mean of
-// `reps` frames (reps chosen so a sample lasts ~10 ms); 5 samples are thrown away and 40 are kept, so the
-// median and p95 are over 40 samples. `bytes` is the mean output of one frame over the last sample.
+/* The cross-library benchmark: the scenarios bench/ratatui/src/main.rs runs, line for line, so the two
+ * can be compared. A frame's cost as an application pays it (clear, lay the frame into a buffer, diff it
+ * against the last one, serialise to bytes), not what a terminal does with the bytes.
+ *
+ *   bench <scenario>  runs one scenario only (what a profile wants)
+ *   bash bench/run.sh              builds both, runs both alternately, writes bench/results/*.txt
+ *
+ * Output, one line per scenario: `RESULT <name> <median_us> <p95_us> <min_us> <bytes>`. A sample is the mean of
+ * `reps` frames (reps chosen so a sample lasts ~10 ms); 5 samples are thrown away and 40 are kept, so the
+ * median and p95 are over 40 samples. `bytes` is the mean output of one frame over the last sample. */
 
 import date;
 import os;
@@ -240,8 +240,8 @@ int Scene.step() {
     return 0;
 }
 
-/// The table of a terminal that agrees with the library about every class (what `Loop.calibrate_width` makes of
-/// the answers of Alacritty, kitty or rio): its clusters are certain, and the renderer diffs them per cell.
+/** The table of a terminal that agrees with the library about every class (what `Loop.calibrate_width` makes of
+ * the answers of Alacritty, kitty or rio): its clusters are certain, and the renderer diffs them per cell. */
 TUI_width.Table agreeing_table() {
     TUI_width.Probe probe = TUI_width.probe(true);
     probe.did_take("\x1b[2;2R".to_bytes());

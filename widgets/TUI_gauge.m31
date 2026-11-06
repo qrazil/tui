@@ -1,38 +1,38 @@
-// A bar that shows how much of something is done, to an eighth of a cell.
-//
-// API
+/* A bar that shows how much of something is done, to an eighth of a cell.
+ *
+ * API */
 // ---
-//   TUI_gauge.Gauge(ratio, label:, direction:, filled_style:, ...)  a Widget
-//   TUI_gauge.Gauge.of_percent(percent)         the same from 0 .. 100
-//   gauge.eighths(cells)                         how many eighths it fills
-//   gauge.shown_label()                          the text drawn over the bar
-//
-// A `Gauge` fills the rectangle it is given: horizontally it grows from the
-// left, vertically from the bottom, and a rectangle several rows tall is a
-// thick bar rather than several bars. The fill is exact to an eighth of a
-// cell (TUI_eighths.m31 has the glyphs and the rounding), so a gauge ten
-// cells wide has eighty distinct lengths and 41.25% looks different from 40%.
-//
+/*   TUI_gauge.Gauge(ratio, label:, direction:, filled_style:, ...)  a Widget
+ *   TUI_gauge.Gauge.of_percent(percent)         the same from 0 .. 100
+ *   gauge.eighths(cells)                         how many eighths it fills
+ *   gauge.shown_label()                          the text drawn over the bar
+ *
+ * A `Gauge` fills the rectangle it is given: horizontally it grows from the
+ * left, vertically from the bottom, and a rectangle several rows tall is a
+ * thick bar rather than several bars. The fill is exact to an eighth of a
+ * cell (TUI_eighths.m31 has the glyphs and the rounding), so a gauge ten
+ * cells wide has eighty distinct lengths and 41.25% looks different from 40%.
+ * */
 // --- colours ----------------------------------------------------------------
-//
-// `filled_style`'s FOREGROUND is the bar colour, because a block glyph is
-// painted in the foreground. `empty_style`'s BACKGROUND is what is behind the
-// bar. The one cell that is part full is drawn as a partial block glyph in the
-// bar colour on the empty background, which is what makes the fraction
-// visible with no second colour.
-//
+/*
+ * `filled_style`'s FOREGROUND is the bar colour, because a block glyph is
+ * painted in the foreground. `empty_style`'s BACKGROUND is what is behind the
+ * bar. The one cell that is part full is drawn as a partial block glyph in the
+ * bar colour on the empty background, which is what makes the fraction
+ * visible with no second colour.
+ * */
 // --- the label --------------------------------------------------------------
-//
-// The label is centred on the middle row (horizontal) or the middle column
-// (vertical), over the bar. Where it lies on filled cells it is drawn
-// reversed, so its letters are the terminal's background colour on the bar
-// colour and stay readable; where it lies on empty cells it is drawn in
-// `empty_style`. A label wider than the bar is truncated with an ellipsis.
-// `label: ""` shows the percentage, rounded to a whole number; set
-// `should_show_label: false` for a bar with no text at all.
-//
-// A cell that is part full counts as filled for the label when it is half or
-// more full, since one cell cannot be both.
+/*
+ * The label is centred on the middle row (horizontal) or the middle column
+ * (vertical), over the bar. Where it lies on filled cells it is drawn
+ * reversed, so its letters are the terminal's background colour on the bar
+ * colour and stay readable; where it lies on empty cells it is drawn in
+ * `empty_style`. A label wider than the bar is truncated with an ellipsis.
+ * `label: ""` shows the percentage, rounded to a whole number; set
+ * `should_show_label: false` for a bar with no text at all.
+ *
+ * A cell that is part full counts as filled for the label when it is half or
+ * more full, since one cell cannot be both. */
 
 import math;
 import core.TUI_buffer;
@@ -43,8 +43,8 @@ import core.TUI_text;
 
 /// A fraction shown as a bar.
 pub type Gauge {
-    /// `0.0 .. 1.0`; outside that range is pulled to the nearest end, and a
-    /// NaN is 0.0.
+    /** `0.0 .. 1.0`; outside that range is pulled to the nearest end, and a
+     * NaN is 0.0. */
     pub float ratio;
     /// The text over the bar. Empty means the percentage.
     pub str label = "";
@@ -137,8 +137,8 @@ void Gauge.draw_label_across(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, i
     }
 }
 
-// The label on a vertical bar: one row of text, at the middle of the height,
-// over columns that are each filled or not by that row.
+/* The label on a vertical bar: one row of text, at the middle of the height,
+ * over columns that are each filled or not by that row. */
 void Gauge.draw_label_up(TUI_buffer.Buffer buffer, TUI_geometry.Rect area, int total) {
     str text = TUI_text.truncate(shown_label(), area.width);
     int text_width = TUI_text.width(text);

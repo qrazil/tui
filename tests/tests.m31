@@ -1,18 +1,18 @@
-// The test corpus for the TUI library.
-//
-//   bash tests/test.sh
-//
-// Everything here runs against an in-memory `Buffer` and a `bytes`, so
-// nothing needs a terminal. Two kinds of expectation:
-//
-//   - a `check` line, which prints `ok` or `FAIL` and is counted;
-//   - the rendered frames and byte strings printed below them, which are
-//     compared against `tests/tests.out` by `tests/test.sh`. A picture of a
-//     grid is much easier to read than the twenty assertions it would take
-//     to say the same thing, and `Buffer.frame` draws the picture.
-//
-// A failure shows up twice, as a `FAIL` line and as a diff, and `tests/test.sh`
-// greps for the first and diffs the second.
+/* The test corpus for the TUI library.
+ *
+ *   bash tests/test.sh
+ *
+ * Everything here runs against an in-memory `Buffer` and a `bytes`, so
+ * nothing needs a terminal. Two kinds of expectation:
+ *
+ *   - a `check` line, which prints `ok` or `FAIL` and is counted;
+ *   - the rendered frames and byte strings printed below them, which are
+ *     compared against `tests/tests.out` by `tests/test.sh`. A picture of a
+ *     grid is much easier to read than the twenty assertions it would take
+ *     to say the same thing, and `Buffer.frame` draws the picture.
+ *
+ * A failure shows up twice, as a `FAIL` line and as a diff, and `tests/test.sh`
+ * greps for the first and diffs the second. */
 
 import os;
 import random;
@@ -32,8 +32,8 @@ import core.TUI_style;
 import core.TUI_text;
 import core.TUI_widget;
 
-/// The score. There is no mutable module state (reference §2), so the count
-/// is an object every check is handed.
+/** The score. There is no mutable module state (reference §2), so the count
+ * is an object every check is handed. */
 type Tally {
     int pass = 0;
     int fail = 0;
@@ -103,8 +103,8 @@ void buffer_tests(Tally tally) {
     check(tally, "emoji is one cell", emoji_buffer.symbol_at(0, 0), "\u{1F44D}\u{1F3FD}");
     check_int(tally, "emoji is two columns", emoji_buffer.width_at(0, 0), 2);
     check(tally, "emoji row", emoji_buffer.row_text(0), "\u{1F44D}\u{1F3FD}!   ");
-    // Zero-width marks join the cell before them; one with no cell before it
-    // is dropped.
+    /* Zero-width marks join the cell before them; one with no cell before it
+     * is dropped. */
     TUI_buffer.Buffer mark_buffer = TUI_buffer.Buffer.sized(4, 2);
     mark_buffer.set_str(0, 0, "e\u{301}x", TUI_style.Style());
     check(tally, "combining mark joins its base", mark_buffer.symbol_at(0, 0), "e\u{301}");
@@ -591,8 +591,8 @@ void table_tests(Tally tally) {
 }
 
 // --- stage 2/3: the styling layer, and the primitives apps/git/design.md ----
-// names -- outline, jump list, which-key/transient, an addressable diff
-// view, the footer region and the application loop.
+/* names -- outline, jump list, which-key/transient, an addressable diff
+ * view, the footer region and the application loop. */
 
 void theme_and_span_tests(Tally tally) {
     head("theme, spans and a styled line");
@@ -681,11 +681,11 @@ void outline_tests(Tally tally) {
             check(tally, "select_id moved the cursor to it", "none", "c.txt");
         }
     }
-    // scroll_h: a row wider than the buffer is clipped either way, so the
-    // check is the invariant, not a hand-counted substring -- scrolling
-    // right must change what is drawn, and scrolling back by the same
-    // amount must restore it exactly, the same round-trip `cut`/
-    // `drop_columns` themselves are tested against in `text_tests`.
+    /* scroll_h: a row wider than the buffer is clipped either way, so the
+     * check is the invariant, not a hand-counted substring -- scrolling
+     * right must change what is drawn, and scrolling back by the same
+     * amount must restore it exactly, the same round-trip `cut`/
+     * `drop_columns` themselves are tested against in `text_tests`. */
     TUI_outline.Outline scrolled_outline = sample_outline();
     TUI_buffer.Buffer start_buffer = TUI_buffer.Buffer.sized(10, 5);
     scrolled_outline.render(start_buffer, TUI_geometry.Rect(0, 0, 10, 5));
@@ -809,9 +809,9 @@ void footer_tests(Tally tally) {
     check(tally, "the main band above it is untouched", buffer.row_text(0), " ".repeat(40));
 }
 
-// A `Handler` written outside the library, the same proof `Widget` gets in
-// section 7 below: a struct with a method named `handle` satisfies
-// `TUI_app.Handler` with no declaration saying so.
+/* A `Handler` written outside the library, the same proof `Widget` gets in
+ * section 7 below: a struct with a method named `handle` satisfies
+ * `TUI_app.Handler` with no declaration saying so. */
 type CountKeys {
     int seen = 0;
 }
@@ -916,10 +916,10 @@ void app_tests(Tally tally) {
 }
 
 // --- 7. a widget written by a user of the library ---------------------------
-//
-// Three shapes, all satisfying `TUI_widget.Widget` with no declaration that
-// they do. This is the claim the library makes about the interface being
-// small; here it is, checked.
+/*
+ * Three shapes, all satisfying `TUI_widget.Widget` with no declaration that
+ * they do. This is the claim the library makes about the interface being
+ * small; here it is, checked. */
 
 /// A widget with state: a horizontal bar, `done` out of `total` filled.
 type Bar {

@@ -1,8 +1,8 @@
-// An empty application, for the start-up, memory, idle-CPU, input-latency and resize-latency measurements
-// (bench/idle.py runs it on a pty; bench/ratatui/src/bin/idle.rs is the same program in ratatui).
-//
-// It draws "READY-p-200x50" in the corner (the letter is advanced by `x`, which redraws; then the size), `q` quits.
-// The run is the library's defaults (a 250 ms tick, the width calibration on unless TUI_WIDTH_PROBE=off).
+/* An empty application, for the start-up, memory, idle-CPU, input-latency and resize-latency measurements
+ * (bench/idle.py runs it on a pty; bench/ratatui/src/bin/idle.rs is the same program in ratatui).
+ *
+ * It draws "READY-p-200x50" in the corner (the letter is advanced by `x`, which redraws; then the size), `q` quits.
+ * The run is the library's defaults (a 250 ms tick, the width calibration on unless TUI_WIDTH_PROBE=off). */
 
 import term;
 import core.TUI_buffer;
